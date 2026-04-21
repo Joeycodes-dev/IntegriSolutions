@@ -1,29 +1,20 @@
-# IntegriSolutions Mobile
+# Integriscan Mobile
 
 This folder contains an Expo-managed React Native app built with TypeScript.
 
 ## Getting Started
 
 1. Install dependencies:
-   ```bash
-   cd apps/mobile
-   npm install
-   ```
+   `npm install`
 
 2. Start the Expo dev server:
-   ```bash
-   npm start
-   ```
+   `npm start`
 
 3. Run on Android:
-   ```bash
-   npm run android
-   ```
+   `npm run android`
 
 4. Run on iOS:
-   ```bash
-   npm run ios
-   ```
+   `npm run ios`
 
 ## Notes
 
