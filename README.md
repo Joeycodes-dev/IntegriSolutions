@@ -1,4 +1,4 @@
-# IntegriScan — Smart DUI Enforcement Platform
+# IntegriScan - Smart DUI Enforcement Platform
 
 > *Safer roads. Incorruptible records.*
 
@@ -45,7 +45,7 @@ IntegriSolutions/
 - [Node.js](https://nodejs.org/) v20 or higher
 - [npm](https://npmjs.com/) v10 or higher
 - [Expo CLI](https://docs.expo.dev/get-started/installation/) (`npm install -g expo-cli`)
-- A [Supabase](https://supabase.com/) account with a project created
+- A [Supabase](https://supabase.com/) account with a project created (Not need for NOW, you can toggle on the login to skip authorization)
 
 ### 1. Clone the repo
 
@@ -69,7 +69,7 @@ The key variables you need:
 # backend/.env.local
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-JWT_SECRET=your-secret-minimum-32-characters
+JWT_SECRET=your-secret-minimum-32-characters (WIP- Can SKIP this for now)
 PORT=3000
 
 # apps/web/.env.local
@@ -94,7 +94,7 @@ cd apps/web && npm install
 cd apps/mobile && npm install
 ```
 
-### 4. Run the database schema
+### 4. Run the database schema (WIP- Can SKIP this for now)
 
 In your Supabase project, open the **SQL Editor** and run the schema file found at:
 
