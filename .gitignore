@@ -1,0 +1,11 @@
+# Dependency directories
+node_modules/
+
+# Build output directories
+build/
+dist/
+
+# dotenv environment variable files
+.env
+.env.*
+!.env.example

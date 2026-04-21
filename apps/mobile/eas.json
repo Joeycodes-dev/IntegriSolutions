@@ -1,0 +1,22 @@
+{
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "ios": {
+        "workflow": "managed"
+      },
+      "android": {
+        "workflow": "managed"
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "ios": {
+        "workflow": "managed"
+      },
+      "android": {
+        "workflow": "managed"
+      }
+    }
+  }
+}
