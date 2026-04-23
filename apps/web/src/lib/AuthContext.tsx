@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { clearAccessToken, getAccessToken, getProfile } from '../services/api';
+import { clearAccessToken, getAccessToken, getProfile, setAccessToken } from '../services/api';
 import type { UserProfile } from '../types';
 
 const PROFILE_STORAGE_KEY = 'local_auth_profile';
@@ -27,6 +27,7 @@ interface AuthContextType {
   profile: UserProfile | null;
   loading: boolean;
   signOut: () => Promise<void>;
+  signIn: (profileData: UserProfile, token: string) => void;
   signInLocal: (profile: UserProfile) => void;
 }
 
@@ -68,6 +69,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initAuth();
   }, []);
 
+  const signIn = (profileData: UserProfile, token: string) => {
+    setAccessToken(token);
+    saveLocalProfile(profileData);
+    setUser(profileData);
+    setProfile(profileData);
+  };
+
   const signInLocal = (profileData: UserProfile) => {
     clearAccessToken();
     saveLocalProfile(profileData);
@@ -83,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signOut, signInLocal }}>
+    <AuthContext.Provider value={{ user, profile, loading, signOut, signIn, signInLocal }}>
       {!loading && children}
     </AuthContext.Provider>
   );

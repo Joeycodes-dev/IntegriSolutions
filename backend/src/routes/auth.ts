@@ -1,8 +1,20 @@
 import { Router } from 'express';
+import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 import type { UserProfile, UserRole } from '../types';
 
 const router = Router();
+
+const serviceSupabase = createClient(
+  process.env.SUPABASE_URL ?? '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+  {
+    auth: {
+      persistSession: false,
+      detectSessionInUrl: false
+    }
+  }
+);
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
@@ -20,14 +32,30 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ error: error?.message ?? 'Login failed' });
   }
 
-  const { data: profileData, error: profileError } = await supabase
+  const { data: profileRows, error: profileError } = await serviceSupabase
     .from('users')
     .select('*')
     .eq('uid', data.user.id)
-    .maybeSingle();
+    .limit(1);
 
   if (profileError) {
     return res.status(500).json({ error: profileError.message });
+  }
+
+  let profileData = Array.isArray(profileRows) ? profileRows[0] : null;
+
+  if (!profileData && data.user.email) {
+    const { data: emailRows, error: emailError } = await serviceSupabase
+      .from('users')
+      .select('*')
+      .eq('email', data.user.email)
+      .limit(1);
+
+    if (emailError) {
+      return res.status(500).json({ error: emailError.message });
+    }
+
+    profileData = Array.isArray(emailRows) ? emailRows[0] : null;
   }
 
   if (!profileData) {
@@ -71,7 +99,7 @@ router.post('/register', async (req, res) => {
     createdAt: new Date().toISOString()
   };
 
-  const { error: insertError } = await supabase.from('users').insert([profile]);
+  const { error: insertError } = await serviceSupabase.from('users').insert([profile]);
 
   if (insertError) {
     return res.status(500).json({ error: insertError.message });

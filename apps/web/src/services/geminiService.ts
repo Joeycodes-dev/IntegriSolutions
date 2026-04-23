@@ -1,7 +1,3 @@
-import { GoogleGenAI, Type } from "@google/genai";
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
 export interface DriverLicenseData {
   name: string;
   licenseNumber: string;
@@ -9,31 +5,6 @@ export interface DriverLicenseData {
   expiryDate: string;
 }
 
-export async function scanDriverLicense(base64Image: string): Promise<DriverLicenseData> {
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: [
-      {
-        parts: [
-          { text: "Extract the driver's full name, license number, date of birth, and expiry date from this South African driver's license image. Return as JSON." },
-          { inlineData: { mimeType: "image/jpeg", data: base64Image } }
-        ]
-      }
-    ],
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          name: { type: Type.STRING },
-          licenseNumber: { type: Type.STRING },
-          dob: { type: Type.STRING },
-          expiryDate: { type: Type.STRING }
-        },
-        required: ["name", "licenseNumber", "dob", "expiryDate"]
-      }
-    }
-  });
-
-  return JSON.parse(response.text || '{}') as DriverLicenseData;
+export async function scanDriverLicense(_base64Image: string): Promise<DriverLicenseData> {
+  throw new Error('Web OCR scanning is disabled. Use the mobile app to scan driver licenses.');
 }
