@@ -6,7 +6,13 @@ import { LoginScreen } from './screens/LoginScreen';
 import { OfficerDashboardScreen } from './screens/OfficerDashboardScreen';
 import { AuthProvider } from './lib/AuthContext';
 
-const Stack = createNativeStackNavigator();
+type RootStackParamList = {
+  Login: undefined;
+  Home: undefined;
+  OfficerDashboard: undefined;
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function App() {
   return (

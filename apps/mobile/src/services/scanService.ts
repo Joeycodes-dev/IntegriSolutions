@@ -35,9 +35,13 @@ const API_BASE_URL = `http://${getApiHost()}:4000/api`;
 
 export interface DriverLicenseData {
   name: string;
+  surname: string;
+  initials: string;
+  idNumber: string;
   licenseNumber: string;
   dob: string;
   expiryDate: string;
+  licenseCodes: string;
 }
 
 async function request<T>(path: string, options: RequestInit = {}) {

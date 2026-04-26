@@ -1,20 +1,21 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View
 } from 'react-native';
-import { Camera, CameraView } from 'expo-camera';
+import { Camera, CameraView, type BarcodeScanningResult } from 'expo-camera';
 import { Feather, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../lib/AuthContext';
 import { createTest } from '../services/api';
-import { scanDriverLicense, type DriverLicenseData } from '../services/scanService';
+import type { DriverLicenseData } from '../services/scanService';
 
 type RootStackParamList = {
   Login: undefined;
@@ -26,15 +27,255 @@ type Props = NativeStackScreenProps<RootStackParamList, 'OfficerDashboard'>;
 
 type OfficerStep = 'idle' | 'scan' | 'reading';
 
+function normalizeDate(value: string): string | undefined {
+  const normalized = value.replace(/\//g, '-').replace(/\s+/g, ' ').trim();
+  const numeric = normalized.replace(/[^0-9\-]/g, '');
+
+  if (/^\d{8}$/.test(numeric)) {
+    const yearFirst = `${numeric.slice(0, 4)}-${numeric.slice(4, 6)}-${numeric.slice(6, 8)}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(yearFirst)) {
+      return yearFirst;
+    }
+
+    const yearLast = `${numeric.slice(4, 8)}-${numeric.slice(0, 2)}-${numeric.slice(2, 4)}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(yearLast)) {
+      return yearLast;
+    }
+  }
+
+  const match = normalized.match(/\b\d{4}-\d{2}-\d{2}\b|\b\d{2}-\d{2}-\d{4}\b/);
+  if (!match) return undefined;
+  const parts = match[0].split('-');
+  if (parts[0].length === 4) {
+    return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+  }
+  return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+}
+
+function normalizePdf417Payload(rawPayload: string): string {
+  return rawPayload
+    .replace(/\r/g, '')
+    .replace(/\u001d|\u001e|\u001f/g, '\n')
+    .replace(/[|;]/g, '\n')
+    .replace(/\t/g, ' ')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C\x7F]/g, ' ')
+    .trim();
+}
+
+function sanitizePayloadForDisplay(rawPayload: string): string {
+  return normalizePdf417Payload(rawPayload)
+    .replace(/[\x00-\x1F\x7F]/g, ' ')
+    .replace(/\n+/g, '\n')
+    .trim();
+}
+
+function parseAamvaBarcodeData(rawPayload: string): DriverLicenseData {
+  const payload = normalizePdf417Payload(rawPayload);
+  const knownTags = [
+    'DAA', 'DAB', 'DAC', 'DAD', 'DAE', 'DAF', 'DAG', 'DAH', 'DAI', 'DAJ', 'DAK', 'DAL', 'DAM', 'DAN',
+    'DAO', 'DAP', 'DAQ', 'DAR', 'DAS', 'DAT', 'DAU', 'DAV', 'DAW', 'DAX', 'DAY', 'DAZ',
+    'DBA', 'DBB', 'DBC', 'DBD', 'DBE', 'DBF', 'DBG', 'DBH', 'DBI', 'DBJ', 'DBK',
+    'DCG', 'DCH', 'DCI', 'DCJ', 'DCK', 'DCL', 'DCM', 'DCN', 'DCO', 'DCP', 'DCQ', 'DCR', 'DCS', 'DCT', 'DCU', 'DCV', 'DCW', 'DDA', 'DDB', 'DDC', 'DDD', 'DDE', 'DDF', 'DDG', 'DDH'
+  ];
+
+  const positions: Array<{ tag: string; index: number }> = [];
+  for (const tag of knownTags) {
+    let index = payload.indexOf(tag);
+    while (index !== -1) {
+      positions.push({ tag, index });
+      index = payload.indexOf(tag, index + tag.length);
+    }
+  }
+
+  if (positions.length === 0) {
+    return parsePdf417BarcodeDataFallback(rawPayload);
+  }
+
+  positions.sort((a, b) => a.index - b.index);
+  const parsed = new Map<string, string>();
+
+  for (let i = 0; i < positions.length; i += 1) {
+    const current = positions[i];
+    const start = current.index + current.tag.length;
+    const end = i + 1 < positions.length ? positions[i + 1].index : payload.length;
+    const value = payload.slice(start, end).replace(/[\n\r]/g, ' ').trim();
+    if (value) {
+      parsed.set(current.tag, value);
+    }
+  }
+
+  const rawName = parsed.get('DAA') ?? parsed.get('DCT') ?? '';
+  let name = parsed.get('DAC') ?? '';
+  let surname = parsed.get('DCS') ?? '';
+
+  if (!name && rawName) {
+    const parts = rawName.split(',').map((part) => part.trim());
+    if (parts.length >= 2) {
+      surname = parts[0];
+      name = parts.slice(1).join(' ');
+    } else {
+      const words = rawName.split(' ').filter(Boolean);
+      surname = words.pop() ?? '';
+      name = words.join(' ');
+    }
+  }
+
+  if (!name && !surname) {
+    const dee = parsed.get('DCT') ?? parsed.get('DCS');
+    if (dee) {
+      const words = dee.split(',').map((part) => part.trim());
+      if (words.length >= 2) {
+        surname = words[0];
+        name = words.slice(1).join(' ');
+      }
+    }
+  }
+
+  if (!name) name = 'Unknown';
+  if (!surname) surname = 'Unknown';
+
+  const dob = normalizeDate(parsed.get('DBB') ?? parsed.get('DBD') ?? '');
+  const expiryDate = normalizeDate(parsed.get('DBA') ?? parsed.get('DBE') ?? '');
+  const idNumber = parsed.get('DAQ') ?? parsed.get('IDN') ?? '';
+  const licenseNumber = parsed.get('DAQ') ?? parsed.get('DAQ') ?? '';
+  const licenseCodes = [parsed.get('DCA'), parsed.get('DCB'), parsed.get('DCD')]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
+  return {
+    name,
+    surname,
+    initials: parsed.get('DAC') ?? parsed.get('DAG') ?? '',
+    idNumber,
+    licenseNumber,
+    dob: dob ?? '',
+    expiryDate: expiryDate ?? '',
+    licenseCodes
+  };
+}
+
+function parsePdf417BarcodeDataFallback(rawPayload: string): DriverLicenseData {
+  const normalizedText = rawPayload
+    .replace(/\r/g, '\n')
+    .replace(/[|;]/g, '\n')
+    .replace(/\t/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const lines = normalizedText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const nameCandidate = extractLabeledValue(lines, [
+    'full name',
+    'name',
+    'driver name',
+    'given names',
+    'given name'
+  ]);
+  const surnameCandidate = extractLabeledValue(lines, ['surname', 'last name']);
+  const initialsCandidate = extractLabeledValue(lines, ['initials']);
+  const idCandidate = extractLabeledValue(lines, [
+    'id number',
+    'id no',
+    'idnumber',
+    'identity number',
+    'identity no',
+    'identity'
+  ]) ?? findPattern(lines, /\b\d{13}\b/);
+  const licenseNumberCandidate = extractLabeledValue(lines, [
+    'license number',
+    'licence number',
+    'dl number',
+    'driver licence number',
+    'driver license number',
+    'license no',
+    'licence no'
+  ]) ?? findPattern(lines, /\b[A-Z0-9]{6,12}\b/);
+  const dobCandidate = extractLabeledValue(lines, ['date of birth', 'dob', 'birth date'])
+    ? normalizeDate(extractLabeledValue(lines, ['date of birth', 'dob', 'birth date'])!)
+    : normalizeDate(findPattern(lines, /\b\d{4}[\/\-]\d{2}[\/\-]\d{2}\b|\b\d{2}[\/\-]\d{2}[\/\-]\d{4}\b/) ?? '');
+  const expiryCandidate = extractLabeledValue(lines, [
+    'expiry date',
+    'expiry',
+    'valid until',
+    'valid to',
+    'expires'
+  ])
+    ? normalizeDate(extractLabeledValue(lines, ['expiry date', 'expiry', 'valid until', 'valid to', 'expires'])!)
+    : normalizeDate(findPattern(lines, /\b\d{4}[\/\-]\d{2}[\/\-]\d{2}\b|\b\d{2}[\/\-]\d{2}[\/\-]\d{4}\b/) ?? '');
+  const codesCandidate = extractLabeledValue(lines, ['license codes', 'license code', 'license categories', 'codes', 'code']);
+
+  let name = nameCandidate ?? '';
+  let surname = surnameCandidate ?? '';
+  const initials = initialsCandidate ?? '';
+
+  if (!name && surnameCandidate) {
+    const potential = lines.find((line) => /^[A-Za-z ]+$/.test(line) && line.split(' ').length > 1);
+    if (potential) {
+      name = potential;
+    }
+  }
+
+  if (!name && !surname && lines.length > 0) {
+    const guess = lines[0].replace(/[^A-Za-z ]/g, '').trim();
+    if (guess.length > 0) {
+      const parts = guess.split(' ').filter(Boolean);
+      if (parts.length > 1) {
+        surname = parts.pop() ?? '';
+        name = parts.join(' ');
+      } else {
+        name = guess;
+      }
+    }
+  }
+
+  if (!name) {
+    name = 'Unknown';
+  }
+
+  return {
+    name,
+    surname,
+    initials,
+    idNumber: idCandidate ?? '',
+    licenseNumber: licenseNumberCandidate ?? '',
+    dob: dobCandidate ?? '',
+    expiryDate: expiryCandidate ?? '',
+    licenseCodes: codesCandidate ?? ''
+  };
+}
+
+function extractLabeledValue(lines: string[], labels: string[]): string | undefined {
+  const regex = new RegExp(`\\b(?:${labels.join('|')})\\b`, 'i');
+  const line = lines.find((item) => regex.test(item));
+  if (!line) return undefined;
+  const parts = line.split(/[:=]/);
+  if (parts.length > 1) {
+    return parts.slice(1).join(':').trim();
+  }
+  return line.replace(regex, '').replace(/^[\s:-]+/, '').trim();
+}
+
+function findPattern(lines: string[], pattern: RegExp): string | undefined {
+  const line = lines.find((item) => pattern.test(item));
+  return line ? line.match(pattern)?.[0] : undefined;
+}
+
+function parsePdf417BarcodeData(rawPayload: string): DriverLicenseData {
+  return parseAamvaBarcodeData(rawPayload);
+}
+
 export function OfficerDashboardScreen({ navigation }: Props) {
   const { profile, signOut } = useAuth();
-  const cameraRef = useRef<React.ElementRef<typeof CameraView> | null>(null);
   const [step, setStep] = useState<OfficerStep>('idle');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scannedData, setScannedData] = useState<DriverLicenseData | null>(null);
+  const [licensePayload, setLicensePayload] = useState<string | null>(null);
+  const [barcodeScanned, setBarcodeScanned] = useState(false);
   const [bacReading, setBacReading] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
 
   if (!profile) {
     return null;
@@ -48,28 +289,33 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }
 
     setHasPermission(true);
+    setBarcodeScanned(false);
+    setLicensePayload(null);
     setStep('scan');
   };
 
-  const captureAndProcess = async () => {
-    if (!cameraRef.current) return;
+  const handleBarcodeScanned = (scanningResult: BarcodeScanningResult) => {
+    if (barcodeScanned) return;
+    setBarcodeScanned(true);
 
-    try {
-      setIsProcessing(true);
-      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.7 });
-      if (!photo.base64) {
-        throw new Error('Failed to capture image');
-      }
-
-      const data = await scanDriverLicense(photo.base64);
-      setScannedData(data);
-      setStep('reading');
-    } catch (error) {
-      Alert.alert('Scan failed', 'Unable to process the license image. Please try again.');
+    const rawPayload = scanningResult.data?.trim();
+    if (!rawPayload) {
+      Alert.alert('Scan failed', 'No barcode payload was decoded. Please try again.');
       setStep('idle');
-    } finally {
-      setIsProcessing(false);
+      setBarcodeScanned(false);
+      return;
     }
+
+    const data = parsePdf417BarcodeData(rawPayload);
+    setScannedData(data);
+    setLicensePayload(sanitizePayloadForDisplay(rawPayload));
+    setStep('reading');
+  };
+
+  const cancelScan = () => {
+    setStep('idle');
+    setBarcodeScanned(false);
+    setLicensePayload(null);
   };
 
   const saveRecord = async () => {
@@ -129,7 +375,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         </Pressable>
       </View>
 
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} style={styles.contentScroll}>
         {step === 'idle' && (
           <View style={styles.card}>
             <View style={styles.cardIcon}>
@@ -146,14 +392,22 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
         {step === 'scan' && hasPermission && (
           <View style={styles.cameraContainer}>
-            <CameraView ref={cameraRef} style={styles.camera} facing="back" ratio="16:9" />
+            <CameraView
+              style={styles.camera}
+              facing="back"
+              ratio="16:9"
+              barcodeScannerSettings={{ barcodeTypes: ['pdf417'] }}
+              onBarcodeScanned={handleBarcodeScanned}
+            />
             <View style={styles.scanOverlay} />
+            <View style={styles.scanInstructions}>
+              <Text style={styles.scanHint}>
+                {barcodeScanned ? 'Reading barcode...' : 'Point the PDF417 barcode inside the frame.'}
+              </Text>
+            </View>
             <View style={styles.scanActions}>
-              <Pressable style={styles.secondaryButton} onPress={() => setStep('idle')}>
+              <Pressable style={styles.secondaryButton} onPress={cancelScan}>
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.captureButton} onPress={captureAndProcess} disabled={isProcessing}>
-                {isProcessing ? <ActivityIndicator color="#fff" /> : <Text style={styles.captureButtonText}>Capture License</Text>}
               </Pressable>
             </View>
           </View>
@@ -167,10 +421,18 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               </View>
               <View>
                 <Text style={styles.overline}>Subject Identified</Text>
-                <Text style={styles.subjectName}>{scannedData?.name}</Text>
-                <Text style={styles.subjectLicense}>{scannedData?.licenseNumber}</Text>
+                <Text style={styles.subjectName}>{scannedData?.name} {scannedData?.surname}</Text>
+                <Text style={styles.subjectLicense}>ID: {scannedData?.idNumber}</Text>
+                <Text style={styles.subjectLicense}>License: {scannedData?.licenseNumber}</Text>
               </View>
             </View>
+
+            {licensePayload ? (
+              <View style={styles.rawPayloadCard}>
+                <Text style={styles.overline}>Raw barcode payload</Text>
+                <Text style={styles.rawPayloadText}>{licensePayload}</Text>
+              </View>
+            ) : null}
 
             <View style={styles.bacSection}>
               <Text style={styles.overline}>BAC Reading (g/100ml)</Text>
@@ -206,7 +468,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             </View>
           </View>
         )}
-      </View>
+      </ScrollView>
 
       <View style={styles.bottomNav}>
         <Pressable style={styles.navItem}>
@@ -266,8 +528,11 @@ const styles = StyleSheet.create({
   signOutButton: {
     padding: 8
   },
+  contentScroll: {
+    flex: 1
+  },
   content: {
-    flex: 1,
+    flexGrow: 1,
     padding: 20
   },
   card: {
@@ -316,6 +581,7 @@ const styles = StyleSheet.create({
   },
   cameraContainer: {
     flex: 1,
+    minHeight: 360,
     borderRadius: 24,
     overflow: 'hidden',
     backgroundColor: '#000'
@@ -330,6 +596,21 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     margin: 20
   },
+  scanInstructions: {
+    position: 'absolute',
+    top: 30,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    borderRadius: 16,
+    padding: 12
+  },
+  scanHint: {
+    color: '#ffffff',
+    textAlign: 'center',
+    fontSize: 14,
+    lineHeight: 20
+  },
   scanActions: {
     position: 'absolute',
     bottom: 30,
@@ -338,6 +619,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12
+  },
+  rawPayloadCard: {
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: '#eef2ff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#c7d2fe'
+  },
+  rawPayloadText: {
+    marginTop: 8,
+    color: '#475569',
+    fontSize: 12,
+    lineHeight: 18
   },
   secondaryButton: {
     flex: 1,
