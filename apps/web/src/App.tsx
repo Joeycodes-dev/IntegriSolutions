@@ -3,7 +3,7 @@ import { SupervisorDashboard } from './components/SupervisorDashboard';
 import { useAuth } from './lib/AuthContext';
 
 export default function App() {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, signOut } = useAuth();
 
   if (loading) return null;
   if (!user) return <Login />;
@@ -17,6 +17,12 @@ export default function App() {
           The officer portal now lives in the mobile app. Use the mobile app to scan licenses and manage roadside stops.
         </p>
         <p className="text-sm text-slate-500">If you need supervisor access, sign in with a supervisor account.</p>
+        <button
+          onClick={signOut}
+          className="mt-4 w-full rounded-md bg-indigo-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+        >
+          Sign out
+        </button>
       </div>
     </div>
   );
