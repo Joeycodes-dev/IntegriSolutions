@@ -30,7 +30,7 @@ export function Login() {
           email,
           name: isLogin ? email.split('@')[0] : name,
           badgeNumber: isLogin ? '0000' : badge,
-          role: isLogin ? 'officer' : role,
+          role: isLogin ? 'supervisor' : role,
           createdAt: new Date().toISOString()
         };
 
