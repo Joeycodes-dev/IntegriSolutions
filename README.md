@@ -44,8 +44,8 @@ IntegriSolutions/
 
 - [Node.js](https://nodejs.org/) v20 or higher
 - [npm](https://npmjs.com/) v10 or higher
-- [Expo CLI](https://docs.expo.dev/get-started/installation/) (`npm install -g expo-cli`)
-- A [Supabase](https://supabase.com/) account with a project created (Not need for NOW, you can toggle on the login to skip authorization)
+- [Expo Go](https://expo.dev/go) on your phone or emulator
+- A [Supabase](https://supabase.com/) account with a project created (can skip for now — auth is toggleable)
 
 ### 1. Clone the repo
 
@@ -69,14 +69,14 @@ The key variables you need:
 # backend/.env.local
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-JWT_SECRET=your-secret-minimum-32-characters (WIP- Can SKIP this for now)
-PORT=3000
+PORT=4000
+FRONTEND_URL=http://localhost:3000
 
 # apps/web/.env.local
-VITE_API_URL=http://localhost:3000
+VITE_API_URL=http://localhost:4000
 
 # apps/mobile — set in app.json or as Expo env vars
-EXPO_PUBLIC_API_URL=http://localhost:3000
+EXPO_PUBLIC_API_URL=http://localhost:4000
 ```
 
 > **Never commit `.env.local` files.** They are listed in each package's `.gitignore`.
@@ -94,23 +94,17 @@ cd apps/web && npm install
 cd apps/mobile && npm install
 ```
 
-### 4. Run the database schema (WIP- Can SKIP this for now)
+### 4. Run the database schema (WIP — can skip for now)
 
-In your Supabase project, open the **SQL Editor** and run the schema file found at:
-
-```
-docs/schema.sql
-```
-
-This creates all tables (`users`, `drivers`, `tests`, `evidence`, `annotations`, `audit_logs`) and applies the WORM rules and Row Level Security policies.
+In your Supabase project, open the **SQL Editor** and run the schema SQL to create all tables (`users`, `tests`) with WORM rules and Row Level Security policies.
 
 ### 5. Start the development servers
 
 ```bash
-# Terminal 1 — Backend API (runs on http://localhost:3000)
+# Terminal 1 — Backend API (runs on http://localhost:4000)
 cd backend && npm run dev
 
-# Terminal 2 — Web dashboard (runs on http://localhost:5173)
+# Terminal 2 — Web dashboard (runs on http://localhost:3000)
 cd apps/web && npm run dev
 
 # Terminal 3 — Mobile app (opens Expo Go)
@@ -121,28 +115,16 @@ cd apps/mobile && npx expo start
 
 ## API Overview
 
-All endpoints except `/auth/login` and `/auth/register` require a `Bearer <token>` JWT in the `Authorization` header.
+All endpoints except `/api/auth/login` and `/api/auth/register` require a `Bearer <token>` JWT in the `Authorization` header.
 
 | Method | Endpoint | Description | Role |
 |--------|----------|-------------|------|
-| `POST` | `/auth/register` | Create a new user account | Public |
-| `POST` | `/auth/login` | Login and receive a JWT | Public |
-| `POST` | `/drivers/scan` | Scan and extract driver ID details | Officer |
-| `POST` | `/tests` | Start a new DUI test session | Officer |
-| `POST` | `/tests/:id/capture` | Auto-capture breathalyser reading | Officer |
-| `POST` | `/tests/:id/confirm` | Officer confirms and locks the reading | Officer |
-| `POST` | `/tests/:id/evidence` | Attach photo and notes | Officer |
-| `POST` | `/tests/:id/invalid` | Mark test invalid with reason | Officer |
-| `POST` | `/tests/:id/retest` | Create a retest linked to original | Officer |
-| `POST` | `/tests/:id/submit` | Lock and queue record for sync | Officer |
-| `POST` | `/sync` | Upload offline records to cloud | Officer |
-| `GET` | `/tests` | List and search all test records | Supervisor |
-| `GET` | `/tests/:id` | View full test detail (read-only) | Supervisor |
-| `POST` | `/tests/:id/annotate` | Add supervisor annotation | Supervisor |
-| `GET` | `/tests/:id/export` | Export court-ready PDF | Supervisor |
-| `GET` | `/reports` | Generate summary reports | Supervisor |
-| `GET` | `/audit/log` | View full audit trail | Admin |
-| `GET` | `/users` | List all users and roles | Admin |
+| `POST` | `/api/auth/register` | Create a new user account | Public |
+| `POST` | `/api/auth/login` | Login and receive a JWT | Public |
+| `GET` | `/api/profile` | Get the authenticated user's profile | Any |
+| `GET` | `/api/tests` | List all test records | Any |
+| `POST` | `/api/tests` | Create a new test record (with SHA-256 hash) | Officer |
+| `GET` | `/api/health` | Health check | Public |
 
 ---
 
@@ -170,7 +152,7 @@ All endpoints except `/auth/login` and `/auth/register` require a `Bearer <token
                └─────────────────┘
 ```
 
-The mobile app stores records locally in an **encrypted SQLite database** (SQLCipher / AES-256) when offline, then syncs to the cloud when connectivity is restored. The backend verifies the SHA-256 hash of each record before persisting it.
+The mobile app stores records locally when offline and syncs to the cloud when connectivity is restored. The backend verifies the SHA-256 hash of each record before persisting it.
 
 ---
 
@@ -178,12 +160,10 @@ The mobile app stores records locally in an **encrypted SQLite database** (SQLCi
 
 | Branch | Purpose |
 |--------|---------|
-| `main` | Production-ready code only — never commit directly |
-| `develop` | Integration branch — all features merge here first |
+| `main` | Production-ready code |
 | `feature/[name]` | Individual feature work (e.g. `feature/auth-login`) |
-| `hotfix/[name]` | Emergency production patches |
 
-All changes to `develop` and `main` require a **Pull Request with at least one peer review** and passing CI checks.
+All changes to `feature/[name]` and `main` go through a **Pull Request**.
 
 ---
 
@@ -227,25 +207,26 @@ The system automatically classifies results against these thresholds:
  
 ### Workflow
  
-All contributions follow a **feature branch → Pull Request → review → merge** flow. Direct commits to `develop` or `main` will be blocked.
+All contributions follow a **feature branch → Pull Request → review → merge** flow. Direct commits to  `main` will be blocked.
  
 ```bash
-# 1. Make sure your local develop is up to date
-git checkout develop
-git pull origin develop
- 
-# 2. Create your feature branch off develop
+# 1. Make sure your local main is up to date
+git checkout main
+git pull origin main
+
+# 2. Create your feature branch off main
 git checkout -b feature/your-feature-name
- 
+
 # 3. Do your work, then commit with a clear message
 git add .
 git commit -m "feat: short description of what you did"
- 
-# 4. Push and open a Pull Request into develop
+
+# 4. Push and open a Pull Request into main
 git push origin feature/your-feature-name
 ```
+
  
-Then open a Pull Request on GitHub from `feature/your-feature-name` → `develop`.
+Then open a Pull Request on GitHub from `feature/your-feature-name` → `main`.
  
 ### Branch Naming
  
@@ -257,12 +238,9 @@ Then open a Pull Request on GitHub from `feature/your-feature-name` → `develop
 | Documentation | `docs/[name]` | `docs/api-endpoints` |
  
 ### Pull Request Rules
- 
-- Every PR must target `develop` — **never open a PR directly into `main`**
-- At least **1 peer review and approval** is required before merging
-- All CI checks (lint + tests) must pass before the PR can be merged
+
+- Every PR must target `main`
 - The PR author is responsible for resolving merge conflicts before requesting review
-- `main` is only updated from `develop` via a release PR, approved by the project lead
 ### Commit Message Convention
  
 Use the [Conventional Commits](https://www.conventionalcommits.org/) format so the history stays readable:
