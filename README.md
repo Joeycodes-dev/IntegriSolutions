@@ -75,8 +75,6 @@ FRONTEND_URL=http://localhost:3000
 # apps/web/.env.local
 VITE_API_URL=http://localhost:4000
 
-# apps/mobile — set in app.json or as Expo env vars
-EXPO_PUBLIC_API_URL=http://localhost:4000
 ```
 
 > **Never commit `.env.local` files.** They are listed in each package's `.gitignore`.
