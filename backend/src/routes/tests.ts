@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../supabase';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { hashData } from '../utilities/hash';
 import type { TestRecord } from '../types';
 
 const router = Router();
@@ -51,7 +52,10 @@ router.post('/', async (req, res) => {
     location
   };
 
-  const { data, error } = await supabase.from('tests').insert([record]).select();
+  // generating SHA-256 hash of the record
+  const dataHash = hashData(record);
+
+  const { data, error } = await supabase.from('tests').insert([record, dataHash]).select();
   const inserted = data as TestRecord[] | null;
 
   if (error || !inserted?.length) {
