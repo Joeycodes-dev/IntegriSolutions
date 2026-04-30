@@ -15,6 +15,7 @@ import { Feather, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../lib/AuthContext';
 import { createTest } from '../services/api';
+import { decryptLicensePayload, parseDecryptedLicensePayload, type DecryptedLicenseData } from '../lib/licenseDecryptor';
 import type { DriverLicenseData } from '../services/scanService';
 
 type RootStackParamList = {
@@ -67,6 +68,25 @@ function sanitizePayloadForDisplay(rawPayload: string): string {
     .replace(/[\x00-\x1F\x7F]/g, ' ')
     .replace(/\n+/g, '\n')
     .trim();
+}
+
+function formatRawPayloadForDisplay(rawPayload: string): string {
+  const sanitized = sanitizePayloadForDisplay(rawPayload);
+  const hasBinary = /[\x00-\x1F\x7F-\x9F\uFFFD]/.test(rawPayload);
+  const payloadSizeLabel = `Payload length: ${rawPayload.length} bytes`;
+
+  if (!sanitized && rawPayload.length > 0) {
+    const hexPreview = Array.from(rawPayload, (char) => `0x${(char.charCodeAt(0) & 0xff).toString(16).padStart(2, '0')}`)
+      .slice(0, 64)
+      .join(' ');
+    return `${payloadSizeLabel}\n${hexPreview}${rawPayload.length > 64 ? ' ...' : ''}`;
+  }
+
+  const formatted = hasBinary && sanitized
+    ? `${sanitized}\n\n[Contains non-printable binary bytes]`
+    : sanitized;
+
+  return `${payloadSizeLabel}${formatted ? `\n\n${formatted}` : ''}`.trim();
 }
 
 function parseAamvaBarcodeData(rawPayload: string): DriverLicenseData {
@@ -273,6 +293,8 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scannedData, setScannedData] = useState<DriverLicenseData | null>(null);
   const [licensePayload, setLicensePayload] = useState<string | null>(null);
+  const [decryptedLicenseData, setDecryptedLicenseData] = useState<DecryptedLicenseData | null>(null);
+  const [decryptError, setDecryptError] = useState<string | null>(null);
   const [barcodeScanned, setBarcodeScanned] = useState(false);
   const [bacReading, setBacReading] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -291,6 +313,8 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setHasPermission(true);
     setBarcodeScanned(false);
     setLicensePayload(null);
+    setDecryptedLicenseData(null);
+    setDecryptError(null);
     setStep('scan');
   };
 
@@ -306,9 +330,20 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       return;
     }
 
+    try {
+      const decryptedBytes = decryptLicensePayload(rawPayload);
+      const parsedDecrypted = parseDecryptedLicensePayload(decryptedBytes);
+      setDecryptedLicenseData(parsedDecrypted);
+      setDecryptError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setDecryptedLicenseData(null);
+      setDecryptError(message);
+    }
+
     const data = parsePdf417BarcodeData(rawPayload);
     setScannedData(data);
-    setLicensePayload(sanitizePayloadForDisplay(rawPayload));
+    setLicensePayload(formatRawPayloadForDisplay(rawPayload));
     setStep('reading');
   };
 
@@ -316,6 +351,8 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setStep('idle');
     setBarcodeScanned(false);
     setLicensePayload(null);
+    setDecryptedLicenseData(null);
+    setDecryptError(null);
   };
 
   const saveRecord = async () => {
@@ -427,6 +464,38 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               </View>
             </View>
 
+            {decryptedLicenseData ? (
+              <View style={styles.decryptedCard}>
+                <Text style={styles.overline}>Decrypted license payload</Text>
+                <Text style={styles.decryptedRow}>Surname: {decryptedLicenseData.surname || 'Unknown'}</Text>
+                <Text style={styles.decryptedRow}>Initials: {decryptedLicenseData.initials || 'Unknown'}</Text>
+                {decryptedLicenseData.prdpCode ? (
+                  <Text style={styles.decryptedRow}>PrDP Code: {decryptedLicenseData.prdpCode}</Text>
+                ) : null}
+                <Text style={styles.decryptedRow}>Vehicle codes: {decryptedLicenseData.vehicleCodes.filter(Boolean).join(', ') || 'N/A'}</Text>
+                <Text style={styles.decryptedRow}>License country: {decryptedLicenseData.licenseCountryOfIssue || 'N/A'}</Text>
+                <Text style={styles.decryptedRow}>Restrictions: {decryptedLicenseData.vehicleRestrictions.filter(Boolean).join(', ') || 'N/A'}</Text>
+              </View>
+            ) : null}
+            {decryptedLicenseData?.printableStrings?.length ? (
+              <View style={styles.decryptedPreviewCard}>
+                <Text style={styles.overline}>Decrypted payload preview</Text>
+                {decryptedLicenseData.printableStrings.slice(0, 5).map((item, index) => (
+                  <Text key={index} style={styles.decryptedPreviewText} numberOfLines={2} ellipsizeMode="tail">
+                    • {item}
+                  </Text>
+                ))}
+                {decryptedLicenseData.printableStrings.length > 5 ? (
+                  <Text style={styles.decryptedPreviewHint}>Showing first 5 parsed strings.</Text>
+                ) : null}
+              </View>
+            ) : null}
+            {decryptError ? (
+              <View style={styles.decryptErrorCard}>
+                <Text style={styles.decryptErrorLabel}>Decrypt error</Text>
+                <Text style={styles.decryptErrorText}>{decryptError}</Text>
+              </View>
+            ) : null}
             {licensePayload ? (
               <View style={styles.rawPayloadCard}>
                 <Text style={styles.overline}>Raw barcode payload</Text>
@@ -631,6 +700,58 @@ const styles = StyleSheet.create({
   rawPayloadText: {
     marginTop: 8,
     color: '#475569',
+    fontSize: 12,
+    lineHeight: 18
+  },
+  decryptedCard: {
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#c7d2f4'
+  },
+  decryptedRow: {
+    marginTop: 6,
+    color: '#0f172a',
+    fontSize: 13,
+    lineHeight: 20
+  },
+  decryptedPreviewCard: {
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: '#eef2ff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#c7d2fe'
+  },
+  decryptedPreviewText: {
+    marginTop: 8,
+    color: '#334155',
+    fontSize: 13,
+    lineHeight: 20
+  },
+  decryptedPreviewHint: {
+    marginTop: 10,
+    color: '#64748b',
+    fontSize: 12
+  },
+  decryptErrorCard: {
+    marginBottom: 20,
+    padding: 14,
+    backgroundColor: '#fef2f2',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#fecaca'
+  },
+  decryptErrorLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#b91c1c'
+  },
+  decryptErrorText: {
+    marginTop: 6,
+    color: '#991b1b',
     fontSize: 12,
     lineHeight: 18
   },
