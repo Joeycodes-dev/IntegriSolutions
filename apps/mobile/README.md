@@ -1,6 +1,6 @@
 # Integriscan Mobile
 
-This folder contains an Expo-managed React Native app built with TypeScript.
+React Native (Expo) mobile app used by traffic officers for roadside DUI testing.
 
 ## Getting Started
 
@@ -8,7 +8,7 @@ This folder contains an Expo-managed React Native app built with TypeScript.
    `npm install`
 
 2. Start the Expo dev server:
-   `npm start`
+   `npx expo start`
 
 3. Run on Android:
    `npm run android`
@@ -19,4 +19,4 @@ This folder contains an Expo-managed React Native app built with TypeScript.
 ## Notes
 
 - The app uses React Navigation for native screen navigation.
-- The `eas.json` file is included for production build profiles.
+- Make sure the backend API is running before testing on-device features.
