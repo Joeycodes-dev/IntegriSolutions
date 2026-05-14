@@ -10,7 +10,7 @@ export interface UserProfile {
 }
 
 export interface TestRecord {
-  id: string;
+  id?: string;
   officerId: string;
   officerName: string;
   badgeNumber: string;
@@ -20,6 +20,7 @@ export interface TestRecord {
   bacReading: number;
   result: 'pass' | 'fail';
   status: string;
+  hash?: string;
   createdAt: string;
   location: { lat: number; lng: number };
 }

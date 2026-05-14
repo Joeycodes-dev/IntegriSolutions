@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -33,7 +33,13 @@ export function LoginScreen({ navigation }: Props) {
   const [devMode, setDevMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { signIn, signInLocal } = useAuth();
+  const { signIn, signInLocal, isRestoring, profile } = useAuth();
+
+  useEffect(() => {
+    if (!isRestoring && profile) {
+      navigation.replace('OfficerDashboard');
+    }
+  }, [isRestoring, profile, navigation]);
 
   const handleSubmit = async () => {
     setError(null);
@@ -56,7 +62,7 @@ export function LoginScreen({ navigation }: Props) {
           createdAt: new Date().toISOString()
         };
 
-        signInLocal(profile);
+        await signInLocal(profile);
         navigation.replace('OfficerDashboard');
         return;
       }
@@ -64,7 +70,7 @@ export function LoginScreen({ navigation }: Props) {
       if (isLogin) {
         const response = await login(email.trim(), password);
         if (response.session?.access_token && response.profile) {
-          signIn(response.profile as UserProfile, response.session.access_token);
+          await signIn(response.profile as UserProfile, response.session.access_token);
           navigation.replace('OfficerDashboard');
           return;
         }
@@ -74,7 +80,7 @@ export function LoginScreen({ navigation }: Props) {
 
       const response = await register(email.trim(), password, name.trim(), badgeNumber.trim(), role);
       if (response.session?.access_token && response.profile) {
-        signIn(response.profile as UserProfile, response.session.access_token);
+        await signIn(response.profile as UserProfile, response.session.access_token);
         navigation.replace('OfficerDashboard');
         return;
       }
