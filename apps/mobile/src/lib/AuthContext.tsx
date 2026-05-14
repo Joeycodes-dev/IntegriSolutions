@@ -1,13 +1,21 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { UserProfile } from '../types';
-import { clearAccessToken, setAccessToken } from '../services/auth';
+import {
+  setAccessToken,
+  getAccessToken,
+  clearAccessToken,
+  saveProfile,
+  getStoredProfile,
+  clearStoredProfile
+} from '../services/auth';
 
 type AuthContextType = {
   profile: UserProfile | null;
   token: string | null;
-  signIn: (profile: UserProfile, token: string | null) => void;
-  signInLocal: (profile: UserProfile) => void;
-  signOut: () => void;
+  isRestoring: boolean;
+  signIn: (profile: UserProfile, token: string | null) => Promise<void>;
+  signInLocal: (profile: UserProfile) => Promise<void>;
+  signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -15,29 +23,51 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [isRestoring, setIsRestoring] = useState(true);
 
-  const signIn = (profileData: UserProfile, tokenValue: string | null) => {
+  useEffect(() => {
+    async function restoreSession() {
+      try {
+        const storedToken = await getAccessToken();
+        const storedProfile = await getStoredProfile();
+        if (storedToken && storedProfile) {
+          setProfile(storedProfile);
+          setToken(storedToken);
+        }
+      } catch {
+        // Session restore failed — user needs to re-login
+      } finally {
+        setIsRestoring(false);
+      }
+    }
+    restoreSession();
+  }, []);
+
+  const signIn = useCallback(async (profileData: UserProfile, tokenValue: string | null) => {
     setProfile(profileData);
     setToken(tokenValue);
     if (tokenValue) {
-      setAccessToken(tokenValue);
+      await setAccessToken(tokenValue);
     }
-  };
+    await saveProfile(profileData as any);
+  }, []);
 
-  const signInLocal = (profileData: UserProfile) => {
+  const signInLocal = useCallback(async (profileData: UserProfile) => {
     setProfile(profileData);
     setToken(null);
-    clearAccessToken();
-  };
+    await clearAccessToken();
+    await saveProfile(profileData as any);
+  }, []);
 
-  const signOut = () => {
+  const signOut = useCallback(async () => {
     setProfile(null);
     setToken(null);
-    clearAccessToken();
-  };
+    await clearAccessToken();
+    await clearStoredProfile();
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ profile, token, signIn, signInLocal, signOut }}>
+    <AuthContext.Provider value={{ profile, token, isRestoring, signIn, signInLocal, signOut }}>
       {children}
     </AuthContext.Provider>
   );

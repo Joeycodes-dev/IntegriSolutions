@@ -1,53 +1,54 @@
-import { NativeModules, Platform } from 'react-native';
-import Constants from 'expo-constants';
+import * as SecureStore from 'expo-secure-store';
+import { API_BASE_URL } from './constants';
 
-function parseHost(candidate: string) {
-  if (!candidate) {
-    return '';
+const TOKEN_KEY = 'integiscan_auth_token';
+const PROFILE_KEY = 'integiscan_user_profile';
+
+export type UserRole = 'officer' | 'supervisor';
+
+export interface AuthSession {
+  token: string;
+  profile: {
+    uid: string;
+    email: string;
+    name: string;
+    badgeNumber: string;
+    role: UserRole;
+    createdAt: string;
+  };
+}
+
+export async function setAccessToken(token: string): Promise<void> {
+  await SecureStore.setItemAsync(TOKEN_KEY, token);
+}
+
+export async function getAccessToken(): Promise<string | null> {
+  return SecureStore.getItemAsync(TOKEN_KEY);
+}
+
+export async function clearAccessToken(): Promise<void> {
+  await SecureStore.deleteItemAsync(TOKEN_KEY);
+}
+
+export async function saveProfile(profile: AuthSession['profile']): Promise<void> {
+  await SecureStore.setItemAsync(PROFILE_KEY, JSON.stringify(profile));
+}
+
+export async function getStoredProfile(): Promise<AuthSession['profile'] | null> {
+  const raw = await SecureStore.getItemAsync(PROFILE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
   }
-
-  const urlMatch = candidate.match(/https?:\/\/([^:/]+)(?::\d+)?/);
-  if (urlMatch?.[1]) {
-    return urlMatch[1];
-  }
-
-  const hostMatch = candidate.match(/^([^:]+)(?::\d+)?$/);
-  return hostMatch?.[1] ?? '';
 }
 
-function getApiHost() {
-  const scriptURL = (NativeModules?.SourceCode?.scriptURL ?? '') as string;
-  const debuggerHost = (Constants?.manifest?.debuggerHost ?? (Constants?.expoConfig as any)?.hostUri ?? '') as string;
-  const hostFromConstants = parseHost(debuggerHost);
-  const hostFromSourceCode = parseHost(scriptURL);
-
-  if (hostFromConstants) {
-    return hostFromConstants;
-  }
-  if (hostFromSourceCode) {
-    return hostFromSourceCode;
-  }
-
-  return Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
+export async function clearStoredProfile(): Promise<void> {
+  await SecureStore.deleteItemAsync(PROFILE_KEY);
 }
 
-const API_BASE_URL = `http://${getApiHost()}:4000/api`;
-
-let accessToken: string | null = null;
-
-export function setAccessToken(token: string) {
-  accessToken = token;
-}
-
-export function getAccessToken() {
-  return accessToken;
-}
-
-export function clearAccessToken() {
-  accessToken = null;
-}
-
-async function request<T>(path: string, options: RequestInit = {}) {
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
@@ -70,8 +71,6 @@ async function request<T>(path: string, options: RequestInit = {}) {
 
   return body as T;
 }
-
-export type UserRole = 'officer' | 'supervisor';
 
 export async function login(email: string, password: string) {
   return request<{ session?: { access_token: string }; profile: any }>('/auth/login', {

@@ -52,10 +52,12 @@ router.post('/', async (req, res) => {
     location
   };
 
-  // generating SHA-256 hash of the record
-  const dataHash = hashData(record);
+  const insertPayload = {
+    ...record,
+    hash: hashData(record)
+  };
 
-  const { data, error } = await supabase.from('tests').insert([record, dataHash]).select();
+  const { data, error } = await supabase.from('tests').insert([insertPayload]).select();
   const inserted = data as TestRecord[] | null;
 
   if (error || !inserted?.length) {

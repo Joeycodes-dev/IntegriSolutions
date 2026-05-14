@@ -14,7 +14,8 @@ import { Camera, CameraView, type BarcodeScanningResult } from 'expo-camera';
 import { Feather, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../lib/AuthContext';
-import { createTest } from '../services/api';
+import { generateId, saveLocally, syncPendingRecords } from '../services/sync';
+import { useSync } from '../lib/SyncContext';
 import { decryptLicensePayload, parseDecryptedLicensePayload, type DecryptedLicenseData } from '../lib/licenseDecryptor';
 import type { DriverLicenseData } from '../services/scanService';
 
@@ -289,6 +290,7 @@ function parsePdf417BarcodeData(rawPayload: string): DriverLicenseData {
 
 export function OfficerDashboardScreen({ navigation }: Props) {
   const { profile, signOut } = useAuth();
+  const { pendingCount, isSyncing } = useSync();
   const [step, setStep] = useState<OfficerStep>('idle');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scannedData, setScannedData] = useState<DriverLicenseData | null>(null);
@@ -356,7 +358,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   };
 
   const saveRecord = async () => {
-    if (!scannedData || !bacReading) {
+    if (!scannedData || !bacReading || !profile) {
       return;
     }
 
@@ -369,21 +371,32 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setIsSaving(true);
     try {
       const isOver = reading >= 0.05;
-      await createTest({
-        driverName: scannedData.name,
-        driverId: scannedData.licenseNumber,
+      const result = reading === 0 ? 'pass' : isOver ? 'fail' : 'pass';
+      const id = generateId();
+
+      await saveLocally({
+        id,
+        officerId: profile.uid,
+        officerName: profile.name,
+        badgeNumber: profile.badgeNumber,
+        driverName: `${scannedData.name} ${scannedData.surname}`.trim(),
+        driverId: scannedData.licenseNumber || scannedData.idNumber,
         driverDob: scannedData.dob,
         bacReading: reading,
-        result: reading === 0 ? 'pass' : isOver ? 'fail' : 'pass',
+        result,
         location: { lat: -25.7479, lng: 28.2293 }
       });
 
       setStep('idle');
       setScannedData(null);
       setBacReading('');
-      Alert.alert('Record saved', 'Record saved to incorruptible ledger.');
+      Alert.alert('Record saved', 'Record saved locally. It will sync when network is available.');
+
+      syncPendingRecords().catch(() => {
+        // Background sync attempt — errors are non-blocking
+      });
     } catch (error) {
-      Alert.alert('Save failed', 'Failed to sync record. Please try again later.');
+      Alert.alert('Save failed', 'Failed to save record. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -401,15 +414,29 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             <Text style={styles.headerSubtitle}>{profile.name} • {profile.badgeNumber}</Text>
           </View>
         </View>
-        <Pressable
-          style={styles.signOutButton}
-          onPress={() => {
-            signOut();
-            navigation.replace('Login');
-          }}
-        >
-          <Feather name="log-out" size={20} color="#475569" />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <View style={styles.syncBadge}>
+            {isSyncing ? (
+              <ActivityIndicator size="small" color="#4338ca" />
+            ) : pendingCount > 0 ? (
+              <>
+                <Feather name="cloud-off" size={14} color="#f59e0b" />
+                <Text style={styles.syncBadgeText}>{pendingCount}</Text>
+              </>
+            ) : (
+              <Feather name="check-circle" size={14} color="#22c55e" />
+            )}
+          </View>
+          <Pressable
+            style={styles.signOutButton}
+            onPress={async () => {
+              await signOut();
+              navigation.replace('Login');
+            }}
+          >
+            <Feather name="log-out" size={20} color="#475569" />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.content} style={styles.contentScroll}>
@@ -569,6 +596,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginTop: 20,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  syncBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4
+  },
+  syncBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#f59e0b'
   },
   headerTitle: {
     flexDirection: 'row',
