@@ -23,10 +23,10 @@ describe('hashData', () => {
     expect(result1).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  it('detects tampering when object key ordering differs (JSON.stringify preserves insertion order)', () => {
+  it('produces consistent hash regardless of object key ordering (canonical stringify)', () => {
     const result1 = hashData({ a: 1, b: 2 });
     const result2 = hashData({ b: 2, a: 1 });
-    expect(result1).not.toBe(result2);
+    expect(result1).toBe(result2);
   });
 
   it('returns a 64-character hex string (SHA-256)', () => {

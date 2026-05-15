@@ -14,6 +14,11 @@ app.use(helmet());
 app.use(cors({ origin: frontendUrl, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 
+app.use((req, _res, next) => {
+  console.log(`[req] ${req.method} ${req.path}`);
+  next();
+});
+
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
@@ -27,6 +32,8 @@ app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
-app.listen(Number(port), () => {
-  console.log(`Backend API running on http://localhost:${port}`);
+const server = app.listen(Number(port), '0.0.0.0', () => {
+  const addr = server.address();
+  const host = typeof addr === 'string' ? addr : addr?.address;
+  console.log(`Backend API running on http://${host}:${port}`);
 });

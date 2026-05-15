@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -28,6 +29,46 @@ type RootStackParamList = {
 type Props = NativeStackScreenProps<RootStackParamList, 'OfficerDashboard'>;
 
 type OfficerStep = 'idle' | 'scan' | 'reading';
+
+const DEV_SCAN_TIMEOUT_MS = 3000;
+const DEV_BAC_TIMEOUT_MS = 2000;
+
+function randomDevBac(): string {
+  const value = Math.random() * 0.12;
+  return value.toFixed(3);
+}
+
+function bacStatus(bac: string): { label: string; color: string } {
+  if (!bac) return { label: 'AWAITING', color: '#4338ca' };
+  const reading = parseFloat(bac);
+  if (Number.isNaN(reading)) return { label: 'AWAITING', color: '#4338ca' };
+  if (reading >= 0.05) return { label: 'FAIL', color: '#dc2626' };
+  if (reading === 0) return { label: 'PASS', color: '#16a34a' };
+  return { label: 'PASS', color: '#16a34a' };
+}
+
+const DEV_DUMMY_LICENSE: DriverLicenseData = {
+  name: 'Thabang',
+  surname: 'Kutumela',
+  initials: 'TJ',
+  idNumber: '9504125553083',
+  licenseNumber: 'DL123456789',
+  dob: '1995-04-12',
+  expiryDate: '2028-08-01',
+  licenseCodes: 'B EB',
+};
+
+const DEV_DUMMY_DECRYPTED: DecryptedLicenseData = {
+  vehicleCodes: ['B', 'EB'],
+  surname: 'Kutumela',
+  initials: 'TJ',
+  prdpCode: 'P',
+  idCountryOfIssue: 'ZAF',
+  licenseCountryOfIssue: 'ZAF',
+  vehicleRestrictions: ['None'],
+  printableStrings: ['Kutumela TJ', 'B EB', 'ZAF', '9504125553083', 'DL123456789'],
+  rawHex: '00'.repeat(128),
+};
 
 function normalizeDate(value: string): string | undefined {
   const normalized = value.replace(/\//g, '-').replace(/\s+/g, ' ').trim();
@@ -290,7 +331,8 @@ function parsePdf417BarcodeData(rawPayload: string): DriverLicenseData {
 
 export function OfficerDashboardScreen({ navigation }: Props) {
   const { profile, signOut } = useAuth();
-  const { pendingCount, isSyncing } = useSync();
+  const { pendingCount, failedCount, syncedCount, isSyncing, lastSyncedAt, forceSync, refreshCounts } = useSync();
+  const [syncModalVisible, setSyncModalVisible] = useState(false);
   const [step, setStep] = useState<OfficerStep>('idle');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scannedData, setScannedData] = useState<DriverLicenseData | null>(null);
@@ -300,6 +342,55 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [barcodeScanned, setBarcodeScanned] = useState(false);
   const [bacReading, setBacReading] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const devTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bacTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!__DEV__ || step !== 'scan') {
+      if (devTimerRef.current) {
+        clearTimeout(devTimerRef.current);
+        devTimerRef.current = null;
+      }
+      return;
+    }
+
+    devTimerRef.current = setTimeout(() => {
+      if (barcodeScanned) return;
+      setScannedData(DEV_DUMMY_LICENSE);
+      setDecryptedLicenseData(DEV_DUMMY_DECRYPTED);
+      setLicensePayload(null);
+      setDecryptError(null);
+      setStep('reading');
+    }, DEV_SCAN_TIMEOUT_MS);
+
+    return () => {
+      if (devTimerRef.current) {
+        clearTimeout(devTimerRef.current);
+        devTimerRef.current = null;
+      }
+    };
+  }, [step, barcodeScanned]);
+
+  useEffect(() => {
+    if (!__DEV__ || step !== 'reading' || bacReading) {
+      if (bacTimerRef.current) {
+        clearTimeout(bacTimerRef.current);
+        bacTimerRef.current = null;
+      }
+      return;
+    }
+
+    bacTimerRef.current = setTimeout(() => {
+      setBacReading(randomDevBac());
+    }, DEV_BAC_TIMEOUT_MS);
+
+    return () => {
+      if (bacTimerRef.current) {
+        clearTimeout(bacTimerRef.current);
+        bacTimerRef.current = null;
+      }
+    };
+  }, [step, bacReading]);
 
   if (!profile) {
     return null;
@@ -376,7 +467,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
       await saveLocally({
         id,
-        officerId: profile.uid,
+        officerId: profile.officerId ?? null,
         officerName: profile.name,
         badgeNumber: profile.badgeNumber,
         driverName: `${scannedData.name} ${scannedData.surname}`.trim(),
@@ -390,13 +481,16 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       setStep('idle');
       setScannedData(null);
       setBacReading('');
+      await refreshCounts();
       Alert.alert('Record saved', 'Record saved locally. It will sync when network is available.');
 
       syncPendingRecords().catch(() => {
         // Background sync attempt — errors are non-blocking
       });
     } catch (error) {
-      Alert.alert('Save failed', 'Failed to save record. Please try again.');
+      console.error('Save failed:', error);
+      const message = error instanceof Error ? error.message : 'Failed to save record. Please try again.';
+      Alert.alert('Save failed', message);
     } finally {
       setIsSaving(false);
     }
@@ -415,7 +509,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
           </View>
         </View>
         <View style={styles.headerActions}>
-          <View style={styles.syncBadge}>
+          <Pressable
+            style={styles.syncBadge}
+            onPress={() => setSyncModalVisible(true)}
+          >
             {isSyncing ? (
               <ActivityIndicator size="small" color="#4338ca" />
             ) : pendingCount > 0 ? (
@@ -426,7 +523,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             ) : (
               <Feather name="check-circle" size={14} color="#22c55e" />
             )}
-          </View>
+          </Pressable>
           <Pressable
             style={styles.signOutButton}
             onPress={async () => {
@@ -548,9 +645,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                 <Text style={styles.statusLabel}>Legal Limit</Text>
                 <Text style={styles.statusValue}>0.050</Text>
               </View>
-              <View style={styles.statusCardAlt}>
-                <Text style={styles.statusLabelAlt}>Status</Text>
-                <Text style={styles.statusValueAlt}>AWAITING</Text>
+              <View style={[styles.statusCardAlt, { borderColor: bacStatus(bacReading).color }]}>
+                <Text style={[styles.statusLabelAlt, { color: bacStatus(bacReading).color }]}>Status</Text>
+                <Text style={[styles.statusValueAlt, { color: bacStatus(bacReading).color }]}>{bacStatus(bacReading).label}</Text>
               </View>
             </View>
 
@@ -576,6 +673,71 @@ export function OfficerDashboardScreen({ navigation }: Props) {
           <Text style={styles.navLabelInactive}>Audit</Text>
         </Pressable>
       </View>
+
+      <Modal
+        visible={syncModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSyncModalVisible(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setSyncModalVisible(false)}>
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Sync Status</Text>
+              <Pressable onPress={() => setSyncModalVisible(false)}>
+                <Feather name="x" size={20} color="#64748b" />
+              </Pressable>
+            </View>
+
+            <View style={styles.modalBody}>
+              <View style={styles.modalRow}>
+                <View style={[styles.modalDot, { backgroundColor: '#22c55e' }]} />
+                <Text style={styles.modalLabel}>Synced</Text>
+                <Text style={styles.modalValue}>{syncedCount}</Text>
+              </View>
+
+              <View style={styles.modalRow}>
+                <View style={[styles.modalDot, { backgroundColor: '#f59e0b' }]} />
+                <Text style={styles.modalLabel}>Pending Sync</Text>
+                <Text style={styles.modalValue}>{pendingCount}</Text>
+              </View>
+
+              <View style={styles.modalRow}>
+                <View style={[styles.modalDot, { backgroundColor: '#ef4444' }]} />
+                <Text style={styles.modalLabel}>Failed</Text>
+                <Text style={styles.modalValue}>{failedCount}</Text>
+              </View>
+            </View>
+
+            {lastSyncedAt && (
+              <View style={styles.modalFooter}>
+                <Feather name="clock" size={12} color="#94a3b8" />
+                <Text style={styles.modalFooterText}>
+                  Last sync: {lastSyncedAt.toLocaleTimeString()}
+                </Text>
+              </View>
+            )}
+
+            <Pressable
+              style={[styles.modalSyncButton, isSyncing && styles.buttonDisabled]}
+              onPress={async () => {
+                await forceSync();
+                setSyncModalVisible(false);
+              }}
+              disabled={isSyncing}
+            >
+              {isSyncing ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Feather name="refresh-cw" size={16} color="#fff" />
+                  <Text style={styles.modalSyncButtonText}>Force Sync</Text>
+                </>
+              )}
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -969,5 +1131,89 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.7
-  }
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    width: '100%',
+    maxWidth: 340,
+    padding: 24,
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  modalBody: {
+    gap: 12,
+    marginBottom: 16,
+  },
+  modalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+  },
+  modalDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  modalLabel: {
+    flex: 1,
+    fontSize: 14,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  modalValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 16,
+    paddingHorizontal: 4,
+  },
+  modalFooterText: {
+    fontSize: 12,
+    color: '#94a3b8',
+  },
+  modalSyncButton: {
+    backgroundColor: '#4338ca',
+    borderRadius: 14,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  modalSyncButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
 });

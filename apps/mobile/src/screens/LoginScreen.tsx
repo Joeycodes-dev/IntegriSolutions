@@ -5,13 +5,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { login, register, type UserRole } from '../services/auth';
+import { login, register } from '../services/auth';
 import { useAuth } from '../lib/AuthContext';
 import type { UserProfile } from '../types';
 
@@ -23,13 +24,31 @@ type RootStackParamList = {
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
 
+const PROVINCES = ['Gauteng', 'Western Cape', 'KwaZulu-Natal', 'Eastern Cape', 'Free State', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape'];
+const REGIONS = ['Johannesburg', 'Pretoria', 'Cape Town', 'Durban', 'Port Elizabeth', 'Bloemfontein', 'Polokwane', 'Nelspruit', 'Rustenburg', 'Kimberley'];
+const EMPLOYMENT_STATUS = ['Active'];
+const OFFICER_TYPES = [
+  { id: 1, name: 'Traffic Officer' },
+  { id: 2, name: 'Road Safety Officer' },
+  { id: 3, name: 'Highway Patrol' }
+];
+const ROLES = [
+  { id: 1, name: 'Officer' }
+];
+
 export function LoginScreen({ navigation }: Props) {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [surname, setSurname] = useState('');
   const [badgeNumber, setBadgeNumber] = useState('');
-  const [role, setRole] = useState<UserRole>('officer');
+  const [idNumber, setIdNumber] = useState('');
+  const [employmentStatus, setEmploymentStatus] = useState('Active');
+  const [province, setProvince] = useState('Gauteng');
+  const [region, setRegion] = useState('Johannesburg');
+  const [officerTypeId, setOfficerTypeId] = useState(1);
+  const [roleId, setRoleId] = useState(1);
   const [devMode, setDevMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,10 +64,18 @@ export function LoginScreen({ navigation }: Props) {
     setError(null);
     setIsLoading(true);
 
-    if (!email || !password || (!isLogin && (!name || !badgeNumber))) {
-      setError('Please complete all required fields.');
+    if (!email || !password) {
+      setError('Email and password are required.');
       setIsLoading(false);
       return;
+    }
+
+    if (!isLogin) {
+      if (!name || !surname || !badgeNumber || !idNumber) {
+        setError('Please complete all required fields.');
+        setIsLoading(false);
+        return;
+      }
     }
 
     try {
@@ -57,8 +84,14 @@ export function LoginScreen({ navigation }: Props) {
           uid: `local-${Date.now()}`,
           email,
           name: isLogin ? email.split('@')[0] : name,
+          surname: isLogin ? '' : surname,
           badgeNumber: isLogin ? '0000' : badgeNumber,
-          role: isLogin ? 'officer' : role,
+          idNumber: isLogin ? '0000000000000' : idNumber,
+          employmentStatus: 'Active',
+          province: 'Gauteng',
+          region: 'Johannesburg',
+          officerTypeId: 1,
+          roleId: 1,
           createdAt: new Date().toISOString()
         };
 
@@ -78,7 +111,20 @@ export function LoginScreen({ navigation }: Props) {
         throw new Error('Login failed.');
       }
 
-      const response = await register(email.trim(), password, name.trim(), badgeNumber.trim(), role);
+      const response = await register({
+        email: email.trim(),
+        password,
+        name: name.trim(),
+        surname: surname.trim(),
+        badgeNumber: badgeNumber.trim(),
+        idNumber: idNumber.trim(),
+        employmentStatus,
+        province,
+        region,
+        officerTypeId,
+        roleId
+      });
+
       if (response.session?.access_token && response.profile) {
         await signIn(response.profile as UserProfile, response.session.access_token);
         navigation.replace('OfficerDashboard');
@@ -94,9 +140,33 @@ export function LoginScreen({ navigation }: Props) {
     }
   };
 
+  const renderDropdown = <T extends string | number>(
+    label: string,
+    value: T,
+    options: { label: string; value: T }[],
+    onChange: (val: T) => void
+  ) => (
+    <View style={styles.dropdownContainer}>
+      <Text style={styles.dropdownLabel}>{label}</Text>
+      <View style={styles.dropdownRow}>
+        {options.map((opt) => (
+          <Pressable
+            key={opt.value}
+            style={[styles.dropdownButton, value === opt.value && styles.dropdownButtonActive]}
+            onPress={() => onChange(opt.value)}
+          >
+            <Text style={[styles.dropdownButtonText, value === opt.value && styles.dropdownButtonTextActive]}>
+              {opt.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+
   return (
     <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.card}>
           <View style={styles.headerSection}>
             <View style={styles.brandBadge}>
@@ -114,7 +184,14 @@ export function LoginScreen({ navigation }: Props) {
                 <TextInput
                   value={name}
                   onChangeText={setName}
-                  placeholder="Full Name"
+                  placeholder="First Name"
+                  style={styles.input}
+                  placeholderTextColor="#94a3b8"
+                />
+                <TextInput
+                  value={surname}
+                  onChangeText={setSurname}
+                  placeholder="Surname"
                   style={styles.input}
                   placeholderTextColor="#94a3b8"
                 />
@@ -125,24 +202,20 @@ export function LoginScreen({ navigation }: Props) {
                   style={styles.input}
                   placeholderTextColor="#94a3b8"
                 />
-                <View style={styles.roleRow}>
-                  <Pressable
-                    style={[styles.roleButton, role === 'officer' ? styles.roleButtonActive : styles.roleButtonInactive]}
-                    onPress={() => setRole('officer')}
-                  >
-                    <Text style={[styles.roleButtonText, role === 'officer' && styles.roleButtonTextActive]}>Traffic Officer</Text>
-                  </Pressable>
-                  <Pressable
-                    disabled
-                    style={[
-                      styles.roleButton,
-                      styles.roleButtonInactive,
-                      styles.disabledRoleButton
-                    ]}
-                  >
-                    <Text style={[styles.roleButtonText, styles.disabledRoleButtonText]}>Supervisor</Text>
-                  </Pressable>
-                </View>
+                <TextInput
+                  value={idNumber}
+                  onChangeText={setIdNumber}
+                  placeholder="SA ID Number (13 digits)"
+                  keyboardType="number-pad"
+                  maxLength={13}
+                  style={styles.input}
+                  placeholderTextColor="#94a3b8"
+                />
+                {renderDropdown('Employment Status', employmentStatus, EMPLOYMENT_STATUS.map(s => ({ label: s, value: s })), setEmploymentStatus)}
+                {renderDropdown('Province', province, PROVINCES.map(p => ({ label: p, value: p })), setProvince)}
+                {renderDropdown('Region', region, REGIONS.map(r => ({ label: r, value: r })), setRegion)}
+                {renderDropdown('Officer Type', officerTypeId, OFFICER_TYPES.map(t => ({ label: t.name, value: t.id })), setOfficerTypeId)}
+                {renderDropdown('Role', roleId, ROLES.map(r => ({ label: r.name, value: r.id })), setRoleId)}
               </>
             )}
 
@@ -189,7 +262,7 @@ export function LoginScreen({ navigation }: Props) {
             </Text>
           </View>
         </View>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -200,7 +273,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc'
   },
   container: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'center',
     padding: 24
   },
@@ -267,54 +340,40 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#0f172a'
   },
-  roleRow: {
+  dropdownContainer: {
+    gap: 6
+  },
+  dropdownLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748b',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase'
+  },
+  dropdownRow: {
     flexDirection: 'row',
-    gap: 10
+    flexWrap: 'wrap',
+    gap: 8
   },
-  roleButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1
-  },
-  roleButtonActive: {
-    backgroundColor: '#eef2ff',
-    borderColor: '#c7d2fe'
-  },
-  roleButtonInactive: {
+  dropdownButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
     backgroundColor: '#f8fafc',
+    borderWidth: 1,
     borderColor: '#e2e8f0'
   },
-  disabledRoleButton: {
-    opacity: 0.5
+  dropdownButtonActive: {
+    backgroundColor: '#eef2ff',
+    borderColor: '#4338ca'
   },
-  roleButtonText: {
+  dropdownButtonText: {
+    fontSize: 12,
     color: '#475569',
-    fontSize: 14,
     fontWeight: '600'
   },
-  disabledRoleButtonText: {
-    color: '#94a3b8'
-  },
-  roleButtonTextActive: {
+  dropdownButtonTextActive: {
     color: '#4338ca'
-  },
-  primaryButton: {
-    backgroundColor: '#4338ca',
-    borderRadius: 16,
-    height: 56,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  buttonDisabled: {
-    opacity: 0.7
-  },
-  primaryButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '700'
   },
   devRow: {
     flexDirection: 'row',
@@ -346,6 +405,21 @@ const styles = StyleSheet.create({
   devLabel: {
     color: '#475569',
     fontSize: 14
+  },
+  primaryButton: {
+    backgroundColor: '#4338ca',
+    borderRadius: 16,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  buttonDisabled: {
+    opacity: 0.7
+  },
+  primaryButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700'
   },
   switchText: {
     marginTop: 14,

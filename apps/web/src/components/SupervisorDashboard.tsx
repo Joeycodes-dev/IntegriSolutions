@@ -7,18 +7,38 @@ import type { TestRecord } from '../types';
 export function SupervisorDashboard() {
   const { profile, signOut } = useAuth();
   const [tests, setTests] = useState<TestRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     const loadTests = async () => {
       try {
         const tests = await getTests();
-        setTests(tests as TestRecord[]);
-      } catch (error) {
-        console.error('Failed to load tests:', error instanceof Error ? error.message : 'Unknown error');
+        if (!cancelled) {
+          setTests(tests as TestRecord[]);
+          setError(null);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to load test data';
+        console.error('Failed to load tests:', message);
+        if (!cancelled) setError(message);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     };
 
     void loadTests();
+
+    const interval = setInterval(() => {
+      void loadTests();
+    }, 10000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   const summary = useMemo(() => {
@@ -122,7 +142,19 @@ export function SupervisorDashboard() {
                 <FileText size={16} /> Export shift report
               </button>
             </div>
+            {error && (
+              <div className="mx-6 mt-4 rounded-2xl bg-rose-50 border border-rose-200 p-4 text-sm text-rose-700 flex items-center gap-3">
+                <AlertCircle size={18} />
+                <span className="font-medium">{error}</span>
+              </div>
+            )}
             <div className="overflow-x-auto">
+              {loading ? (
+                <div className="flex items-center justify-center py-16 text-slate-500 text-sm">
+                  <span className="inline-block w-4 h-4 border-2 border-slate-300 border-t-indigo-600 rounded-full animate-spin mr-3" />
+                  Loading shift data…
+                </div>
+              ) : (
               <table className="min-w-full text-left text-sm text-slate-700">
                 <thead className="bg-slate-50 text-[10px] uppercase tracking-[0.26em] text-slate-500">
                   <tr>
@@ -160,8 +192,16 @@ export function SupervisorDashboard() {
                       </td>
                     </tr>
                   ))}
+                  {tests.length === 0 && !loading && (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center text-slate-400 text-sm">
+                        No test records found for this shift.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
+              )}
             </div>
           </div>
         </section>

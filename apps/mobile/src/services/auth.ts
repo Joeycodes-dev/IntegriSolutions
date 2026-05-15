@@ -10,10 +10,17 @@ export interface AuthSession {
   token: string;
   profile: {
     uid: string;
+    officerId?: number;
     email: string;
     name: string;
+    surname: string;
     badgeNumber: string;
-    role: UserRole;
+    idNumber: string;
+    employmentStatus: string;
+    province: string;
+    region: string;
+    officerTypeId: number;
+    roleId: number;
     createdAt: string;
   };
 }
@@ -79,15 +86,21 @@ export async function login(email: string, password: string) {
   });
 }
 
-export async function register(
-  email: string,
-  password: string,
-  name: string,
-  badgeNumber: string,
-  role: UserRole
-) {
+export async function register(params: {
+  email: string;
+  password: string;
+  name: string;
+  surname: string;
+  badgeNumber: string;
+  idNumber: string;
+  employmentStatus: string;
+  province: string;
+  region: string;
+  officerTypeId: number;
+  roleId: number;
+}) {
   return request<{ session?: { access_token: string }; profile: any }>('/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ email, password, name, badgeNumber, role })
+    body: JSON.stringify(params)
   });
 }

@@ -42,10 +42,22 @@ export async function login(email: string, password: string) {
   });
 }
 
-export async function register(email: string, password: string, name: string, badgeNumber: string, role: string) {
+export async function register(params: {
+  email: string;
+  password: string;
+  name: string;
+  surname: string;
+  badgeNumber: string;
+  idNumber: string;
+  employmentStatus: string;
+  province: string;
+  region: string;
+  officerTypeId: number;
+  roleId: number;
+}) {
   return request<{ session?: { access_token: string }; profile: any }>('/api/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ email, password, name, badgeNumber, role })
+    body: JSON.stringify(params)
   });
 }
 
@@ -62,12 +74,9 @@ export async function getProfile() {
 
 export async function getTests() {
   const token = getAccessToken();
-  if (!token) throw new Error('Not authenticated');
 
   return request<any[]>('/api/tests', {
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
   });
 }
 
