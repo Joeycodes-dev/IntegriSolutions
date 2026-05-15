@@ -4,7 +4,7 @@ export type SyncStatus = 'pending_sync' | 'synced' | 'failed';
 
 export interface LocalTestRecord {
   id: string;
-  officerId: string;
+  officerId: number | null;
   officerName: string;
   badgeNumber: string;
   driverName: string;
@@ -22,7 +22,7 @@ export interface LocalTestRecord {
 
 export interface LocalDraft {
   id: string;
-  officerId: string;
+  officerId: number | null;
   driverData: string;
   step: 'scan' | 'reading';
   createdAt: string;
@@ -71,7 +71,7 @@ export async function updateSyncStatus(
     );
   } else {
     await db.runAsync(
-      `UPDATE tests SET syncStatus = ? WHERE id = ?`,
+      `UPDATE tests SET syncStatus = ?, retryCount = retryCount + 1 WHERE id = ?`,
       [syncStatus, id]
     );
   }
@@ -93,48 +93,87 @@ export async function markAsFailed(id: string): Promise<void> {
   );
 }
 
-export async function getPendingSync(): Promise<LocalTestRecord[]> {
+export async function getPendingSync(officerId?: number | null): Promise<LocalTestRecord[]> {
   const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    return db.getAllAsync<LocalTestRecord>(
+      `SELECT * FROM tests WHERE syncStatus = 'pending_sync' AND officerId = ? ORDER BY createdAt ASC`,
+      [officerId]
+    );
+  }
   return db.getAllAsync<LocalTestRecord>(
-    `SELECT * FROM tests WHERE syncStatus = 'pending_sync' ORDER BY createdAt ASC`
+    `SELECT * FROM tests WHERE syncStatus = 'pending_sync' AND officerId IS NULL ORDER BY createdAt ASC`
   );
 }
 
-export async function getFailedSync(): Promise<LocalTestRecord[]> {
+export async function getFailedSync(officerId?: number | null): Promise<LocalTestRecord[]> {
   const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    return db.getAllAsync<LocalTestRecord>(
+      `SELECT * FROM tests WHERE syncStatus = 'failed' AND officerId = ? ORDER BY createdAt ASC`,
+      [officerId]
+    );
+  }
   return db.getAllAsync<LocalTestRecord>(
-    `SELECT * FROM tests WHERE syncStatus = 'failed' ORDER BY createdAt ASC`
+    `SELECT * FROM tests WHERE syncStatus = 'failed' AND officerId IS NULL ORDER BY createdAt ASC`
   );
 }
 
-export async function getSyncedCount(): Promise<number> {
+export async function getSyncedCount(officerId?: number | null): Promise<number> {
   const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    const row = await db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'synced' AND officerId = ?`,
+      [officerId]
+    );
+    return row?.count ?? 0;
+  }
   const row = await db.getFirstAsync<{ count: number }>(
-    `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'synced'`
+    `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'synced' AND officerId IS NULL`
   );
   return row?.count ?? 0;
 }
 
-export async function getPendingCount(): Promise<number> {
+export async function getPendingCount(officerId?: number | null): Promise<number> {
   const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    const row = await db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'pending_sync' AND officerId = ?`,
+      [officerId]
+    );
+    return row?.count ?? 0;
+  }
   const row = await db.getFirstAsync<{ count: number }>(
-    `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'pending_sync'`
+    `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'pending_sync' AND officerId IS NULL`
   );
   return row?.count ?? 0;
 }
 
-export async function getFailedCount(): Promise<number> {
+export async function getFailedCount(officerId?: number | null): Promise<number> {
   const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    const row = await db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'failed' AND officerId = ?`,
+      [officerId]
+    );
+    return row?.count ?? 0;
+  }
   const row = await db.getFirstAsync<{ count: number }>(
-    `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'failed'`
+    `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'failed' AND officerId IS NULL`
   );
   return row?.count ?? 0;
 }
 
-export async function getAllTests(): Promise<LocalTestRecord[]> {
+export async function getAllTests(officerId?: number | null): Promise<LocalTestRecord[]> {
   const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    return db.getAllAsync<LocalTestRecord>(
+      `SELECT * FROM tests WHERE officerId = ? ORDER BY createdAt DESC`,
+      [officerId]
+    );
+  }
   return db.getAllAsync<LocalTestRecord>(
-    `SELECT * FROM tests ORDER BY createdAt DESC`
+    `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC`
   );
 }
 

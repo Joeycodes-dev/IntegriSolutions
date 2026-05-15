@@ -1,24 +1,29 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { AppState } from 'react-native';
 import * as Network from 'expo-network';
-import { getPendingCount, getFailedCount } from '../db/repository';
+import { getPendingCount, getFailedCount, getSyncedCount } from '../db/repository';
 import { syncPendingRecords } from '../services/sync';
+import { useAuth } from '../lib/AuthContext';
 
 type SyncContextType = {
   pendingCount: number;
   failedCount: number;
+  syncedCount: number;
   isSyncing: boolean;
   lastSyncedAt: Date | null;
   forceSync: () => Promise<void>;
+  refreshCounts: () => Promise<void>;
 };
 
 const SyncContext = createContext<SyncContextType | undefined>(undefined);
 
-const SYNC_INTERVAL_MS = 30_000;
+const SYNC_INTERVAL_MS = 10_000;
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
+  const { profile } = useAuth();
   const [pendingCount, setPendingCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
+  const [syncedCount, setSyncedCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const isSyncingRef = useRef(false);
@@ -26,14 +31,17 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
   const refreshCounts = useCallback(async () => {
     try {
-      const pending = await getPendingCount();
-      const failed = await getFailedCount();
+      const officerId = profile?.officerId ?? null;
+      const pending = await getPendingCount(officerId);
+      const failed = await getFailedCount(officerId);
+      const synced = await getSyncedCount(officerId);
       setPendingCount(pending);
       setFailedCount(failed);
+      setSyncedCount(synced);
     } catch {
       // DB not ready yet
     }
-  }, []);
+  }, [profile?.officerId]);
 
   const doSync = useCallback(async () => {
     if (isSyncingRef.current) return;
@@ -53,20 +61,28 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     setIsSyncing(true);
 
     try {
-      const result = await syncPendingRecords();
+      const officerId = profile?.officerId ?? null;
+      const result = await syncPendingRecords(officerId);
       if (result.synced.length > 0) {
         setLastSyncedAt(new Date());
       }
+      if (result.failed.length > 0) {
+        console.warn('Sync: some records failed to sync');
+        for (const f of result.failed) {
+          console.warn(`  ${f.id}: ${f.error}`);
+        }
+      }
       // Retry failed records that haven't hit the cap
-      await syncPendingRecords();
-    } catch {
+      await syncPendingRecords(officerId);
+    } catch (error) {
+      console.error('Sync error:', error);
       // Sync will be retried on next interval
     } finally {
       isSyncingRef.current = false;
       setIsSyncing(false);
       await refreshCounts();
     }
-  }, [refreshCounts]);
+  }, [refreshCounts, profile?.officerId]);
 
   const forceSync = useCallback(async () => {
     await doSync();
@@ -103,7 +119,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   }, [refreshCounts, doSync]);
 
   return (
-    <SyncContext.Provider value={{ pendingCount, failedCount, isSyncing, lastSyncedAt, forceSync }}>
+    <SyncContext.Provider value={{ pendingCount, failedCount, syncedCount, isSyncing, lastSyncedAt, forceSync, refreshCounts }}>
       {children}
     </SyncContext.Provider>
   );

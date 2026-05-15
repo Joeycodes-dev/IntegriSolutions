@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
-import { supabase } from '../supabase';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import type { UserProfile } from '../types';
 
@@ -20,39 +19,39 @@ const router = Router();
 router.get('/', requireAuth, async (req, res) => {
   const authReq = req as AuthRequest;
 
-  const queryByUid = await serviceSupabase
-    .from('users')
+  const { data: officerRows, error: officerError } = await serviceSupabase
+    .from('officer_users')
     .select('*')
-    .eq('uid', authReq.userId)
+    .eq('officer_email_address', authReq.userEmail)
     .limit(1);
 
-  if (queryByUid.error) {
-    return res.status(404).json({ error: queryByUid.error.message });
+  if (officerError) {
+    return res.status(500).json({ error: officerError.message });
   }
 
-  const uidRows = Array.isArray(queryByUid.data) ? queryByUid.data : [];
-  if (uidRows.length > 0) {
-    return res.json(uidRows[0] as UserProfile);
+  const officerData = Array.isArray(officerRows) ? officerRows[0] : null;
+
+  if (!officerData) {
+    return res.status(404).json({ error: 'Officer profile not found' });
   }
 
-  if (authReq.userEmail) {
-    const queryByEmail = await serviceSupabase
-      .from('users')
-      .select('*')
-      .eq('email', authReq.userEmail)
-      .limit(1);
+  const profile: UserProfile = {
+    uid: authReq.userId,
+    officerId: officerData.officer_id,
+    email: officerData.officer_email_address,
+    name: officerData.officer_name,
+    surname: officerData.officer_surname,
+    badgeNumber: officerData.badge_number,
+    idNumber: String(officerData.officer_id_number),
+    employmentStatus: officerData.officer_employment_status,
+    province: officerData.province,
+    region: officerData.region,
+    officerTypeId: officerData.officer_type_id,
+    roleId: officerData.role_id,
+    createdAt: officerData.created_at
+  };
 
-    if (queryByEmail.error) {
-      return res.status(404).json({ error: queryByEmail.error.message });
-    }
-
-    const emailRows = Array.isArray(queryByEmail.data) ? queryByEmail.data : [];
-    if (emailRows.length > 0) {
-      return res.json(emailRows[0] as UserProfile);
-    }
-  }
-
-  return res.status(404).json({ error: 'Profile not found' });
+  return res.json(profile);
 });
 
 export default router;

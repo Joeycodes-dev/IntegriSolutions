@@ -1,26 +1,62 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { supabase } from '../supabase';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { hashData } from '../utilities/hash';
 import type { TestRecord } from '../types';
 
 const router = Router();
-router.use(requireAuth);
 
-router.get('/', async (req, res) => {
+// Soft auth for GET: validates token if present, but doesn't block anonymous requests
+async function softAuth(req: Request, _res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (token) {
+    const { data, error } = await supabase.auth.getUser(token);
+    if (!error && data.user) {
+      const authReq = req as AuthRequest;
+      authReq.userId = data.user.id;
+      authReq.userEmail = data.user.email ?? null;
+    }
+  }
+
+  return next();
+}
+
+router.use(softAuth);
+
+function toCamelCase(row: any): TestRecord {
+  return {
+    id: row.id,
+    officerId: row.officer_id,
+    officerName: row.officer_name,
+    badgeNumber: row.badge_number,
+    driverName: row.driver_name,
+    driverId: row.driver_id,
+    driverDob: row.driver_dob,
+    bacReading: row.bac_reading,
+    result: row.result,
+    location: row.location,
+    hash: row.hash,
+    createdAt: row.created_at
+  };
+}
+
+router.get('/', async (_req, res) => {
   const { data, error } = await supabase
     .from('tests')
     .select('*')
-    .order('createdAt', { ascending: false });
+    .order('created_at', { ascending: false });
 
   if (error) {
     return res.status(500).json({ error: error.message });
   }
 
-  return res.json(data ?? []);
+  const records = (data ?? []).map(toCamelCase);
+  return res.json(records);
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   const authReq = req as AuthRequest;
   const { driverName, driverId, driverDob, bacReading, result, location } = req.body;
 
@@ -28,28 +64,27 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'Missing or invalid test payload' });
   }
 
-  const { data: profile, error: profileError } = await supabase
-    .from('users')
-    .select('name, badgeNumber')
-    .eq('uid', authReq.userId)
+  const { data: officer, error: officerError } = await supabase
+    .from('officer_users')
+    .select('officer_name, badge_number')
+    .eq('officer_email_address', authReq.userEmail)
     .single();
 
-  if (profileError || !profile) {
-    return res.status(404).json({ error: profileError?.message ?? 'Officer profile not found' });
+  if (officerError || !officer) {
+    return res.status(404).json({ error: officerError?.message ?? 'Officer profile not found' });
   }
 
   const record = {
-    officerId: authReq.userId,
-    officerName: profile.name,
-    badgeNumber: profile.badgeNumber,
-    driverName,
-    driverId,
-    driverDob,
-    bacReading,
+    officer_id: authReq.userId,
+    officer_name: officer.officer_name,
+    badge_number: officer.badge_number,
+    driver_name: driverName,
+    driver_id: driverId,
+    driver_dob: driverDob,
+    bac_reading: bacReading,
     result,
-    status: 'completed',
-    createdAt: new Date().toISOString(),
-    location
+    created_at: new Date().toISOString(),
+    location: JSON.stringify(location)
   };
 
   const insertPayload = {
@@ -58,13 +93,13 @@ router.post('/', async (req, res) => {
   };
 
   const { data, error } = await supabase.from('tests').insert([insertPayload]).select();
-  const inserted = data as TestRecord[] | null;
+  const inserted = data ?? [];
 
-  if (error || !inserted?.length) {
+  if (error || !inserted.length) {
     return res.status(500).json({ error: error?.message ?? 'Failed to save test record' });
   }
 
-  return res.status(201).json(data[0]);
+  return res.status(201).json(toCamelCase(inserted[0]));
 });
 
 export default router;

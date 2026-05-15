@@ -4,10 +4,17 @@ import { AuthProvider, useAuth } from '../../src/lib/AuthContext';
 
 const mockProfile = {
   uid: 'abc-123',
+  officerId: 1,
   email: 'officer@test.com',
-  name: 'Test Officer',
+  name: 'Test',
+  surname: 'Officer',
   badgeNumber: 'B001',
-  role: 'officer' as const,
+  idNumber: 'ID001',
+  employmentStatus: 'Active',
+  province: 'TestProvince',
+  region: 'TestRegion',
+  officerTypeId: 1,
+  roleId: 2,
   createdAt: '2026-01-01T00:00:00Z',
 };
 
