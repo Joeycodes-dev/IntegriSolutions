@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
-import type { UserProfile, UserRole } from '../types';
+import type { UserProfile } from '../types';
 
 const router = Router();
 
@@ -23,85 +23,100 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
-  const { data, error } = await supabase.auth.signInWithPassword({
+  const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
     email,
     password
   });
 
-  if (error || !data.session || !data.user) {
-    return res.status(401).json({ error: error?.message ?? 'Login failed' });
+  if (authError || !authData.session || !authData.user) {
+    return res.status(401).json({ error: authError?.message ?? 'Login failed' });
   }
 
-  const { data: profileRows, error: profileError } = await serviceSupabase
-    .from('users')
+  const { data: officerRows, error: officerError } = await serviceSupabase
+    .from('officer_users')
     .select('*')
-    .eq('uid', data.user.id)
+    .eq('officer_email_address', email)
     .limit(1);
 
-  if (profileError) {
-    return res.status(500).json({ error: profileError.message });
+  if (officerError) {
+    return res.status(500).json({ error: officerError.message });
   }
 
-  let profileData = Array.isArray(profileRows) ? profileRows[0] : null;
+  const officerData = Array.isArray(officerRows) ? officerRows[0] : null;
 
-  if (!profileData && data.user.email) {
-    const { data: emailRows, error: emailError } = await serviceSupabase
-      .from('users')
-      .select('*')
-      .eq('email', data.user.email)
-      .limit(1);
-
-    if (emailError) {
-      return res.status(500).json({ error: emailError.message });
-    }
-
-    profileData = Array.isArray(emailRows) ? emailRows[0] : null;
+  if (!officerData) {
+    return res.status(404).json({ error: 'Officer profile not found. Please register first.' });
   }
 
-  if (!profileData) {
-    return res.status(404).json({ error: 'User profile not found. Please register first.' });
-  }
-
-  const profile = profileData as UserProfile;
+  const profile: UserProfile = {
+    uid: authData.user.id,
+    officerId: officerData.officer_id,
+    email: officerData.officer_email_address,
+    name: officerData.officer_name,
+    surname: officerData.officer_surname,
+    badgeNumber: officerData.badge_number,
+    idNumber: String(officerData.officer_id_number),
+    employmentStatus: officerData.officer_employment_status,
+    province: officerData.province,
+    region: officerData.region,
+    officerTypeId: officerData.officer_type_id,
+    roleId: officerData.role_id,
+    createdAt: officerData.created_at
+  };
 
   return res.json({
-    session: data.session,
-    user: data.user,
+    session: authData.session,
+    user: authData.user,
     profile
   });
 });
 
 router.post('/register', async (req, res) => {
-  const { email, password, name, badgeNumber, role } = req.body;
-  const normalizedRole = role === 'supervisor' ? 'supervisor' : 'officer';
-
-  if (!email || !password || !name || !badgeNumber) {
-    return res.status(400).json({ error: 'Email, password, name, and badge number are required' });
-  }
-
-  const { data, error } = await supabase.auth.admin.createUser({
+  const {
     email,
     password,
-    email_confirm: true,
-    user_metadata: { role: normalizedRole }
-  });
+    name,
+    surname,
+    badgeNumber,
+    idNumber,
+    employmentStatus,
+    province,
+    region,
+    officerTypeId,
+    roleId
+  } = req.body;
 
-  if (error || !data.user) {
-    return res.status(400).json({ error: error?.message ?? 'Registration failed' });
+  if (!email || !password || !name || !surname || !badgeNumber || !idNumber) {
+    return res.status(400).json({
+      error: 'Email, password, name, surname, badge number, and ID number are required'
+    });
   }
 
-  const profile: UserProfile = {
-    uid: data.user.id,
+  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email,
-    name,
-    badgeNumber,
-    role: normalizedRole as UserRole,
-    createdAt: new Date().toISOString()
-  };
+    password,
+    email_confirm: true
+  });
 
-  const { error: insertError } = await serviceSupabase.from('users').insert([profile]);
+  if (authError || !authData.user) {
+    return res.status(400).json({ error: authError?.message ?? 'Registration failed' });
+  }
+
+  const { error: insertError } = await serviceSupabase.from('officer_users').insert([{
+    officer_email_address: email,
+    officer_name: name,
+    officer_surname: surname,
+    officer_id_number: Number(idNumber),
+    badge_number: badgeNumber,
+    officer_employment_status: employmentStatus ?? 'Active',
+    province: province ?? '',
+    region: region ?? '',
+    officer_type_id: Number(officerTypeId ?? 1),
+    role_id: Number(roleId ?? 1)
+  }]);
 
   if (insertError) {
+    await serviceSupabase.auth.admin.deleteUser(authData.user.id);
     return res.status(500).json({ error: insertError.message });
   }
 
@@ -111,11 +126,35 @@ router.post('/register', async (req, res) => {
   });
 
   if (loginError || !loginData.session) {
-    return res.status(201).json({ user: data.user, profile });
+    return res.status(201).json({ user: authData.user });
   }
 
+  const { data: officerRows } = await serviceSupabase
+    .from('officer_users')
+    .select('*')
+    .eq('officer_email_address', email)
+    .limit(1);
+
+  const officerData = Array.isArray(officerRows) ? officerRows[0] : null;
+
+  const profile: UserProfile = {
+    uid: authData.user.id,
+    officerId: officerData?.officer_id,
+    email: officerData?.officer_email_address ?? email,
+    name: officerData?.officer_name ?? name,
+    surname: officerData?.officer_surname ?? surname,
+    badgeNumber: officerData?.badge_number ?? badgeNumber,
+    idNumber: String(officerData?.officer_id_number ?? idNumber),
+    employmentStatus: officerData?.officer_employment_status ?? 'Active',
+    province: officerData?.province ?? '',
+    region: officerData?.region ?? '',
+    officerTypeId: officerData?.officer_type_id ?? 1,
+    roleId: officerData?.role_id ?? 1,
+    createdAt: officerData?.created_at ?? new Date().toISOString()
+  };
+
   return res.status(201).json({
-    user: data.user,
+    user: authData.user,
     profile,
     session: loginData.session
   });

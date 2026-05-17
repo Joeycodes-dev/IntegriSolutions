@@ -1,44 +1,13 @@
-import { NativeModules, Platform } from 'react-native';
 import { getAccessToken } from './auth';
-import Constants from 'expo-constants';
-
-function parseHost(candidate: string) {
-  if (!candidate) {
-    return '';
-  }
-
-  const urlMatch = candidate.match(/https?:\/\/([^:/]+)(?::\d+)?/);
-  if (urlMatch?.[1]) {
-    return urlMatch[1];
-  }
-
-  const hostMatch = candidate.match(/^([^:]+)(?::\d+)?$/);
-  return hostMatch?.[1] ?? '';
-}
-
-function getApiHost() {
-  const scriptURL = (NativeModules?.SourceCode?.scriptURL ?? '') as string;
-  const debuggerHost = (Constants?.manifest?.debuggerHost ?? (Constants?.expoConfig as any)?.hostUri ?? '') as string;
-  const hostFromConstants = parseHost(debuggerHost);
-  const hostFromSourceCode = parseHost(scriptURL);
-
-  if (hostFromConstants) {
-    return hostFromConstants;
-  }
-  if (hostFromSourceCode) {
-    return hostFromSourceCode;
-  }
-
-  return Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
-}
-
-const API_BASE_URL = `http://${getApiHost()}:4000/api`;
+import { API_BASE_URL } from './constants';
 
 async function request<T>(path: string, options: RequestInit = {}) {
-  const token = getAccessToken();
+  const token = await getAccessToken();
+  const url = `${API_BASE_URL}${path}`;
+  console.log(`[api] fetch ${url}`);
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(url, {
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -63,5 +32,12 @@ export async function createTest(payload: Record<string, unknown>) {
   return request<any>('/tests', {
     method: 'POST',
     body: JSON.stringify(payload)
+  });
+}
+
+export async function syncRecords(records: Record<string, unknown>[]) {
+  return request<{ synced: string[]; failed: { id: string; error: string }[]; duplicates: string[] }>('/sync', {
+    method: 'POST',
+    body: JSON.stringify({ records })
   });
 }

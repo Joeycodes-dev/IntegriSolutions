@@ -5,16 +5,20 @@ import { login, register } from '../services/api';
 import { useAuth } from '../lib/AuthContext';
 import { Button } from './Button';
 import { Input } from './Input';
-import type { UserRole, UserProfile } from '../types';
+import type { UserProfile } from '../types';
 
 export function Login() {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [badge, setBadge] = useState('');
+  const [surname, setSurname] = useState('');
+  const [badgeNumber, setBadgeNumber] = useState('');
+  const [idNumber, setIdNumber] = useState('');
+  const [province, setProvince] = useState('Gauteng');
+  const [region, setRegion] = useState('Johannesburg');
+  const [officerTypeId, setOfficerTypeId] = useState(1);
   const [devMode, setDevMode] = useState(false);
-  const [role, setRole] = useState<UserRole>('supervisor');
   const [isLoading, setIsLoading] = useState(false);
 
   const { signIn, signInLocal } = useAuth();
@@ -29,8 +33,14 @@ export function Login() {
           uid: `local-${Date.now()}`,
           email,
           name: isLogin ? email.split('@')[0] : name,
-          badgeNumber: isLogin ? '0000' : badge,
-          role: isLogin ? 'officer' : role,
+          surname: isLogin ? '' : surname,
+          badgeNumber: isLogin ? '0000' : badgeNumber,
+          idNumber: isLogin ? '0000000000000' : idNumber,
+          employmentStatus: 'Active',
+          province: 'Gauteng',
+          region: 'Johannesburg',
+          officerTypeId: 1,
+          roleId: 2,
           createdAt: new Date().toISOString()
         };
 
@@ -47,8 +57,20 @@ export function Login() {
 
         throw new Error('Login failed.');
       } else {
-        const response = await register(email, password, name, badge, role);
-        const token = response.session?.access_token ?? (response.session as any)?.accessToken;
+        const response = await register({
+          email,
+          password,
+          name,
+          surname,
+          badgeNumber,
+          idNumber,
+          employmentStatus: 'Active',
+          province,
+          region,
+          officerTypeId,
+          roleId: 2
+        });
+        const token = response.session?.access_token;
         if (token && response.profile) {
           signIn(response.profile as UserProfile, token);
           return;
@@ -78,27 +100,10 @@ export function Login() {
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           {!isLogin && (
             <>
-              <Input label="Full Name" value={name} onChange={(e) => setName(e.target.value)} required />
-              <Input label="Badge / ID Number" value={badge} onChange={(e) => setBadge(e.target.value)} required />
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Role</label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${role === 'officer' ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-slate-50 border-slate-100 text-slate-500'} opacity-50 cursor-not-allowed`}
-                  >
-                    Traffic Officer
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRole('supervisor')}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${role === 'supervisor' ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-slate-50 border-slate-100 text-slate-500'}`}
-                  >
-                    Supervisor
-                  </button>
-                </div>
-              </div>
+              <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
+              <Input label="Surname" value={surname} onChange={(e) => setSurname(e.target.value)} required />
+              <Input label="Badge Number" value={badgeNumber} onChange={(e) => setBadgeNumber(e.target.value)} required />
+              <Input label="ID Number" value={idNumber} onChange={(e) => setIdNumber(e.target.value)} required />
             </>
           )}
 

@@ -1,17 +1,24 @@
 export type UserRole = 'officer' | 'supervisor';
 
 export interface UserProfile {
-  uid: string;
+  uid: string;                    // Supabase Auth user ID
+  officerId?: number;           // DB auto-generated officer_id
   email: string;
   name: string;
+  surname: string;
   badgeNumber: string;
-  role: UserRole;
+  idNumber: string;
+  employmentStatus: string;
+  province: string;
+  region: string;
+  officerTypeId: number;
+  roleId: number;
   createdAt: string;
 }
 
 export interface TestRecord {
-  id: string;
-  officerId: string;
+  id?: string;
+  officerId: number | null;
   officerName: string;
   badgeNumber: string;
   driverName: string;
@@ -19,7 +26,7 @@ export interface TestRecord {
   driverDob: string;
   bacReading: number;
   result: 'pass' | 'fail';
-  status: string;
+  hash?: string;
   createdAt: string;
-  location: { lat: number; lng: number };
+  location?: string;
 }
