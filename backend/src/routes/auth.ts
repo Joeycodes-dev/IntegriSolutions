@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 import type { UserProfile } from '../types';
+import { ROLE_ADMIN, portalUserId } from '../constants/roles';
+import { writeAuditLog } from '../utilities/auditLog';
 
 const router = Router();
 
@@ -92,6 +94,12 @@ router.post('/register', async (req, res) => {
     });
   }
 
+  if (Number(roleId) !== ROLE_ADMIN) {
+    return res.status(400).json({
+      error: 'Self-registration is only available for admin accounts. Supervisors are added by an administrator.'
+    });
+  }
+
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email,
     password,
@@ -152,6 +160,14 @@ router.post('/register', async (req, res) => {
     roleId: officerData?.role_id ?? 1,
     createdAt: officerData?.created_at ?? new Date().toISOString()
   };
+
+  if (officerData?.officer_id) {
+    await writeAuditLog(
+      email,
+      'Registered admin account',
+      portalUserId(Number(officerData.officer_id), ROLE_ADMIN)
+    );
+  }
 
   return res.status(201).json({
     user: authData.user,

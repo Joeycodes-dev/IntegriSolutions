@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import App from '../../src/App';
 import { AuthProvider } from '../../src/lib/AuthContext';
 import * as api from '../../src/services/api';
@@ -16,7 +16,7 @@ const mockProfile = {
   province: 'Gauteng',
   region: 'Johannesburg',
   officerTypeId: 1,
-  roleId: 1,
+  roleId: 2,
   createdAt: '2026-01-01T00:00:00Z',
 };
 
@@ -59,15 +59,17 @@ describe('Login → Dashboard end-to-end flow', () => {
       </AuthProvider>
     );
 
+    const form = screen.getByRole('form');
+
     // Login form is visible
-    expect(screen.getByRole('button', { name: /Login to Portal/i })).toBeInTheDocument();
+    expect(within(form).getByRole('button', { name: /^Login$/i })).toBeInTheDocument();
 
     // Fill in credentials
-    fireEvent.change(screen.getByLabelText(/Email/i), { target: { value: 'supervisor@test.com' } });
+    fireEvent.change(screen.getByLabelText(/Work Email/i), { target: { value: 'supervisor@test.com' } });
     fireEvent.change(screen.getByLabelText(/Password/i), { target: { value: 'password123' } });
 
     // Submit login
-    fireEvent.click(screen.getByRole('button', { name: /Login to Portal/i }));
+    fireEvent.click(within(form).getByRole('button', { name: /^Login$/i }));
 
     // Dashboard loads with data
     await waitFor(() => {
@@ -93,11 +95,11 @@ describe('Login → Dashboard end-to-end flow', () => {
     fireEvent.click(devCheckbox);
 
     // Fill in any email
-    fireEvent.change(screen.getByLabelText(/Email/i), { target: { value: 'dev@test.com' } });
+    fireEvent.change(screen.getByLabelText(/Work Email/i), { target: { value: 'dev@test.com' } });
     fireEvent.change(screen.getByLabelText(/Password/i), { target: { value: 'any' } });
 
     // Submit
-    fireEvent.click(screen.getByRole('button', { name: /Login to Portal/i }));
+    fireEvent.click(within(screen.getByRole('form')).getByRole('button', { name: /^Login$/i }));
 
     // Dashboard appears with empty state
     await waitFor(() => {
