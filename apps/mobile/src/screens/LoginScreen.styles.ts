@@ -58,7 +58,7 @@ export const styles = StyleSheet.create({
     tabHeader: {
         flexDirection: 'row',
         justifyContent: 'center',
-        gap: 50, // Space between Login and Register
+        gap: 50, 
         marginBottom: 35,
     },
     tabButton: {
