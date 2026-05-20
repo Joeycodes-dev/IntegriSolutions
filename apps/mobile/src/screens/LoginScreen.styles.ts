@@ -29,34 +29,56 @@ export const styles = StyleSheet.create({
         elevation: 8,
     },
 
+    headerContainer: {
+        alignItems: 'center',
+        marginBottom: 25,
+    },
+
+    logoBox: {
+        backgroundColor: colors.primaryDark,
+        width: 60,
+        height: 60,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 15,
+    },
+
+    mainTitle: {
+        fontSize: 26,
+        fontWeight: 'bold',
+        color: colors.primaryDark,
+        marginBottom: 5,
+    },
+
+    titleAccent: {
+        color: colors.accentBlue,
+    },
+
     tabHeader: {
         flexDirection: 'row',
         justifyContent: 'center',
-        gap: 40,
+        gap: 50, // Space between Login and Register
         marginBottom: 35,
     },
-    
     tabButton: {
         alignItems: 'center',
-        minWidth: 80,
+        justifyContent: 'center',
+        minWidth: 70,
     },
-
     tabLabel: {
         fontSize: 18,
         fontWeight: '700',
-        color: colors.textPrimary,
-        opacity: 0.5,
+        color: colors.textSecondary, 
     },
-
     activeTabLabel: {
-        opacity: 1,
+        color: colors.primaryDark, 
     },
-
     activeIndicator: {
         height: 3,
-        width: 30,
+        width: 45, 
         backgroundColor: colors.primaryDark,
-        marginTop: 8,
+        marginTop: 10,
         borderRadius: 2,
     },
 
@@ -154,6 +176,12 @@ export const styles = StyleSheet.create({
     },
 
     switchText: {
+        color: colors.primaryDark,
+        fontWeight: '600',
+        fontSize: 14,
+    },
+
+    switchLink: {
         color: colors.accentBlue,
         fontWeight: '600',
         fontSize: 14,
