@@ -6,18 +6,32 @@ if (!import.meta.env.VITE_API_BASE_URL) {
 }
 
 async function request<T>(path: string, options: RequestInit = {}) {
+  const { headers: optionHeaders, ...rest } = options;
   const response = await fetch(`${API_BASE}${path}`, {
+    ...rest,
     headers: {
       'Content-Type': 'application/json',
-      ...(options.headers ?? {})
-    },
-    ...options
+      ...(optionHeaders ?? {})
+    }
   });
 
-  const payload = await response.json().catch(() => ({}));
+  const rawText = await response.text();
+  let payload: Record<string, unknown> = {};
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      payload = { error: rawText.slice(0, 500) };
+    }
+  }
 
   if (!response.ok) {
-    throw new Error((payload as any)?.error ?? 'API request failed');
+    const message =
+      (typeof payload.error === 'string' ? payload.error : null) ||
+      (typeof payload.message === 'string' ? payload.message : null) ||
+      (rawText ? rawText.slice(0, 300) : null) ||
+      `Request failed (${response.status} ${response.statusText})`;
+    throw new Error(message);
   }
 
   return payload as T;
@@ -42,10 +56,22 @@ export async function login(email: string, password: string) {
   });
 }
 
-export async function register(email: string, password: string, name: string, badgeNumber: string, role: string) {
+export async function register(params: {
+  email: string;
+  password: string;
+  name: string;
+  surname: string;
+  badgeNumber: string;
+  idNumber: string;
+  employmentStatus: string;
+  province: string;
+  region: string;
+  officerTypeId: number;
+  roleId: number;
+}) {
   return request<{ session?: { access_token: string }; profile: any }>('/api/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ email, password, name, badgeNumber, role })
+    body: JSON.stringify(params)
   });
 }
 
@@ -62,12 +88,9 @@ export async function getProfile() {
 
 export async function getTests() {
   const token = getAccessToken();
-  if (!token) throw new Error('Not authenticated');
 
   return request<any[]>('/api/tests', {
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
   });
 }
 
@@ -81,5 +104,80 @@ export async function createTest(payload: Record<string, unknown>) {
       Authorization: `Bearer ${token}`
     },
     body: JSON.stringify(payload)
+  });
+}
+
+function authHeaders() {
+  const token = getAccessToken();
+  if (!token) throw new Error('Not authenticated');
+  return { Authorization: `Bearer ${token}` };
+}
+
+export async function getPortalUsers() {
+  return request<import('../types').PortalUser[]>('/api/admin/users', {
+    headers: authHeaders()
+  });
+}
+
+export async function createPortalUser(payload: {
+  email: string;
+  password: string;
+  name: string;
+  surname: string;
+  roleId: number;
+  station: string;
+  status: string;
+  serviceNumber?: string;
+  rank?: string;
+  phone?: string;
+  idNumber?: string;
+}) {
+  return request<import('../types').PortalUser>('/api/admin/users', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function removePortalUser(officerId: number) {
+  return request<{ removed: number }>(`/api/admin/users/${officerId}`, {
+    method: 'DELETE',
+    headers: authHeaders()
+  });
+}
+
+export async function getFieldOfficers() {
+  return request<import('../types').FieldOfficer[]>('/api/supervisor/officers', {
+    headers: authHeaders()
+  });
+}
+
+export async function createFieldOfficer(payload: {
+  email: string;
+  password: string;
+  name: string;
+  surname: string;
+  serviceNumber: string;
+  rank: string;
+  station: string;
+  phone?: string;
+  idNumber?: string;
+}) {
+  return request<import('../types').FieldOfficer>('/api/supervisor/officers', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function getAuditLogs() {
+  return request<import('../types').AuditLogEntry[]>('/api/admin/audit-logs', {
+    headers: authHeaders()
+  });
+}
+
+export async function getSystemSettings() {
+  return request<{ cards: import('../types').SystemConfigCard[] }>('/api/admin/settings', {
+    headers: authHeaders()
   });
 }

@@ -1,29 +1,48 @@
+import { useState } from 'react';
+import { AdminDashboard } from './components/admin/AdminDashboard';
 import { Login } from './components/Login';
+import { PortalAccessDenied } from './components/PortalAccessDenied';
+import { SplashScreen } from './components/SplashScreen';
 import { SupervisorDashboard } from './components/SupervisorDashboard';
 import { useAuth } from './lib/AuthContext';
+import { canAccessWebPortal, isAdmin, isSupervisor } from './lib/roles';
+
+const SPLASH_MIN_MS = import.meta.env.VITEST ? 0 : 2200;
+
+function AuthenticatedApp() {
+  const { profile } = useAuth();
+
+  if (!profile) return <Login />;
+
+  if (!canAccessWebPortal(profile.roleId)) {
+    return <PortalAccessDenied />;
+  }
+
+  if (isAdmin(profile.roleId)) {
+    return <AdminDashboard />;
+  }
+
+  if (isSupervisor(profile.roleId)) {
+    return <SupervisorDashboard />;
+  }
+
+  return <PortalAccessDenied />;
+}
 
 export default function App() {
-  const { user, profile, loading, signOut } = useAuth();
+  const { user, loading } = useAuth();
+  const [splashDone, setSplashDone] = useState(false);
 
-  if (loading) return null;
+  if (!splashDone) {
+    return (
+      <SplashScreen
+        onComplete={() => setSplashDone(true)}
+        ready={!loading}
+        minDurationMs={SPLASH_MIN_MS}
+      />
+    );
+  }
+
   if (!user) return <Login />;
-  if (profile?.role === 'supervisor') return <SupervisorDashboard />;
-
-  return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-      <div className="max-w-md rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 className="text-2xl font-bold text-slate-900 mb-4">Officer tools are mobile only</h1>
-        <p className="text-slate-600 mb-6">
-          The officer portal now lives in the mobile app. Use the mobile app to scan licenses and manage roadside stops.
-        </p>
-        <p className="text-sm text-slate-500">If you need supervisor access, sign in with a supervisor account.</p>
-        <button
-          onClick={signOut}
-          className="mt-4 w-full rounded-md bg-indigo-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-        >
-          Sign out
-        </button>
-      </div>
-    </div>
-  );
+  return <AuthenticatedApp />;
 }

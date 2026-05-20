@@ -3,9 +3,11 @@ import { API_BASE_URL } from './constants';
 
 async function request<T>(path: string, options: RequestInit = {}) {
   const token = await getAccessToken();
+  const url = `${API_BASE_URL}${path}`;
+  console.log(`[api] fetch ${url}`);
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(url, {
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),

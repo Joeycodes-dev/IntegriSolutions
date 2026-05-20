@@ -16,12 +16,15 @@ export function computeHash(payload: Record<string, unknown>): string {
 }
 
 export function generateId(): string {
-  return crypto.randomUUID();
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
 export async function saveLocally(params: {
   id: string;
-  officerId: string;
+  officerId: number | null;
   officerName: string;
   badgeNumber: string;
   driverName: string;
@@ -46,6 +49,10 @@ export async function saveLocally(params: {
 
   const hash = computeHash(recordPayload);
 
+  if (__DEV__) {
+    console.log(`[saveLocally] hash=${hash} canonical=${canonicalStringify(recordPayload)}`);
+  }
+
   const record: LocalTestRecord = {
     id: params.id,
     officerId: params.officerId,
@@ -68,11 +75,11 @@ export async function saveLocally(params: {
   return record;
 }
 
-export async function syncPendingRecords(): Promise<{
+export async function syncPendingRecords(officerId?: number | null): Promise<{
   synced: string[];
-  failed: string[];
+  failed: { id: string; error: string }[];
 }> {
-  const pending = await getPendingSync();
+  const pending = await getPendingSync(officerId);
 
   if (pending.length === 0) {
     return { synced: [], failed: [] };
@@ -96,7 +103,7 @@ export async function syncPendingRecords(): Promise<{
   try {
     const response = await syncRecords(records);
     const syncedIds: string[] = [];
-    const failedIds: string[] = [];
+    const failedIds: { id: string; error: string }[] = [];
 
     for (const id of response.synced) {
       await updateSyncStatus(id, 'synced', new Date().toISOString());
@@ -112,23 +119,25 @@ export async function syncPendingRecords(): Promise<{
       const record = pending.find((r) => r.id === failure.id);
       if (record && record.retryCount >= 4) {
         await updateSyncStatus(failure.id, 'failed');
-        failedIds.push(failure.id);
+        failedIds.push(failure);
       } else {
         await updateSyncStatus(failure.id, 'pending_sync');
-        failedIds.push(failure.id);
+        failedIds.push(failure);
       }
     }
 
     return { synced: syncedIds, failed: failedIds };
   } catch (error) {
-    const failedIds: string[] = [];
+    const message = error instanceof Error ? error.message : String(error);
+    const failedIds: { id: string; error: string }[] = [];
     for (const record of pending) {
+      const entry = { id: record.id, error: message };
       if (record.retryCount >= 4) {
         await updateSyncStatus(record.id, 'failed');
-        failedIds.push(record.id);
+        failedIds.push(entry);
       } else {
         await updateSyncStatus(record.id, 'pending_sync');
-        failedIds.push(record.id);
+        failedIds.push(entry);
       }
     }
     return { synced: [], failed: failedIds };
