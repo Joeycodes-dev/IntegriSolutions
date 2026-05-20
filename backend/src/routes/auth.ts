@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 import type { UserProfile } from '../types';
-import { ROLE_ADMIN, portalUserId } from '../constants/roles';
+import { ROLE_ADMIN, ROLE_SUPERVISOR, portalUserId, roleLabel } from '../constants/roles';
 import { writeAuditLog } from '../utilities/auditLog';
 
 const router = Router();
@@ -94,9 +94,9 @@ router.post('/register', async (req, res) => {
     });
   }
 
-  if (Number(roleId) !== ROLE_ADMIN) {
+  if (Number(roleId) !== ROLE_ADMIN && Number(roleId) !== ROLE_SUPERVISOR) {
     return res.status(400).json({
-      error: 'Self-registration is only available for admin accounts. Supervisors are added by an administrator.'
+      error: 'Self-registration is only available for admin and supervisor accounts. Officers must use the mobile app.'
     });
   }
 
@@ -164,8 +164,8 @@ router.post('/register', async (req, res) => {
   if (officerData?.officer_id) {
     await writeAuditLog(
       email,
-      'Registered admin account',
-      portalUserId(Number(officerData.officer_id), ROLE_ADMIN)
+      `Registered ${roleLabel(Number(roleId)).toLowerCase()} account`,
+      portalUserId(Number(officerData.officer_id), Number(roleId))
     );
   }
 

@@ -1,8 +1,20 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { hashData } from '../utilities/hash';
 import type { TestRecord } from '../types';
+
+const serviceSupabase = createClient(
+  process.env.SUPABASE_URL ?? '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+  {
+    auth: {
+      persistSession: false,
+      detectSessionInUrl: false
+    }
+  }
+);
 
 const router = Router();
 
@@ -43,7 +55,7 @@ function toCamelCase(row: any): TestRecord {
 }
 
 router.get('/', async (_req, res) => {
-  const { data, error } = await supabase
+  const { data, error } = await serviceSupabase
     .from('tests')
     .select('*')
     .order('created_at', { ascending: false });
@@ -64,7 +76,7 @@ router.post('/', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Missing or invalid test payload' });
   }
 
-  const { data: officer, error: officerError } = await supabase
+  const { data: officer, error: officerError } = await serviceSupabase
     .from('officer_users')
     .select('officer_name, badge_number')
     .eq('officer_email_address', authReq.userEmail)
@@ -92,7 +104,7 @@ router.post('/', requireAuth, async (req, res) => {
     hash: hashData(record)
   };
 
-  const { data, error } = await supabase.from('tests').insert([insertPayload]).select();
+  const { data, error } = await serviceSupabase.from('tests').insert([insertPayload]).select();
   const inserted = data ?? [];
 
   if (error || !inserted.length) {
