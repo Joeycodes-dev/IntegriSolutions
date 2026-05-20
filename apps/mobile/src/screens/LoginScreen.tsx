@@ -16,7 +16,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { login, register } from '../services/auth';
 import { useAuth } from '../lib/AuthContext';
 import type { UserProfile } from '../types';
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 
 import { colors } from '../styles/colors';
 import { styles } from './LoginScreen.styles';
@@ -175,15 +175,24 @@ export function LoginScreen({ navigation }: Props) {
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-
           <View style={styles.card}>
+            <View style={styles.headerContainer}>
+              <View style={styles.logoBox}>
+                <Ionicons name="shield-checkmark" size={34} color="#FFFFFF" />
+              </View>
+              <Text style={styles.mainTitle}>Integri<Text style={styles.titleAccent}>Scan</Text>
+              </Text>
+            </View>
+
             <View style={styles.tabHeader}>
               <TouchableOpacity onPress={() => setIsLogin(true)} style={styles.tabButton}>
                 <Text style={[styles.tabLabel, isLogin && styles.activeTabLabel]}>Login</Text>
+                {isLogin && <View style={styles.activeIndicator} />}
               </TouchableOpacity>
 
               <TouchableOpacity onPress={() => setIsLogin(false)} style={styles.tabButton}>
                 <Text style={[styles.tabLabel, !isLogin && styles.activeTabLabel]}>Register</Text>
+                {!isLogin && <View style={styles.activeIndicator} />}
               </TouchableOpacity>
             </View>
 
@@ -300,18 +309,17 @@ export function LoginScreen({ navigation }: Props) {
               {error ? <Text style={styles.error}>{error}</Text> : null}
 
               <Pressable style={[styles.primaryButton, isLoading && styles.buttonDisabled]} onPress={handleSubmit} disabled={isLoading}>
-                {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>{isLogin ? 'Login to Portal' : 'Register Service Profile'}</Text>}
+                {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>{isLogin ? 'Login' : 'Register Service Profile'}</Text>}
               </Pressable>
 
               <View style={styles.footerContainer}>
                 <Text style={styles.switchText}>
                   {isLogin ? "Don't have an account?" : 'Already have an account?'}
-                  <Text style={styles.switchText} onPress={() => setIsLogin(!isLogin)}>
+                  <Text style={styles.switchLink} onPress={() => setIsLogin(!isLogin)}>
                     {isLogin ? ' Register' : ' Login'}
                   </Text>
                 </Text>
               </View>
-
             </View>
           </View>
         </ScrollView>
@@ -319,173 +327,3 @@ export function LoginScreen({ navigation }: Props) {
     </SafeAreaView >
   );
 }
-
-// const styles = StyleSheet.create({
-//   page: {
-//     flex: 1,
-//     backgroundColor: '#f8fafc'
-//   },
-//   container: {
-//     flexGrow: 1,
-//     justifyContent: 'center',
-//     padding: 24
-//   },
-//   card: {
-//     backgroundColor: '#ffffff',
-//     borderRadius: 24,
-//     padding: 28,
-//     shadowColor: '#0f172a',
-//     shadowOpacity: 0.08,
-//     shadowRadius: 28,
-//     shadowOffset: { width: 0, height: 14 },
-//     elevation: 8
-//   },
-//   headerSection: {
-//     alignItems: 'center',
-//     marginBottom: 28
-//   },
-//   brandBadge: {
-//     width: 48,
-//     height: 48,
-//     borderRadius: 16,
-//     backgroundColor: '#4338ca',
-//     alignItems: 'center',
-//     justifyContent: 'center',
-//     marginBottom: 18,
-//     shadowColor: '#4338ca',
-//     shadowOpacity: 0.22,
-//     shadowRadius: 10,
-//     shadowOffset: { width: 0, height: 6 },
-//     elevation: 5
-//   },
-//   brandBadgeText: {
-//     color: '#fff',
-//     fontWeight: '900',
-//     fontSize: 24,
-//     letterSpacing: 0.5
-//   },
-//   title: {
-//     fontSize: 34,
-//     fontWeight: '800',
-//     color: '#0f172a',
-//     marginBottom: 8,
-//     textAlign: 'center'
-//   },
-//   titleAccent: {
-//     color: '#4338ca'
-//   },
-//   subtitle: {
-//     fontSize: 16,
-//     color: '#475569',
-//     marginBottom: 28,
-//     textAlign: 'center'
-//   },
-//   form: {
-//     gap: 14
-//   },
-//   input: {
-//     backgroundColor: '#f8fafc',
-//     borderColor: '#e2e8f0',
-//     borderWidth: 1,
-//     borderRadius: 16,
-//     paddingHorizontal: 16,
-//     paddingVertical: 14,
-//     fontSize: 16,
-//     color: '#0f172a'
-//   },
-//   dropdownContainer: {
-//     gap: 6
-//   },
-//   dropdownLabel: {
-//     fontSize: 12,
-//     fontWeight: '700',
-//     color: '#64748b',
-//     letterSpacing: 0.5,
-//     textTransform: 'uppercase'
-//   },
-//   dropdownRow: {
-//     flexDirection: 'row',
-//     flexWrap: 'wrap',
-//     gap: 8
-//   },
-//   dropdownButton: {
-//     paddingVertical: 8,
-//     paddingHorizontal: 12,
-//     borderRadius: 10,
-//     backgroundColor: '#f8fafc',
-//     borderWidth: 1,
-//     borderColor: '#e2e8f0'
-//   },
-//   dropdownButtonActive: {
-//     backgroundColor: '#eef2ff',
-//     borderColor: '#4338ca'
-//   },
-//   dropdownButtonText: {
-//     fontSize: 12,
-//     color: '#475569',
-//     fontWeight: '600'
-//   },
-//   dropdownButtonTextActive: {
-//     color: '#4338ca'
-//   },
-//   devRow: {
-//     flexDirection: 'row',
-//     alignItems: 'center',
-//     gap: 12,
-//     marginVertical: 8
-//   },
-//   devToggle: {
-//     width: 44,
-//     height: 24,
-//     borderRadius: 999,
-//     backgroundColor: '#e2e8f0',
-//     justifyContent: 'center',
-//     padding: 3
-//   },
-//   devToggleActive: {
-//     backgroundColor: '#4338ca'
-//   },
-//   devDot: {
-//     width: 18,
-//     height: 18,
-//     borderRadius: 9,
-//     backgroundColor: '#ffffff',
-//     alignSelf: 'flex-start'
-//   },
-//   devDotActive: {
-//     alignSelf: 'flex-end'
-//   },
-//   devLabel: {
-//     color: '#475569',
-//     fontSize: 14
-//   },
-//   primaryButton: {
-//     backgroundColor: '#4338ca',
-//     borderRadius: 16,
-//     height: 56,
-//     alignItems: 'center',
-//     justifyContent: 'center'
-//   },
-//   buttonDisabled: {
-//     opacity: 0.7
-//   },
-//   primaryButtonText: {
-//     color: '#ffffff',
-//     fontSize: 16,
-//     fontWeight: '700'
-//   },
-//   switchText: {
-//     marginTop: 14,
-//     textAlign: 'center',
-//     color: '#64748b',
-//     fontSize: 14
-//   },
-//   switchLink: {
-//     color: '#4338ca',
-//     fontWeight: '700'
-//   },
-//   error: {
-//     color: '#b91c1c',
-//     textAlign: 'center'
-//   }
-// });
