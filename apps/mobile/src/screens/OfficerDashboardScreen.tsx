@@ -540,7 +540,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         {step === 'idle' && (
           <View style={styles.card}>
             <View style={styles.cardIcon}>
-              <Feather name="camera" size={32} color="#4338ca" />
+              <Feather name="camera" size={32} color="#0D253F" />
             </View>
             <Text style={styles.cardTitle}>New Roadside Stop</Text>
             <Text style={styles.cardText}>Scan the driver's license to begin an incorruptible DUI record session.</Text>
@@ -665,7 +665,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
       <View style={styles.bottomNav}>
         <Pressable style={styles.navItem}>
-          <Ionicons name="bar-chart" size={24} color="#4338ca" />
+          <Ionicons name="bar-chart" size={24} color="#0D253F" />
           <Text style={styles.navLabel}>Reports</Text>
         </Pressable>
         <Pressable style={styles.navItem}>
@@ -843,7 +843,7 @@ const styles = StyleSheet.create({
     marginBottom: 24
   },
   primaryButton: {
-    backgroundColor: '#4338ca',
+    backgroundColor: '#0D253F',
     borderRadius: 16,
     height: 56,
     alignItems: 'center',
