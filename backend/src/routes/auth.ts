@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 import type { UserProfile } from '../types';
-import { ROLE_ADMIN, ROLE_SUPERVISOR, portalUserId, roleLabel } from '../constants/roles';
+import { portalUserId, roleLabel } from '../constants/roles';
 import { writeAuditLog } from '../utilities/auditLog';
 
 const router = Router();
@@ -94,11 +94,6 @@ router.post('/register', async (req, res) => {
     });
   }
 
-  if (Number(roleId) !== ROLE_ADMIN && Number(roleId) !== ROLE_SUPERVISOR) {
-    return res.status(400).json({
-      error: 'Self-registration is only available for admin and supervisor accounts. Officers must use the mobile app.'
-    });
-  }
 
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email,

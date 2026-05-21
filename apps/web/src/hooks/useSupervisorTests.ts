@@ -48,7 +48,7 @@ export function useSupervisorTests() {
   const todayTests = useMemo(() => tests.filter((t) => isToday(t.createdAt)), [tests]);
 
   const metrics = useMemo(() => {
-    const source = todayTests.length > 0 ? todayTests : tests;
+    const source = tests;
     const totalTests = source.length;
     const totalFailures = source.filter((t) => t.result === 'fail').length;
     const activeOfficers = new Set(

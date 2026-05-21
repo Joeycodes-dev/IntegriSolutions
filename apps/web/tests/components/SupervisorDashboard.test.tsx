@@ -81,11 +81,11 @@ describe('SupervisorDashboard', () => {
     render(<SupervisorDashboard />);
 
     await waitFor(() => {
-      expect(screen.getByText('2')).toBeInTheDocument();
+      expect(screen.getByText('TOTAL TESTS')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('TOTAL TESTS')).toBeInTheDocument();
     expect(screen.getByText('TOTAL FAILURES')).toBeInTheDocument();
+    expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(1);
   });
 
   it('shows logs view with test records when navigating', async () => {

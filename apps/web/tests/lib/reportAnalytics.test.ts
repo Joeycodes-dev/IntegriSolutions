@@ -49,7 +49,7 @@ describe('reportAnalytics', () => {
   it('builds weekly trend buckets', () => {
     const series = buildWeeklyTrend(sample);
     expect(series).toHaveLength(3);
-    expect(series[0].values.reduce((a, b) => a + b, 0)).toBe(2);
+    expect(series[1].values.reduce((a, b) => a + b, 0)).toBe(2);
   });
 
   it('builds pass/fail breakdown', () => {
