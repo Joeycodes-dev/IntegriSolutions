@@ -1,14 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { generateEvidencePdf } from '../../lib/generateEvidencePdf';
 import {
   ArrowLeft,
+  CheckCircle2,
   FileDown,
+  Loader2,
   MapPin,
   ShieldAlert,
   ShieldCheck
 } from 'lucide-react';
 import type { TestRecord } from '../../types';
 import { buildTestEvidence, resolveEvidencePhotoUrls } from '../../lib/testEvidence';
+import { annotateTest, getAnnotations, type Annotation } from '../../services/api';
 import { BORDER, NAVY, PAGE_BG, pageShell } from './supervisorStyles';
 
 interface EvidenceReviewProps {
@@ -27,10 +30,38 @@ function DetailField({ label, value }: { label: string; value: string }) {
   );
 }
 
+function formatAnnotationTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function statusColor(status: string): { bg: string; border: string; text: string } {
+  if (status === 'approved') return { bg: '#ecfdf5', border: '#a7f3d0', text: '#065f46' };
+  if (status === 'referred') return { bg: '#fffbeb', border: '#fde68a', text: '#92400e' };
+  return { bg: '#f8fafc', border: '#e2e8f0', text: '#475569' };
+}
+
 export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
   const evidence = useMemo(() => buildTestEvidence(test), [test]);
   const photos = useMemo(() => resolveEvidencePhotoUrls(evidence.photoUrls), [evidence.photoUrls]);
   const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [annotationsLoading, setAnnotationsLoading] = useState(true);
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState<'approved' | 'referred' | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAnnotationsLoading(true);
+    getAnnotations(test.id)
+      .then((data) => { if (!cancelled) setAnnotations(data); })
+      .catch(() => { if (!cancelled) setAnnotations([]); })
+      .finally(() => { if (!cancelled) setAnnotationsLoading(false); });
+    return () => { cancelled = true; };
+  }, [test.id]);
 
   const handleGeneratePdf = async () => {
     setGeneratingPdf(true);
@@ -40,6 +71,23 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
       window.alert(err instanceof Error ? err.message : 'Failed to generate PDF');
     } finally {
       setGeneratingPdf(false);
+    }
+  };
+
+  const handleAnnotate = async (status: 'approved' | 'referred') => {
+    setSubmitting(status);
+    setSubmitError(null);
+    try {
+      const created = await annotateTest(test.id, {
+        comment: comment.trim() || undefined,
+        status
+      });
+      setAnnotations((prev) => [created, ...prev]);
+      setComment('');
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Annotation failed');
+    } finally {
+      setSubmitting(null);
     }
   };
 
@@ -171,23 +219,94 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
             <h2 className="mb-2.5 text-[0.8125rem] font-bold" style={{ color: NAVY }}>
               Supervisor Action
             </h2>
+
+            <textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="Add a comment or reason (optional)..."
+              rows={3}
+              className="mb-2.5 w-full resize-none rounded-lg border px-3 py-2 text-[0.8125rem] text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-[#0D2137]/35 focus:ring-1 focus:ring-[#0D2137]/10"
+              style={{ borderColor: BORDER }}
+            />
+
+            {submitError && (
+              <p className="mb-2 text-[0.6875rem] font-medium text-rose-600">{submitError}</p>
+            )}
+
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <button
                 type="button"
-                className="inline-flex h-[38px] items-center justify-center gap-2 rounded-lg px-3 text-[0.75rem] font-bold text-white transition hover:brightness-110"
+                onClick={() => void handleAnnotate('approved')}
+                disabled={submitting !== null}
+                className="inline-flex h-[38px] items-center justify-center gap-2 rounded-lg px-3 text-[0.75rem] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                 style={{ backgroundColor: NAVY }}
               >
-                <ShieldCheck size={15} strokeWidth={2} />
+                {submitting === 'approved' ? (
+                  <Loader2 size={15} strokeWidth={2} className="animate-spin" />
+                ) : (
+                  <ShieldCheck size={15} strokeWidth={2} />
+                )}
                 Verify and Archive
               </button>
               <button
                 type="button"
-                className="inline-flex h-[38px] items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 text-[0.75rem] font-bold text-amber-900 transition hover:bg-amber-100"
+                onClick={() => void handleAnnotate('referred')}
+                disabled={submitting !== null}
+                className="inline-flex h-[38px] items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 text-[0.75rem] font-bold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <ShieldAlert size={15} strokeWidth={2} className="text-amber-700" />
-                Flag for Further Investigation
+                {submitting === 'referred' ? (
+                  <Loader2 size={15} strokeWidth={2} className="animate-spin text-amber-700" />
+                ) : (
+                  <ShieldAlert size={15} strokeWidth={2} className="text-amber-700" />
+                )}
+                Flag for Investigation
               </button>
             </div>
+          </section>
+
+          <section className="rounded-xl border bg-white p-3.5" style={{ borderColor: BORDER }}>
+            <h2 className="mb-2.5 text-[0.8125rem] font-bold" style={{ color: NAVY }}>
+              Annotation History
+            </h2>
+            {annotationsLoading ? (
+              <p className="py-4 text-center text-[0.6875rem] text-slate-400">Loading annotations...</p>
+            ) : annotations.length === 0 ? (
+              <p className="py-4 text-center text-[0.6875rem] text-slate-400">No annotations yet.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {annotations.map((ann) => {
+                  const colors = statusColor(ann.status);
+                  return (
+                    <div
+                      key={ann.id}
+                      className="rounded-lg border px-3 py-2"
+                      style={{ borderColor: colors.border, backgroundColor: colors.bg }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                          style={{ color: colors.text, backgroundColor: `${colors.border}40` }}
+                        >
+                          {ann.status === 'approved' && <CheckCircle2 size={10} />}
+                          {ann.status}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {formatAnnotationTime(ann.created_at)}
+                        </span>
+                      </div>
+                      {ann.comment && (
+                        <p className="mt-1.5 text-[0.75rem] leading-relaxed text-slate-700">
+                          {ann.comment}
+                        </p>
+                      )}
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        by {ann.supervisor_email}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
         </div>
       </div>

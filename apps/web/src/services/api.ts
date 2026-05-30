@@ -86,10 +86,32 @@ export async function getProfile() {
   });
 }
 
-export async function getTests() {
-  const token = getAccessToken();
+export interface TestFilters {
+  search?: string;
+  result?: 'pass' | 'fail' | '';
+  officer?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  bacMin?: string;
+  bacMax?: string;
+}
 
-  return request<any[]>('/api/tests', {
+export async function getTests(filters?: TestFilters) {
+  const token = getAccessToken();
+  const params = new URLSearchParams();
+
+  if (filters) {
+    for (const [key, value] of Object.entries(filters)) {
+      if (value && value !== '') {
+        params.set(key, value);
+      }
+    }
+  }
+
+  const queryString = params.toString();
+  const path = queryString ? `/api/tests?${queryString}` : '/api/tests';
+
+  return request<any[]>(path, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   });
 }
@@ -179,5 +201,28 @@ export async function getAuditLogs() {
 export async function getSystemSettings() {
   return request<{ cards: import('../types').SystemConfigCard[] }>('/api/admin/settings', {
     headers: authHeaders()
+  });
+}
+
+export interface Annotation {
+  id: number;
+  test_id: string;
+  supervisor_email: string;
+  comment: string | null;
+  status: 'pending' | 'approved' | 'referred';
+  created_at: string;
+}
+
+export async function getAnnotations(testId: string) {
+  return request<Annotation[]>(`/api/supervisor/tests/${testId}`, {
+    headers: authHeaders()
+  });
+}
+
+export async function annotateTest(testId: string, payload: { comment?: string; status: 'pending' | 'approved' | 'referred' }) {
+  return request<Annotation>(`/api/supervisor/tests/${testId}`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
   });
 }

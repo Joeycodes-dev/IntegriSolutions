@@ -1,19 +1,8 @@
 import type { Request, Response, NextFunction } from 'express';
-import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 import type { AuthRequest } from './auth';
 import { ROLE_ADMIN, ROLE_SUPERVISOR } from '../constants/roles';
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
+import { resolveRoleByEmail } from '../utilities/resolveProfile';
 
 export interface SupervisorRequest extends AuthRequest {
   supervisorOfficerId: number;
@@ -37,22 +26,18 @@ export async function requireSupervisor(req: Request, res: Response, next: NextF
   authReq.userId = data.user.id;
   authReq.userEmail = data.user.email ?? null;
 
-  const { data: officerRows, error: officerError } = await serviceSupabase
-    .from('officer_users')
-    .select('officer_id, role_id')
-    .eq('officer_email_address', authReq.userEmail)
-    .limit(1);
-
-  if (officerError) {
-    return res.status(500).json({ error: officerError.message });
+  let resolved;
+  try {
+    resolved = await resolveRoleByEmail(authReq.userEmail ?? '');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Role lookup failed';
+    return res.status(500).json({ error: message });
   }
 
-  const officer = Array.isArray(officerRows) ? officerRows[0] : null;
-  const roleId = Number(officer?.role_id);
-  if (!officer || (roleId !== ROLE_SUPERVISOR && roleId !== ROLE_ADMIN)) {
+  if (!resolved || (resolved.roleId !== ROLE_SUPERVISOR && resolved.roleId !== ROLE_ADMIN)) {
     return res.status(403).json({ error: 'Supervisor access required' });
   }
 
-  authReq.supervisorOfficerId = officer.officer_id;
+  authReq.supervisorOfficerId = resolved.dbId;
   return next();
 }

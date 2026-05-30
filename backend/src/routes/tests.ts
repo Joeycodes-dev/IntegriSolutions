@@ -54,11 +54,50 @@ function toCamelCase(row: any): TestRecord {
   };
 }
 
-router.get('/', async (_req, res) => {
-  const { data, error } = await serviceSupabase
+router.get('/', async (req, res) => {
+  let query = serviceSupabase
     .from('tests')
     .select('*')
     .order('created_at', { ascending: false });
+
+  const { search, result, officer, dateFrom, dateTo, bacMin, bacMax } = req.query;
+
+  if (typeof search === 'string' && search.trim()) {
+    const term = `%${search.trim()}%`;
+    query = query.or(`officer_name.ilike.${term},badge_number.ilike.${term},driver_name.ilike.${term},driver_id.ilike.${term},id.ilike.${term}`);
+  }
+
+  if (typeof result === 'string' && (result === 'pass' || result === 'fail')) {
+    query = query.eq('result', result);
+  }
+
+  if (typeof officer === 'string' && officer.trim()) {
+    query = query.ilike('officer_name', `%${officer.trim()}%`);
+  }
+
+  if (typeof dateFrom === 'string' && dateFrom.trim()) {
+    query = query.gte('created_at', dateFrom.trim());
+  }
+
+  if (typeof dateTo === 'string' && dateTo.trim()) {
+    query = query.lte('created_at', dateTo.trim());
+  }
+
+  if (typeof bacMin === 'string') {
+    const min = parseFloat(bacMin);
+    if (!Number.isNaN(min)) {
+      query = query.gte('bac_reading', min);
+    }
+  }
+
+  if (typeof bacMax === 'string') {
+    const max = parseFloat(bacMax);
+    if (!Number.isNaN(max)) {
+      query = query.lte('bac_reading', max);
+    }
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return res.status(500).json({ error: error.message });
