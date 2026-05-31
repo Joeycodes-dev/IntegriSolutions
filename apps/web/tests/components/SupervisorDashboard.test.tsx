@@ -153,7 +153,7 @@ describe('SupervisorDashboard', () => {
     expect(screen.getByText('Filters')).toBeInTheDocument();
     expect(screen.getByText('DUI Trends weekly')).toBeInTheDocument();
     expect(screen.getByText('Result Breakdown')).toBeInTheDocument();
-    expect(screen.getByText(/Showing \d+ record/i)).toBeInTheDocument();
+    expect(screen.getByText(/Showing \d+ records? for selected filters/i)).toBeInTheDocument();
   });
 
   it('polls for new data every 10 seconds', async () => {
