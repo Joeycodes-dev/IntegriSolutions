@@ -76,6 +76,7 @@ export interface TestRecord {
   createdAt: string;
   location?: string;
   hash?: string;
+  hashValid?: boolean | null;
   evidence?: TestEvidenceFields;
 }
 

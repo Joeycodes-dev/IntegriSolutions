@@ -1,6 +1,6 @@
 import { sha256 } from 'js-sha256';
 import { insertTest, updateSyncStatus, getPendingSync, type LocalTestRecord } from '../db/repository';
-import { syncRecords } from './api';
+import { syncRecords, uploadEvidencePhoto } from './api';
 
 function canonicalStringify(obj: Record<string, unknown>): string {
   const sorted: Record<string, unknown> = {};
@@ -33,6 +33,8 @@ export async function saveLocally(params: {
   bacReading: number;
   result: string;
   location: { lat: number; lng: number };
+  photoUri?: string | null;
+  originalTestId?: string | null;
 }): Promise<LocalTestRecord> {
   const recordPayload: Record<string, unknown> = {
     officerId: params.officerId,
@@ -44,7 +46,8 @@ export async function saveLocally(params: {
     bacReading: params.bacReading,
     result: params.result,
     location: params.location,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    originalTestId: params.originalTestId ?? null
   };
 
   const hash = computeHash(recordPayload);
@@ -68,7 +71,9 @@ export async function saveLocally(params: {
     syncStatus: 'pending_sync',
     createdAt: recordPayload.createdAt as string,
     syncedAt: null,
-    retryCount: 0
+    retryCount: 0,
+    photoUri: params.photoUri ?? null,
+    originalTestId: params.originalTestId ?? null
   };
 
   await insertTest(record);
@@ -97,7 +102,8 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
     result: record.result,
     location: JSON.parse(record.location),
     hash: record.hash,
-    createdAt: record.createdAt
+    createdAt: record.createdAt,
+    originalTestId: record.originalTestId
   }));
 
   try {
@@ -108,6 +114,20 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
     for (const id of response.synced) {
       await updateSyncStatus(id, 'synced', new Date().toISOString());
       syncedIds.push(id);
+
+      const record = pending.find((r) => r.id === id);
+      if (record?.photoUri) {
+        try {
+          await uploadEvidencePhoto(id, record.photoUri);
+          if (__DEV__) {
+            console.log(`[sync] uploaded photo for test ${id}`);
+          }
+        } catch (photoError) {
+          if (__DEV__) {
+            console.error(`[sync] photo upload failed for test ${id}:`, photoError);
+          }
+        }
+      }
     }
 
     for (const id of response.duplicates) {

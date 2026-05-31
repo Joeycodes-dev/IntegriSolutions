@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { HomeScreen } from './screens/HomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { OfficerDashboardScreen } from './screens/OfficerDashboardScreen';
+import { OfficerReportsScreen } from './screens/OfficerReportsScreen';
 import { AuthProvider } from './lib/AuthContext';
 import { SyncProvider } from './lib/SyncContext';
 import { getDB } from './db/client';
@@ -13,6 +14,7 @@ type RootStackParamList = {
   Login: undefined;
   Home: undefined;
   OfficerDashboard: undefined;
+  OfficerReports: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -38,6 +40,11 @@ export default function App() {
             <Stack.Screen
               name="OfficerDashboard"
               component={OfficerDashboardScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="OfficerReports"
+              component={OfficerReportsScreen}
               options={{ headerShown: false }}
             />
           </Stack.Navigator>

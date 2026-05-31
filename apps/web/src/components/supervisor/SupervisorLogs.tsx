@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, Filter, Search, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, Filter, Search, ShieldAlert, X } from 'lucide-react';
 import type { TestRecord } from '../../types';
 import { getTests, type TestFilters } from '../../services/api';
 import { BORDER, NAVY, PAGE_BG, pageContent, pageShell } from './supervisorStyles';
@@ -203,7 +203,7 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
               <table className="min-w-full text-left">
                 <thead>
                   <tr className="border-b" style={{ borderColor: BORDER }}>
-                    {['TIMESTAMP', 'OFFICER', 'DRIVER LICENCE', 'RESULT', 'READING'].map((col) => (
+                    {['TIMESTAMP', 'OFFICER', 'DRIVER LICENCE', 'RESULT', 'READING', 'INTEGRITY'].map((col) => (
                       <th
                         key={col}
                         className="px-4 py-2.5 text-[10px] font-bold tracking-[0.1em] text-slate-500"
@@ -216,7 +216,7 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
                 <tbody>
                   {filteredTests.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-4 py-10 text-center text-[0.75rem] text-slate-500">
+                      <td colSpan={6} className="px-4 py-10 text-center text-[0.75rem] text-slate-500">
                         {search.trim() || hasActiveFilters ? 'No logs match your filters.' : 'No test records found.'}
                       </td>
                     </tr>
@@ -260,6 +260,21 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
                           </td>
                           <td className="whitespace-nowrap px-4 py-2.5 text-[0.8125rem] text-slate-800">
                             {test.bacReading.toFixed(2)} g/100ml
+                          </td>
+                          <td className="px-4 py-2.5">
+                            {test.hashValid === true ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                                <CheckCircle2 size={10} strokeWidth={2.5} />
+                                VERIFIED
+                              </span>
+                            ) : test.hashValid === false ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700">
+                                <ShieldAlert size={10} strokeWidth={2.5} />
+                                TAMPERED
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-400">—</span>
+                            )}
                           </td>
                         </tr>
                       );

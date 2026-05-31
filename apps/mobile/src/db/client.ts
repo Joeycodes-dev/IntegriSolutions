@@ -21,7 +21,9 @@ const SCHEMA = `
     syncStatus TEXT NOT NULL DEFAULT 'pending_sync',
     createdAt TEXT NOT NULL,
     syncedAt TEXT,
-    retryCount INTEGER NOT NULL DEFAULT 0
+    retryCount INTEGER NOT NULL DEFAULT 0,
+    photoUri TEXT,
+    originalTestId TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_tests_sync_status ON tests(syncStatus);
@@ -48,6 +50,15 @@ export async function getDB(): Promise<SQLite.SQLiteDatabase> {
   dbInitPromise = (async () => {
     const db = await SQLite.openDatabaseAsync('integiscan.db');
     await db.execAsync(SCHEMA);
+
+    // Migrations for columns added after initial release
+    for (const stmt of [
+      'ALTER TABLE tests ADD COLUMN photoUri TEXT',
+      'ALTER TABLE tests ADD COLUMN originalTestId TEXT'
+    ]) {
+      try { await db.runAsync(stmt); } catch { /* column already exists */ }
+    }
+
     dbInstance = db;
     return db;
   })();
