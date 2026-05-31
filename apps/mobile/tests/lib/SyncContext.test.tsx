@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, waitFor, act } from '@testing-library/react-native';
 import { SyncProvider, useSync } from '../../src/lib/SyncContext';
 import * as repository from '../../src/db/repository';
@@ -6,39 +6,39 @@ import * as sync from '../../src/services/sync';
 import * as Network from 'expo-network';
 import { AppState } from 'react-native';
 
-vi.mock('../../src/lib/AuthContext', () => ({
+jest.mock('../../src/lib/AuthContext', () => ({
   useAuth: () => ({
     profile: { officerId: 1, name: 'Test Officer' }
   })
 }));
 
-vi.mock('../../src/db/repository', () => ({
-  getPendingCount: vi.fn(),
-  getFailedCount: vi.fn(),
-  getSyncedCount: vi.fn()
+jest.mock('../../src/db/repository', () => ({
+  getPendingCount: jest.fn(),
+  getFailedCount: jest.fn(),
+  getSyncedCount: jest.fn()
 }));
 
-vi.mock('../../src/services/sync', () => ({
-  syncPendingRecords: vi.fn()
+jest.mock('../../src/services/sync', () => ({
+  syncPendingRecords: jest.fn()
 }));
 
-vi.mock('expo-network', () => ({
-  getNetworkStateAsync: vi.fn()
+jest.mock('expo-network', () => ({
+  getNetworkStateAsync: jest.fn()
 }));
 
 describe('SyncContext', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.useFakeTimers();
-    (repository.getPendingCount as any).mockResolvedValue(5);
-    (repository.getFailedCount as any).mockResolvedValue(2);
-    (repository.getSyncedCount as any).mockResolvedValue(10);
-    (Network.getNetworkStateAsync as any).mockResolvedValue({ isConnected: true });
-    (sync.syncPendingRecords as any).mockResolvedValue({ synced: [], failed: [] });
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    (repository.getPendingCount as jest.Mock).mockResolvedValue(5);
+    (repository.getFailedCount as jest.Mock).mockResolvedValue(2);
+    (repository.getSyncedCount as jest.Mock).mockResolvedValue(10);
+    (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true });
+    (sync.syncPendingRecords as jest.Mock).mockResolvedValue({ synced: [], failed: [] });
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    jest.useRealTimers();
   });
 
   it('provides initial sync counts', async () => {
@@ -68,7 +68,7 @@ describe('SyncContext', () => {
       expect(result.current.pendingCount).toBe(5);
     });
 
-    (repository.getPendingCount as any).mockResolvedValue(3);
+    (repository.getPendingCount as jest.Mock).mockResolvedValue(3);
 
     await act(async () => {
       await result.current.refreshCounts();
@@ -80,7 +80,7 @@ describe('SyncContext', () => {
   });
 
   it('performs sync when forceSync is called', async () => {
-    (sync.syncPendingRecords as any).mockResolvedValue({
+    (sync.syncPendingRecords as jest.Mock).mockResolvedValue({
       synced: ['record-1'],
       failed: []
     });
@@ -96,7 +96,7 @@ describe('SyncContext', () => {
   });
 
   it('does not sync when offline', async () => {
-    (Network.getNetworkStateAsync as any).mockResolvedValue({ isConnected: false });
+    (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: false });
 
     const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
 
@@ -110,23 +110,27 @@ describe('SyncContext', () => {
   it('auto-syncs on interval', async () => {
     const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
 
-    // Initial sync happens immediately
-    await waitFor(() => {
-      expect(sync.syncPendingRecords).toHaveBeenCalledTimes(1);
-    });
-
-    // Advance timer by 10 seconds
+    // First interval fires after 10s — doSync calls syncPendingRecords twice (initial + retry)
     await act(async () => {
-      vi.advanceTimersByTime(10000);
+      jest.advanceTimersByTime(10000);
     });
 
     await waitFor(() => {
       expect(sync.syncPendingRecords).toHaveBeenCalledTimes(2);
     });
+
+    // Second interval fires after another 10s
+    await act(async () => {
+      jest.advanceTimersByTime(10000);
+    });
+
+    await waitFor(() => {
+      expect(sync.syncPendingRecords).toHaveBeenCalledTimes(4);
+    });
   });
 
   it('handles sync errors gracefully', async () => {
-    (sync.syncPendingRecords as any).mockRejectedValue(new Error('Network error'));
+    (sync.syncPendingRecords as jest.Mock).mockRejectedValue(new Error('Network error'));
 
     const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
 
