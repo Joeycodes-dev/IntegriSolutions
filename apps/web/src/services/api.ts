@@ -226,3 +226,52 @@ export async function annotateTest(testId: string, payload: { comment?: string; 
     body: JSON.stringify(payload)
   });
 }
+
+export interface EvidencePhoto {
+  id: number;
+  test_id: string;
+  photo_url: string;
+  notes: string | null;
+  uploaded_by: string;
+  created_at: string;
+}
+
+export async function getEvidence(testId: string) {
+  return request<EvidencePhoto[]>(`/api/evidence/${testId}`, {
+    headers: authHeaders()
+  });
+}
+
+export async function uploadEvidence(testId: string, file: File, notes?: string) {
+  const token = getAccessToken();
+  if (!token) throw new Error('Not authenticated');
+
+  const formData = new FormData();
+  formData.append('photo', file);
+  if (notes) formData.append('notes', notes);
+
+  const response = await fetch(`${API_BASE}/api/evidence/${testId}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData
+  });
+
+  const rawText = await response.text();
+  let payload: Record<string, unknown> = {};
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      payload = { error: rawText.slice(0, 500) };
+    }
+  }
+
+  if (!response.ok) {
+    const message =
+      (typeof payload.error === 'string' ? payload.error : null) ||
+      `Upload failed (${response.status} ${response.statusText})`;
+    throw new Error(message);
+  }
+
+  return payload as unknown as EvidencePhoto;
+}

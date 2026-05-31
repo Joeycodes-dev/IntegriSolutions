@@ -18,6 +18,8 @@ export interface LocalTestRecord {
   createdAt: string;
   syncedAt: string | null;
   retryCount: number;
+  photoUri: string | null;
+  originalTestId: string | null;
 }
 
 export interface LocalDraft {
@@ -31,8 +33,8 @@ export interface LocalDraft {
 export async function insertTest(record: LocalTestRecord): Promise<void> {
   const db = await getDB();
   await db.runAsync(
-    `INSERT INTO tests (id, officerId, officerName, badgeNumber, driverName, driverId, driverDob, bacReading, result, location, hash, syncStatus, createdAt, syncedAt, retryCount)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO tests (id, officerId, officerName, badgeNumber, driverName, driverId, driverDob, bacReading, result, location, hash, syncStatus, createdAt, syncedAt, retryCount, photoUri, originalTestId)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       record.id,
       record.officerId,
@@ -48,7 +50,9 @@ export async function insertTest(record: LocalTestRecord): Promise<void> {
       record.syncStatus,
       record.createdAt,
       record.syncedAt,
-      record.retryCount
+      record.retryCount,
+      record.photoUri,
+      record.originalTestId
     ]
   );
 }

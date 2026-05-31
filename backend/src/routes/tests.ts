@@ -38,8 +38,7 @@ async function softAuth(req: Request, _res: Response, next: NextFunction) {
 router.use(softAuth);
 
 function toCamelCase(row: any): TestRecord {
-  return {
-    id: row.id,
+  const reconstructed = {
     officerId: row.officer_id,
     officerName: row.officer_name,
     badgeNumber: row.badge_number,
@@ -49,7 +48,17 @@ function toCamelCase(row: any): TestRecord {
     bacReading: row.bac_reading,
     result: row.result,
     location: row.location,
+    createdAt: row.created_at,
+    originalTestId: row.original_test_id
+  };
+  const computedHash = hashData(reconstructed);
+  const hashValid = row.hash ? computedHash === row.hash : null;
+
+  return {
+    id: row.id,
+    ...reconstructed,
     hash: row.hash,
+    hashValid,
     createdAt: row.created_at
   };
 }
@@ -109,7 +118,7 @@ router.get('/', async (req, res) => {
 
 router.post('/', requireAuth, async (req, res) => {
   const authReq = req as AuthRequest;
-  const { driverName, driverId, driverDob, bacReading, result, location } = req.body;
+  const { driverName, driverId, driverDob, bacReading, result, location, originalTestId } = req.body;
 
   if (!driverName || !driverId || !driverDob || typeof bacReading !== 'number' || !result || !location) {
     return res.status(400).json({ error: 'Missing or invalid test payload' });
@@ -135,7 +144,8 @@ router.post('/', requireAuth, async (req, res) => {
     bac_reading: bacReading,
     result,
     created_at: new Date().toISOString(),
-    location: JSON.stringify(location)
+    location: JSON.stringify(location),
+    original_test_id: originalTestId || null
   };
 
   const insertPayload = {
