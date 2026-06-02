@@ -17,12 +17,14 @@ import { useAuth } from '../lib/AuthContext';
 import { useSync } from '../lib/SyncContext';
 import { getAllTests, type LocalTestRecord } from '../db/repository';
 import { invalidateTest } from '../services/api';
+import { OfficerBottomNav } from '../components/OfficerBottomNav';
 
 type RootStackParamList = {
   Login: undefined;
   Home: undefined;
   OfficerDashboard: undefined;
   OfficerReports: undefined;
+  Audit: undefined;
 };
 
 type Props = NativeStackScreenProps<RootStackParamList, 'OfficerReports'>;
@@ -81,7 +83,17 @@ export function OfficerReportsScreen({ navigation }: Props) {
 
     setIsInvalidating(true);
     try {
-      await invalidateTest(selectedTestId, invalidationReason.trim());
+      await invalidateTest(
+        selectedTestId,
+        invalidationReason.trim(),
+        profile
+          ? {
+              officerId: profile.officerId ?? null,
+              officerName: `${profile.name} ${profile.surname}`.trim(),
+              badgeNumber: profile.badgeNumber
+            }
+          : undefined
+      );
       Alert.alert('Success', 'Test has been marked as invalid.');
       setInvalidateModalVisible(false);
       setSelectedTestId(null);
@@ -214,16 +226,7 @@ export function OfficerReportsScreen({ navigation }: Props) {
         />
       )}
 
-      <View style={styles.bottomNav}>
-        <Pressable style={styles.navItem} onPress={() => navigation.goBack()}>
-          <Ionicons name="bar-chart" size={24} color="#4338ca" />
-          <Text style={styles.navLabel}>Reports</Text>
-        </Pressable>
-        <Pressable style={styles.navItem}>
-          <Feather name="search" size={24} color="#94a3b8" />
-          <Text style={styles.navLabelInactive}>Audit</Text>
-        </Pressable>
-      </View>
+      <OfficerBottomNav active="OfficerReports" />
 
       <Modal
         visible={invalidateModalVisible}
@@ -290,7 +293,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
-    paddingTop: Platform.OS === 'android' ? 24 : 50,
+    paddingTop: Platform.OS === 'android' ? 50 : 50,
     paddingBottom: 16,
     paddingHorizontal: 20,
     flexDirection: 'row',
@@ -463,31 +466,6 @@ const styles = StyleSheet.create({
   syncedAt: {
     fontSize: 11,
     color: '#94a3b8'
-  },
-  bottomNav: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    backgroundColor: '#ffffff'
-  },
-  navItem: {
-    alignItems: 'center'
-  },
-  navLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#4338ca',
-    marginTop: 4,
-    letterSpacing: 1
-  },
-  navLabelInactive: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#94a3b8',
-    marginTop: 4,
-    letterSpacing: 1
   },
   invalidateButton: {
     flexDirection: 'row',

@@ -2,6 +2,34 @@ import { getDB } from './client';
 
 export type SyncStatus = 'pending_sync' | 'synced' | 'failed';
 
+export type AuditAction =
+  | 'auth.login'
+  | 'auth.login.failed'
+  | 'auth.logout'
+  | 'test.saved'
+  | 'test.invalidated'
+  | 'test.invalidation.failed'
+  | 'sync.batch.completed'
+  | 'sync.batch.failed';
+
+export type AuditOutcome = 'success' | 'failure';
+export type AuditSeverity = 'info' | 'warning' | 'critical';
+
+export interface AuditEvent {
+  id: string;
+  occurredAt: string;
+  officerId: number | null;
+  officerName: string | null;
+  badgeNumber: string | null;
+  action: AuditAction;
+  entityType: string | null;
+  entityId: string | null;
+  outcome: AuditOutcome;
+  severity: AuditSeverity;
+  message: string;
+  metadata: string | null;
+}
+
 export interface LocalTestRecord {
   id: string;
   officerId: number | null;
@@ -233,4 +261,78 @@ export async function getLatestDraft(): Promise<LocalDraft | null> {
   return db.getFirstAsync<LocalDraft>(
     `SELECT * FROM drafts ORDER BY createdAt DESC LIMIT 1`
   );
+}
+
+export async function insertAuditEvent(event: AuditEvent): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `INSERT INTO audit_events
+       (id, occurredAt, officerId, officerName, badgeNumber, action, entityType, entityId, outcome, severity, message, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      event.id,
+      event.occurredAt,
+      event.officerId,
+      event.officerName,
+      event.badgeNumber,
+      event.action,
+      event.entityType,
+      event.entityId,
+      event.outcome,
+      event.severity,
+      event.message,
+      event.metadata
+    ]
+  );
+}
+
+export async function getAllAuditEvents(limit = 500): Promise<AuditEvent[]> {
+  const db = await getDB();
+  return db.getAllAsync<AuditEvent>(
+    `SELECT * FROM audit_events ORDER BY occurredAt DESC LIMIT ?`,
+    [limit]
+  );
+}
+
+export async function getAuditEventsByAction(
+  actionPrefix: string,
+  limit = 500
+): Promise<AuditEvent[]> {
+  const db = await getDB();
+  return db.getAllAsync<AuditEvent>(
+    `SELECT * FROM audit_events WHERE action LIKE ? ORDER BY occurredAt DESC LIMIT ?`,
+    [`${actionPrefix}%`, limit]
+  );
+}
+
+export async function getAuditEventCounts(): Promise<{
+  total: number;
+  auth: number;
+  tests: number;
+  sync: number;
+  failures: number;
+}> {
+  const db = await getDB();
+  const totalRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM audit_events`
+  );
+  const authRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM audit_events WHERE action LIKE 'auth.%'`
+  );
+  const testsRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM audit_events WHERE action LIKE 'test.%'`
+  );
+  const syncRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM audit_events WHERE action LIKE 'sync.%'`
+  );
+  const failuresRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM audit_events WHERE outcome = 'failure'`
+  );
+  return {
+    total: totalRow?.count ?? 0,
+    auth: authRow?.count ?? 0,
+    tests: testsRow?.count ?? 0,
+    sync: syncRow?.count ?? 0,
+    failures: failuresRow?.count ?? 0
+  };
 }
