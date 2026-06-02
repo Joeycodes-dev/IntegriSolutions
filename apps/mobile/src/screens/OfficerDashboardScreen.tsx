@@ -17,16 +17,20 @@ import * as ImagePicker from 'expo-image-picker';
 import { Feather, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../lib/AuthContext';
-import { generateId, saveLocally, syncPendingRecords } from '../services/sync';
+import { generateId } from '../lib/id';
+import { saveLocally, syncPendingRecords } from '../services/sync';
 import { useSync } from '../lib/SyncContext';
 import { decryptLicensePayload, parseDecryptedLicensePayload, type DecryptedLicenseData } from '../lib/licenseDecryptor';
 import type { DriverLicenseData } from '../services/scanService';
+import { OfficerBottomNav } from '../components/OfficerBottomNav';
+import { OfficerHome } from '../components/OfficerHome';
 
 type RootStackParamList = {
   Login: undefined;
   Home: undefined;
   OfficerDashboard: undefined;
   OfficerReports: undefined;
+  Audit: undefined;
 };
 
 type Props = NativeStackScreenProps<RootStackParamList, 'OfficerDashboard'>;
@@ -586,17 +590,18 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
       <ScrollView contentContainerStyle={styles.content} style={styles.contentScroll}>
         {step === 'idle' && (
-          <View style={styles.card}>
-            <View style={styles.cardIcon}>
-              <Feather name="camera" size={32} color="#4338ca" />
-            </View>
-            <Text style={styles.cardTitle}>New Roadside Stop</Text>
-            <Text style={styles.cardText}>Scan the driver's license to begin an incorruptible DUI record session.</Text>
-            <Pressable style={styles.primaryButton} onPress={startScan}>
-              <Feather name="camera" size={20} color="#fff" />
-              <Text style={styles.primaryButtonText}>START SESSION</Text>
-            </Pressable>
-          </View>
+          <OfficerHome
+            profile={profile}
+            pendingCount={pendingCount}
+            failedCount={failedCount}
+            syncedCount={syncedCount}
+            isSyncing={isSyncing}
+            lastSyncedAt={lastSyncedAt}
+            onStartSession={startScan}
+            onForceSync={forceSync}
+            onOpenReports={() => navigation.navigate('OfficerReports')}
+            onOpenAudit={() => navigation.navigate('Audit')}
+          />
         )}
 
         {step === 'scan' && hasPermission && (
@@ -762,16 +767,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         )}
       </ScrollView>
 
-      <View style={styles.bottomNav}>
-        <Pressable style={styles.navItem} onPress={() => navigation.navigate('OfficerReports')}>
-          <Ionicons name="bar-chart" size={24} color="#4338ca" />
-          <Text style={styles.navLabel}>Reports</Text>
-        </Pressable>
-        <Pressable style={styles.navItem}>
-          <Feather name="search" size={24} color="#94a3b8" />
-          <Text style={styles.navLabelInactive}>Audit</Text>
-        </Pressable>
-      </View>
+      <OfficerBottomNav active="OfficerDashboard" />
 
       <Modal
         visible={syncModalVisible}
@@ -850,13 +846,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
-    paddingTop: Platform.OS === 'android' ? 24 : 50,
+    paddingTop: Platform.OS === 'android' ? 50 : 50,
     paddingBottom: 16,
     paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 20,
   },
   headerActions: {
     flexDirection: 'row',
@@ -1245,31 +1240,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     fontSize: 12,
     color: '#64748b'
-  },
-  bottomNav: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    backgroundColor: '#ffffff'
-  },
-  navItem: {
-    alignItems: 'center'
-  },
-  navLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#4338ca',
-    marginTop: 4,
-    letterSpacing: 1
-  },
-  navLabelInactive: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#94a3b8',
-    marginTop: 4,
-    letterSpacing: 1
   },
   buttonDisabled: {
     opacity: 0.7

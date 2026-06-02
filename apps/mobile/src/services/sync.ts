@@ -1,6 +1,9 @@
 import { sha256 } from 'js-sha256';
 import { insertTest, updateSyncStatus, getPendingSync, type LocalTestRecord } from '../db/repository';
 import { syncRecords, uploadEvidencePhoto } from './api';
+import { logAuditEvent } from './audit';
+
+export { generateId } from '../lib/id';
 
 function canonicalStringify(obj: Record<string, unknown>): string {
   const sorted: Record<string, unknown> = {};
@@ -13,13 +16,6 @@ function canonicalStringify(obj: Record<string, unknown>): string {
 export function computeHash(payload: Record<string, unknown>): string {
   const canonical = canonicalStringify(payload);
   return sha256(canonical);
-}
-
-export function generateId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
 export async function saveLocally(params: {
@@ -77,6 +73,22 @@ export async function saveLocally(params: {
   };
 
   await insertTest(record);
+  await logAuditEvent({
+    action: 'test.saved',
+    outcome: 'success',
+    message: `Test saved for ${record.driverName} (${record.driverId})`,
+    entityType: 'test',
+    entityId: record.id,
+    officerId: record.officerId,
+    officerName: record.officerName,
+    badgeNumber: record.badgeNumber,
+    metadata: {
+      bacReading: record.bacReading,
+      result: record.result,
+      retest: !!record.originalTestId,
+      originalTestId: record.originalTestId
+    }
+  });
   return record;
 }
 
@@ -146,6 +158,21 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
       }
     }
 
+    await logAuditEvent({
+      action: 'sync.batch.completed',
+      outcome: failedIds.length > 0 ? 'failure' : 'success',
+      severity: failedIds.length > 0 ? 'warning' : 'info',
+      message: `Sync batch: ${syncedIds.length} synced, ${failedIds.length} failed (${pending.length} attempted)`,
+      entityType: 'sync',
+      metadata: {
+        attempted: pending.length,
+        synced: syncedIds.length,
+        duplicates: response.duplicates.length,
+        failed: failedIds.length,
+        failedIds: failedIds.map((f) => ({ id: f.id, error: f.error }))
+      }
+    });
+
     return { synced: syncedIds, failed: failedIds };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -160,6 +187,18 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
         failedIds.push(entry);
       }
     }
+    await logAuditEvent({
+      action: 'sync.batch.failed',
+      outcome: 'failure',
+      severity: 'critical',
+      message: `Sync batch failed: ${message}`,
+      entityType: 'sync',
+      metadata: {
+        attempted: pending.length,
+        failed: failedIds.length,
+        error: message
+      }
+    });
     return { synced: [], failed: failedIds };
   }
 }

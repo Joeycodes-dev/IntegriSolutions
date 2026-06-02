@@ -6,6 +6,7 @@ import { HomeScreen } from './screens/HomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { OfficerDashboardScreen } from './screens/OfficerDashboardScreen';
 import { OfficerReportsScreen } from './screens/OfficerReportsScreen';
+import { AuditScreen } from './screens/AuditScreen';
 import { AuthProvider } from './lib/AuthContext';
 import { SyncProvider } from './lib/SyncContext';
 import { getDB } from './db/client';
@@ -15,6 +16,7 @@ type RootStackParamList = {
   Home: undefined;
   OfficerDashboard: undefined;
   OfficerReports: undefined;
+  Audit: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -45,6 +47,11 @@ export default function App() {
             <Stack.Screen
               name="OfficerReports"
               component={OfficerReportsScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="Audit"
+              component={AuditScreen}
               options={{ headerShown: false }}
             />
           </Stack.Navigator>

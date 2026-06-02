@@ -36,6 +36,37 @@ const SCHEMA = `
     step TEXT NOT NULL DEFAULT 'scan',
     createdAt TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS audit_events (
+    id TEXT PRIMARY KEY NOT NULL,
+    occurredAt TEXT NOT NULL,
+    officerId INTEGER,
+    officerName TEXT,
+    badgeNumber TEXT,
+    action TEXT NOT NULL,
+    entityType TEXT,
+    entityId TEXT,
+    outcome TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    message TEXT NOT NULL,
+    metadata TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_audit_occurred_at ON audit_events(occurredAt);
+  CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_events(action);
+  CREATE INDEX IF NOT EXISTS idx_audit_officer ON audit_events(officerId);
+
+  CREATE TRIGGER IF NOT EXISTS audit_no_update
+  BEFORE UPDATE ON audit_events
+  BEGIN
+    SELECT RAISE(ABORT, 'audit_events is append-only');
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS audit_no_delete
+  BEFORE DELETE ON audit_events
+  BEGIN
+    SELECT RAISE(ABORT, 'audit_events is append-only');
+  END;
 `;
 
 export async function getDB(): Promise<SQLite.SQLiteDatabase> {
