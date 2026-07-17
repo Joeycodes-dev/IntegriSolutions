@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
-import type { UserProfile } from '../types';
-import { ROLE_ADMIN, portalUserId } from '../constants/roles';
+import { ROLE_SUPERVISOR } from '../constants/roles';
+import { portalUserId, roleLabel } from '../constants/roles';
 import { writeAuditLog } from '../utilities/auditLog';
+import { resolveProfileByEmail } from '../utilities/resolveProfile';
 
 const router = Router();
 
@@ -34,42 +35,22 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ error: authError?.message ?? 'Login failed' });
   }
 
-  const { data: officerRows, error: officerError } = await serviceSupabase
-    .from('officer_users')
-    .select('*')
-    .eq('officer_email_address', email)
-    .limit(1);
-
-  if (officerError) {
-    return res.status(500).json({ error: officerError.message });
+  let resolved;
+  try {
+    resolved = await resolveProfileByEmail(email, authData.user.id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Profile lookup failed';
+    return res.status(500).json({ error: message });
   }
 
-  const officerData = Array.isArray(officerRows) ? officerRows[0] : null;
-
-  if (!officerData) {
-    return res.status(404).json({ error: 'Officer profile not found. Please register first.' });
+  if (!resolved) {
+    return res.status(404).json({ error: 'Profile not found. Please register first.' });
   }
-
-  const profile: UserProfile = {
-    uid: authData.user.id,
-    officerId: officerData.officer_id,
-    email: officerData.officer_email_address,
-    name: officerData.officer_name,
-    surname: officerData.officer_surname,
-    badgeNumber: officerData.badge_number,
-    idNumber: String(officerData.officer_id_number),
-    employmentStatus: officerData.officer_employment_status,
-    province: officerData.province,
-    region: officerData.region,
-    officerTypeId: officerData.officer_type_id,
-    roleId: officerData.role_id,
-    createdAt: officerData.created_at
-  };
 
   return res.json({
     session: authData.session,
     user: authData.user,
-    profile
+    profile: resolved.profile
   });
 });
 
@@ -94,10 +75,31 @@ router.post('/register', async (req, res) => {
     });
   }
 
-  if (Number(roleId) !== ROLE_ADMIN) {
-    return res.status(400).json({
-      error: 'Self-registration is only available for admin accounts. Supervisors are added by an administrator.'
-    });
+  const resolvedRoleId = Number(roleId ?? 1);
+  const isSupervisor = resolvedRoleId === ROLE_SUPERVISOR;
+
+  const { data: existingOfficers } = await serviceSupabase
+    .from('officer_users')
+    .select('officer_id')
+    .eq('officer_email_address', email)
+    .limit(1);
+
+  const { data: existingSupervisors } = await serviceSupabase
+    .from('supervisor_users')
+    .select('supervisor_id')
+    .eq('supervisor_email_address', email)
+    .limit(1);
+
+  if (existingOfficers?.length || existingSupervisors?.length) {
+    return res.status(409).json({ error: 'A user with this email already exists' });
+  }
+
+  const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  const orphanAuth = authList?.users?.find(
+    (u) => u.email?.toLowerCase() === email.toLowerCase()
+  );
+  if (orphanAuth) {
+    await serviceSupabase.auth.admin.deleteUser(orphanAuth.id);
   }
 
   const { data: authData, error: authError } = await supabase.auth.admin.createUser({
@@ -110,22 +112,42 @@ router.post('/register', async (req, res) => {
     return res.status(400).json({ error: authError?.message ?? 'Registration failed' });
   }
 
-  const { error: insertError } = await serviceSupabase.from('officer_users').insert([{
-    officer_email_address: email,
-    officer_name: name,
-    officer_surname: surname,
-    officer_id_number: Number(idNumber),
-    badge_number: badgeNumber,
-    officer_employment_status: employmentStatus ?? 'Active',
-    province: province ?? '',
-    region: region ?? '',
-    officer_type_id: Number(officerTypeId ?? 1),
-    role_id: Number(roleId ?? 1)
-  }]);
+  if (isSupervisor) {
+    const { error: insertError } = await serviceSupabase.from('supervisor_users').insert([{
+      supervisor_email_address: email,
+      supervisor_name: name,
+      supervisor_surname: surname,
+      supervisor_id_number: Number(idNumber),
+      badge_number: badgeNumber,
+      employment_status: employmentStatus ?? 'Active',
+      province: province ?? '',
+      region: region ?? '',
+      officer_type_id: Number(officerTypeId ?? 1),
+      role_id: resolvedRoleId
+    }]);
 
-  if (insertError) {
-    await serviceSupabase.auth.admin.deleteUser(authData.user.id);
-    return res.status(500).json({ error: insertError.message });
+    if (insertError) {
+      await serviceSupabase.auth.admin.deleteUser(authData.user.id);
+      return res.status(500).json({ error: insertError.message });
+    }
+  } else {
+    const { error: insertError } = await serviceSupabase.from('officer_users').insert([{
+      officer_email_address: email,
+      officer_name: name,
+      officer_surname: surname,
+      officer_id_number: Number(idNumber),
+      badge_number: badgeNumber,
+      officer_employment_status: employmentStatus ?? 'Active',
+      province: province ?? '',
+      region: region ?? '',
+      officer_type_id: Number(officerTypeId ?? 1),
+      role_id: resolvedRoleId
+    }]);
+
+    if (insertError) {
+      await serviceSupabase.auth.admin.deleteUser(authData.user.id);
+      return res.status(500).json({ error: insertError.message });
+    }
   }
 
   const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
@@ -137,35 +159,33 @@ router.post('/register', async (req, res) => {
     return res.status(201).json({ user: authData.user });
   }
 
-  const { data: officerRows } = await serviceSupabase
-    .from('officer_users')
-    .select('*')
-    .eq('officer_email_address', email)
-    .limit(1);
+  let resolved;
+  try {
+    resolved = await resolveProfileByEmail(email, authData.user.id);
+  } catch {
+    resolved = null;
+  }
 
-  const officerData = Array.isArray(officerRows) ? officerRows[0] : null;
-
-  const profile: UserProfile = {
+  const profile = resolved?.profile ?? {
     uid: authData.user.id,
-    officerId: officerData?.officer_id,
-    email: officerData?.officer_email_address ?? email,
-    name: officerData?.officer_name ?? name,
-    surname: officerData?.officer_surname ?? surname,
-    badgeNumber: officerData?.badge_number ?? badgeNumber,
-    idNumber: String(officerData?.officer_id_number ?? idNumber),
-    employmentStatus: officerData?.officer_employment_status ?? 'Active',
-    province: officerData?.province ?? '',
-    region: officerData?.region ?? '',
-    officerTypeId: officerData?.officer_type_id ?? 1,
-    roleId: officerData?.role_id ?? 1,
-    createdAt: officerData?.created_at ?? new Date().toISOString()
+    email,
+    name,
+    surname,
+    badgeNumber,
+    idNumber: String(idNumber),
+    employmentStatus: employmentStatus ?? 'Active',
+    province: province ?? '',
+    region: region ?? '',
+    officerTypeId: Number(officerTypeId ?? 1),
+    roleId: resolvedRoleId,
+    createdAt: new Date().toISOString()
   };
 
-  if (officerData?.officer_id) {
+  if (resolved?.dbId) {
     await writeAuditLog(
       email,
-      'Registered admin account',
-      portalUserId(Number(officerData.officer_id), ROLE_ADMIN)
+      `Registered ${roleLabel(resolvedRoleId).toLowerCase()} account`,
+      portalUserId(resolved.dbId, resolvedRoleId)
     );
   }
 

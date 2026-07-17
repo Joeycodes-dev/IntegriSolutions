@@ -13,14 +13,37 @@ const LABEL = '#4B5563';
 const BORDER = '#D1D5DB';
 const PAGE_BG = '#EEF1F5';
 
-const ADMIN_REGISTER_ROLES = [{ label: 'Admin', roleId: 3 }] as const;
+const ADMIN_REGISTER_ROLES = [
+  { label: 'Admin', roleId: ROLE_ADMIN },
+  { label: 'Supervisor', roleId: ROLE_SUPERVISOR }
+] as const;
 
-function splitFullName(fullName: string): { name: string; surname: string } {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return { name: '', surname: '' };
-  if (parts.length === 1) return { name: parts[0], surname: '-' };
-  return { name: parts[0], surname: parts.slice(1).join(' ') };
-}
+const PROVINCES = [
+  'Gauteng',
+  'Western Cape',
+  'KwaZulu-Natal',
+  'Eastern Cape',
+  'Free State',
+  'Limpopo',
+  'Mpumalanga',
+  'North West',
+  'Northern Cape'
+];
+
+const REGIONS = [
+  'Johannesburg',
+  'Pretoria',
+  'Cape Town',
+  'Durban',
+  'Port Elizabeth',
+  'Bloemfontein',
+  'Polokwane',
+  'Nelspruit',
+  'Rustenburg',
+  'Kimberley'
+];
+
+const EMPLOYMENT_STATUS = ['Active'];
 
 export function Login() {
   const [isLogin, setIsLogin] = useState(true);
@@ -29,7 +52,14 @@ export function Login() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [fullName, setFullName] = useState('');
+  const [name, setName] = useState('');
+  const [surname, setSurname] = useState('');
+  const [badgeNumber, setBadgeNumber] = useState('');
+  const [idNumber, setIdNumber] = useState('');
+  const [employmentStatus, setEmploymentStatus] = useState('Active');
+  const [province, setProvince] = useState('Gauteng');
+  const [region, setRegion] = useState('Johannesburg');
+
   const [roleId, setRoleId] = useState<number>(ROLE_ADMIN);
   const [devMode, setDevMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -89,9 +119,16 @@ export function Login() {
         throw new Error('Passwords do not match.');
       }
 
-      const { name, surname } = splitFullName(fullName);
-      if (!name || !fullName.trim()) {
-        throw new Error('Please enter your full name.');
+      if (!name.trim() || !surname.trim()) {
+        throw new Error('Please enter your first name and surname.');
+      }
+
+      if (!badgeNumber.trim()) {
+        throw new Error('Please enter your badge number.');
+      }
+
+      if (!idNumber.trim() || idNumber.length !== 13) {
+        throw new Error('Please enter a valid 13-digit SA ID number.');
       }
 
       if (devMode) {
@@ -100,12 +137,12 @@ export function Login() {
           email,
           name,
           surname,
-          badgeNumber: 'ADM-0000',
-          idNumber: '0000000000000',
-          employmentStatus: 'Active',
-          province: 'Gauteng',
-          region: 'Johannesburg',
-          officerTypeId: 1,
+          badgeNumber,
+          idNumber,
+          employmentStatus,
+          province,
+          region,
+          officerTypeId: 2,
           roleId,
           createdAt: new Date().toISOString()
         };
@@ -119,12 +156,12 @@ export function Login() {
         password,
         name,
         surname,
-        badgeNumber: `ADM-${Date.now().toString(36).slice(-6).toUpperCase()}`,
-        idNumber: '0000000000000',
-        employmentStatus: 'Active',
-        province: 'Gauteng',
-        region: 'Johannesburg',
-        officerTypeId: 1,
+        badgeNumber,
+        idNumber,
+        employmentStatus,
+        province,
+        region,
+        officerTypeId: 2,
         roleId
       });
 
@@ -165,7 +202,7 @@ export function Login() {
             IntegriScan
           </h1>
           <p className="mt-1 text-[0.8125rem] font-normal leading-snug" style={{ color: LABEL }}>
-            {isLogin ? 'Welcome Back !!' : 'Create Supervisor Portal Account'}
+            {isLogin ? 'Welcome Back !!' : 'Create Portal Account'}
           </p>
         </header>
 
@@ -243,29 +280,125 @@ export function Login() {
                 transition={{ duration: 0.15 }}
                 className="flex flex-col gap-[10px]"
               >
-                <AuthField label="Full Name">
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Nomsa Dlamini"
-                    className={fieldClassName}
-                    autoComplete="name"
-                    required
-                  />
+                <div className="grid grid-cols-2 gap-2.5">
+                  <AuthField label="First Name">
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="Nomsa"
+                      className={fieldClassName}
+                      autoComplete="given-name"
+                      required
+                    />
+                  </AuthField>
+                  <AuthField label="Surname">
+                    <input
+                      type="text"
+                      value={surname}
+                      onChange={(e) => setSurname(e.target.value)}
+                      placeholder="Dlamini"
+                      className={fieldClassName}
+                      autoComplete="family-name"
+                      required
+                    />
+                  </AuthField>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <AuthField label="Badge Number">
+                    <input
+                      type="text"
+                      value={badgeNumber}
+                      onChange={(e) => setBadgeNumber(e.target.value)}
+                      placeholder="ADM-0000"
+                      className={fieldClassName}
+                      required
+                    />
+                  </AuthField>
+                  <AuthField label="SA ID Number">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={idNumber}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, '').slice(0, 13);
+                        setIdNumber(val);
+                      }}
+                      placeholder="0000000000000"
+                      maxLength={13}
+                      className={fieldClassName}
+                      required
+                    />
+                  </AuthField>
+                </div>
+
+                <AuthField label="Employment Status">
+                  <div className="relative">
+                    <select
+                      value={employmentStatus}
+                      onChange={(e) => setEmploymentStatus(e.target.value)}
+                      className={fieldClassName}
+                      aria-label="Employment Status"
+                    >
+                      {EMPLOYMENT_STATUS.map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      size={15}
+                      className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                      aria-hidden
+                    />
+                  </div>
                 </AuthField>
 
-                <AuthField label="Work Email">
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="admin@integriscan.co.za"
-                    className={fieldClassName}
-                    autoComplete="email"
-                    required
-                  />
-                </AuthField>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <AuthField label="Province">
+                    <div className="relative">
+                      <select
+                        value={province}
+                        onChange={(e) => setProvince(e.target.value)}
+                        className={fieldClassName}
+                        aria-label="Province"
+                      >
+                        {PROVINCES.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown
+                        size={15}
+                        className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                        aria-hidden
+                      />
+                    </div>
+                  </AuthField>
+                  <AuthField label="Region">
+                    <div className="relative">
+                      <select
+                        value={region}
+                        onChange={(e) => setRegion(e.target.value)}
+                        className={fieldClassName}
+                        aria-label="Region"
+                      >
+                        {REGIONS.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown
+                        size={15}
+                        className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                        aria-hidden
+                      />
+                    </div>
+                  </AuthField>
+                </div>
 
                 <AuthField label="Role">
                   <div className="relative">
@@ -287,6 +420,18 @@ export function Login() {
                       aria-hidden
                     />
                   </div>
+                </AuthField>
+
+                <AuthField label="Work Email">
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="admin@integriscan.co.za"
+                    className={fieldClassName}
+                    autoComplete="email"
+                    required
+                  />
                 </AuthField>
 
                 <div className="grid grid-cols-2 gap-2.5">

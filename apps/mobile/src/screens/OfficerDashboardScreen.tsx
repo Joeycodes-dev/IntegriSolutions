@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -12,23 +13,29 @@ import {
   View
 } from 'react-native';
 import { Camera, CameraView, type BarcodeScanningResult } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
 import { Feather, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../lib/AuthContext';
-import { generateId, saveLocally, syncPendingRecords } from '../services/sync';
+import { generateId } from '../lib/id';
+import { saveLocally, syncPendingRecords } from '../services/sync';
 import { useSync } from '../lib/SyncContext';
 import { decryptLicensePayload, parseDecryptedLicensePayload, type DecryptedLicenseData } from '../lib/licenseDecryptor';
 import type { DriverLicenseData } from '../services/scanService';
+import { OfficerBottomNav } from '../components/OfficerBottomNav';
+import { OfficerHome } from '../components/OfficerHome';
 
 type RootStackParamList = {
   Login: undefined;
   Home: undefined;
   OfficerDashboard: undefined;
+  OfficerReports: undefined;
+  Audit: undefined;
 };
 
 type Props = NativeStackScreenProps<RootStackParamList, 'OfficerDashboard'>;
 
-type OfficerStep = 'idle' | 'scan' | 'reading';
+type OfficerStep = 'idle' | 'scan' | 'reading' | 'saved';
 
 const DEV_SCAN_TIMEOUT_MS = 3000;
 const DEV_BAC_TIMEOUT_MS = 2000;
@@ -342,6 +349,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [barcodeScanned, setBarcodeScanned] = useState(false);
   const [bacReading, setBacReading] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [lastSavedTestId, setLastSavedTestId] = useState<string | null>(null);
+  const [lastSavedDriver, setLastSavedDriver] = useState<DriverLicenseData | null>(null);
+  const [isRetest, setIsRetest] = useState(false);
   const devTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bacTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -448,6 +459,43 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setDecryptError(null);
   };
 
+  const takePhoto = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Camera access denied', 'Please allow camera access to take evidence photos.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.7,
+      allowsEditing: false
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setPhotoUri(result.assets[0].uri);
+    }
+  };
+
+  const handleRetest = () => {
+    if (!lastSavedTestId || !lastSavedDriver) return;
+    
+    setScannedData(lastSavedDriver);
+    setBacReading('');
+    setPhotoUri(null);
+    setIsRetest(true);
+    setStep('reading');
+  };
+
+  const handleFinishSession = () => {
+    setStep('idle');
+    setScannedData(null);
+    setLastSavedTestId(null);
+    setLastSavedDriver(null);
+    setIsRetest(false);
+    Alert.alert('Record saved', 'Record saved locally. It will sync when network is available.');
+  };
+
   const saveRecord = async () => {
     if (!scannedData || !bacReading || !profile) {
       return;
@@ -475,14 +523,18 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         driverDob: scannedData.dob,
         bacReading: reading,
         result,
-        location: { lat: -25.7479, lng: 28.2293 }
+        location: { lat: -25.7479, lng: 28.2293 },
+        photoUri,
+        originalTestId: isRetest ? lastSavedTestId : null
       });
 
-      setStep('idle');
-      setScannedData(null);
+      setLastSavedTestId(id);
+      setLastSavedDriver(scannedData);
+      setIsRetest(false);
+      setStep('saved');
       setBacReading('');
+      setPhotoUri(null);
       await refreshCounts();
-      Alert.alert('Record saved', 'Record saved locally. It will sync when network is available.');
 
       syncPendingRecords().catch(() => {
         // Background sync attempt — errors are non-blocking
@@ -538,17 +590,18 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
       <ScrollView contentContainerStyle={styles.content} style={styles.contentScroll}>
         {step === 'idle' && (
-          <View style={styles.card}>
-            <View style={styles.cardIcon}>
-              <Feather name="camera" size={32} color="#0D253F" />
-            </View>
-            <Text style={styles.cardTitle}>New Roadside Stop</Text>
-            <Text style={styles.cardText}>Scan the driver's license to begin an incorruptible DUI record session.</Text>
-            <Pressable style={styles.primaryButton} onPress={startScan}>
-              <Feather name="camera" size={20} color="#fff" />
-              <Text style={styles.primaryButtonText}>START SESSION</Text>
-            </Pressable>
-          </View>
+          <OfficerHome
+            profile={profile}
+            pendingCount={pendingCount}
+            failedCount={failedCount}
+            syncedCount={syncedCount}
+            isSyncing={isSyncing}
+            lastSyncedAt={lastSyncedAt}
+            onStartSession={startScan}
+            onForceSync={forceSync}
+            onOpenReports={() => navigation.navigate('OfficerReports')}
+            onOpenAudit={() => navigation.navigate('Audit')}
+          />
         )}
 
         {step === 'scan' && hasPermission && (
@@ -651,6 +704,23 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               </View>
             </View>
 
+            <View style={styles.evidenceSection}>
+              <Text style={styles.overline}>Evidence Photo (optional)</Text>
+              {photoUri ? (
+                <View style={styles.photoPreview}>
+                  <Image source={{ uri: photoUri }} style={styles.photoImage} />
+                  <Pressable style={styles.photoRemove} onPress={() => setPhotoUri(null)}>
+                    <Feather name="x" size={14} color="#fff" />
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable style={styles.photoButton} onPress={takePhoto}>
+                  <Feather name="camera" size={18} color="#4338ca" />
+                  <Text style={styles.photoButtonText}>Take Photo</Text>
+                </Pressable>
+              )}
+            </View>
+
             <View style={styles.actionRow}>
               <Pressable style={[styles.primaryButton, (!bacReading || isSaving) && styles.buttonDisabled]} onPress={saveRecord} disabled={!bacReading || isSaving}>
                 {isSaving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}><Feather name="shield" size={18} color="#fff" />  COMMIT TO LEDGER</Text>}
@@ -661,18 +731,43 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             </View>
           </View>
         )}
+
+        {step === 'saved' && (
+          <View style={styles.card}>
+            <View style={styles.savedIcon}>
+              <Feather name="check-circle" size={48} color="#16a34a" />
+            </View>
+            <Text style={styles.savedTitle}>Record Saved</Text>
+            <Text style={styles.savedSubtitle}>
+              Test record has been committed to the ledger and will sync when network is available.
+            </Text>
+
+            {lastSavedDriver && (
+              <View style={styles.savedDriverCard}>
+                <Text style={styles.overline}>Driver</Text>
+                <Text style={styles.savedDriverName}>
+                  {lastSavedDriver.name} {lastSavedDriver.surname}
+                </Text>
+                <Text style={styles.savedDriverId}>
+                  ID: {lastSavedDriver.licenseNumber || lastSavedDriver.idNumber}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.actionRow}>
+              <Pressable style={styles.secondaryActionButton} onPress={handleRetest}>
+                <Feather name="refresh-cw" size={18} color="#4338ca" />
+                <Text style={styles.secondaryActionText}>Retest Driver</Text>
+              </Pressable>
+              <Pressable style={styles.primaryButton} onPress={handleFinishSession}>
+                <Text style={styles.primaryButtonText}>Finish Session</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
-      <View style={styles.bottomNav}>
-        <Pressable style={styles.navItem}>
-          <Ionicons name="bar-chart" size={24} color="#0D253F" />
-          <Text style={styles.navLabel}>Reports</Text>
-        </Pressable>
-        <Pressable style={styles.navItem}>
-          <Feather name="search" size={24} color="#94a3b8" />
-          <Text style={styles.navLabelInactive}>Audit</Text>
-        </Pressable>
-      </View>
+      <OfficerBottomNav active="OfficerDashboard" />
 
       <Modal
         visible={syncModalVisible}
@@ -751,13 +846,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
-    paddingTop: Platform.OS === 'android' ? 24 : 50,
+    paddingTop: Platform.OS === 'android' ? 50 : 50,
     paddingBottom: 16,
     paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 20,
   },
   headerActions: {
     flexDirection: 'row',
@@ -1094,6 +1188,49 @@ const styles = StyleSheet.create({
     color: '#4338ca',
     marginTop: 6
   },
+  evidenceSection: {
+    marginBottom: 20
+  },
+  photoButton: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    backgroundColor: '#eef2ff',
+    borderStyle: 'dashed'
+  },
+  photoButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#4338ca'
+  },
+  photoPreview: {
+    marginTop: 12,
+    borderRadius: 20,
+    overflow: 'hidden',
+    position: 'relative'
+  },
+  photoImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: 20
+  },
+  photoRemove: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
   actionRow: {
     gap: 12
   },
@@ -1103,31 +1240,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     fontSize: 12,
     color: '#64748b'
-  },
-  bottomNav: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    backgroundColor: '#ffffff'
-  },
-  navItem: {
-    alignItems: 'center'
-  },
-  navLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#4338ca',
-    marginTop: 4,
-    letterSpacing: 1
-  },
-  navLabelInactive: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#94a3b8',
-    marginTop: 4,
-    letterSpacing: 1
   },
   buttonDisabled: {
     opacity: 0.7
@@ -1215,5 +1327,57 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '700',
+  },
+  savedIcon: {
+    alignItems: 'center',
+    marginBottom: 16
+  },
+  savedTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#0f172a',
+    textAlign: 'center',
+    marginBottom: 8
+  },
+  savedSubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 20
+  },
+  savedDriverCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 24
+  },
+  savedDriverName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginTop: 4
+  },
+  savedDriverId: {
+    fontSize: 13,
+    color: '#64748b',
+    marginTop: 4
+  },
+  secondaryActionButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 16,
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe'
+  },
+  secondaryActionText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#4338ca'
   },
 });

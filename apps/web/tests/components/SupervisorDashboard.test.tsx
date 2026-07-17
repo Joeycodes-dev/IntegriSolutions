@@ -81,11 +81,11 @@ describe('SupervisorDashboard', () => {
     render(<SupervisorDashboard />);
 
     await waitFor(() => {
-      expect(screen.getByText('2')).toBeInTheDocument();
+      expect(screen.getByText('TOTAL TESTS')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('TOTAL TESTS')).toBeInTheDocument();
     expect(screen.getByText('TOTAL FAILURES')).toBeInTheDocument();
+    expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(1);
   });
 
   it('shows logs view with test records when navigating', async () => {
@@ -153,7 +153,7 @@ describe('SupervisorDashboard', () => {
     expect(screen.getByText('Filters')).toBeInTheDocument();
     expect(screen.getByText('DUI Trends weekly')).toBeInTheDocument();
     expect(screen.getByText('Result Breakdown')).toBeInTheDocument();
-    expect(screen.getByText(/Showing \d+ record/i)).toBeInTheDocument();
+    expect(screen.getByText(/Showing \d+ records? for selected filters/i)).toBeInTheDocument();
   });
 
   it('polls for new data every 10 seconds', async () => {

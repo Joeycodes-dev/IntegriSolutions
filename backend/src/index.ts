@@ -15,6 +15,9 @@ import testsRoutes from './routes/tests';
 import syncRoutes from './routes/sync';
 import adminRoutes from './routes/admin';
 import supervisorRoutes from './routes/supervisor';
+import evidenceRoutes from './routes/evidence';
+import invalidationsRoutes from './routes/invalidations';
+import { apiLimiter, authLimiter, syncLimiter } from './middleware/rateLimiter';
 
 const app = express();
 const port = process.env.PORT ?? '4000';
@@ -44,12 +47,15 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.use('/api/auth', authRoutes);
+app.use('/api', apiLimiter);
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/tests', testsRoutes);
-app.use('/api/sync', syncRoutes);
+app.use('/api/sync', syncLimiter, syncRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/supervisor', supervisorRoutes);
+app.use('/api/evidence', evidenceRoutes);
+app.use('/api/invalidations', invalidationsRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });

@@ -47,6 +47,7 @@ interface SyncRecord {
   location: { lat: number; lng: number };
   hash: string;
   createdAt: string;
+  originalTestId?: string | null;
 }
 
 router.post('/', async (req, res) => {
@@ -81,7 +82,8 @@ router.post('/', async (req, res) => {
       bacReading: record.bacReading,
       result: record.result,
       location: record.location,
-      createdAt: record.createdAt
+      createdAt: record.createdAt,
+      originalTestId: record.originalTestId || null
     };
 
     const computedHash = hashData(reconstructed);
@@ -118,7 +120,8 @@ router.post('/', async (req, res) => {
       result: record.result,
       location: JSON.stringify(record.location),
       hash: record.hash,
-      created_at: record.createdAt
+      created_at: record.createdAt,
+      original_test_id: record.originalTestId || null
     };
 
     const { error } = await serviceSupabase.from('tests').insert([insertPayload]);

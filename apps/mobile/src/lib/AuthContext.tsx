@@ -8,6 +8,7 @@ import {
   getStoredProfile,
   clearStoredProfile
 } from '../services/auth';
+import { logAuditEvent } from '../services/audit';
 
 type AuthContextType = {
   profile: UserProfile | null;
@@ -50,6 +51,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await setAccessToken(tokenValue);
     }
     await saveProfile(profileData as any);
+    await logAuditEvent({
+      action: 'auth.login',
+      outcome: 'success',
+      message: `Officer ${profileData.name} ${profileData.surname} signed in`,
+      officerId: profileData.officerId ?? null,
+      officerName: `${profileData.name} ${profileData.surname}`.trim(),
+      badgeNumber: profileData.badgeNumber,
+      metadata: { mode: tokenValue ? 'remote' : 'local' }
+    });
   }, []);
 
   const signInLocal = useCallback(async (profileData: UserProfile) => {
@@ -57,14 +67,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     await clearAccessToken();
     await saveProfile(profileData as any);
+    await logAuditEvent({
+      action: 'auth.login',
+      outcome: 'success',
+      message: `Officer ${profileData.name} ${profileData.surname} signed in (offline)`,
+      officerId: profileData.officerId ?? null,
+      officerName: `${profileData.name} ${profileData.surname}`.trim(),
+      badgeNumber: profileData.badgeNumber,
+      metadata: { mode: 'local' }
+    });
   }, []);
 
   const signOut = useCallback(async () => {
+    const current = profile;
     setProfile(null);
     setToken(null);
     await clearAccessToken();
     await clearStoredProfile();
-  }, []);
+    if (current) {
+      await logAuditEvent({
+        action: 'auth.logout',
+        outcome: 'success',
+        message: `Officer ${current.name} ${current.surname} signed out`,
+        officerId: current.officerId ?? null,
+        officerName: `${current.name} ${current.surname}`.trim(),
+        badgeNumber: current.badgeNumber
+      });
+    }
+  }, [profile]);
 
   return (
     <AuthContext.Provider value={{ profile, token, isRestoring, signIn, signInLocal, signOut }}>
