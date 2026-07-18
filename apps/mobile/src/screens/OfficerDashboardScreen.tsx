@@ -38,7 +38,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'OfficerDashboard'>;
 
 type OfficerStep = 'idle' | 'scan' | 'reading' | 'saved';
 
-const DEV_SCAN_TIMEOUT_MS = 3000;
+const FALLBACK_SCAN_TIMEOUT_MS = 3000;
 const AUTO_BAC_TIMEOUT_MS = 2000;
 
 function randomBacReading(): string {
@@ -409,31 +409,31 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [lastSavedTestId, setLastSavedTestId] = useState<string | null>(null);
   const [lastSavedDriver, setLastSavedDriver] = useState<DriverLicenseData | null>(null);
   const [isRetest, setIsRetest] = useState(false);
-  const devTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fallbackScanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bacTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!__DEV__ || step !== 'scan') {
-      if (devTimerRef.current) {
-        clearTimeout(devTimerRef.current);
-        devTimerRef.current = null;
+    if (step !== 'scan') {
+      if (fallbackScanTimerRef.current) {
+        clearTimeout(fallbackScanTimerRef.current);
+        fallbackScanTimerRef.current = null;
       }
       return;
     }
 
-    devTimerRef.current = setTimeout(() => {
+    fallbackScanTimerRef.current = setTimeout(() => {
       if (barcodeScanned) return;
       setScannedData(getFallbackLicenseData());
       setDecryptedLicenseData(getFallbackDecryptedLicense());
       setLicensePayload(null);
       setDecryptError(null);
       setStep('reading');
-    }, DEV_SCAN_TIMEOUT_MS);
+    }, FALLBACK_SCAN_TIMEOUT_MS);
 
     return () => {
-      if (devTimerRef.current) {
-        clearTimeout(devTimerRef.current);
-        devTimerRef.current = null;
+      if (fallbackScanTimerRef.current) {
+        clearTimeout(fallbackScanTimerRef.current);
+        fallbackScanTimerRef.current = null;
       }
     };
   }, [step, barcodeScanned]);
