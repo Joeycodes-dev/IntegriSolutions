@@ -595,7 +595,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       setPhotoUri(null);
       await refreshCounts();
 
-      syncPendingRecords().catch(() => {
+      syncPendingRecords(profile.officerId ?? null).catch(() => {
         // Background sync attempt — errors are non-blocking
       });
     } catch (error) {
