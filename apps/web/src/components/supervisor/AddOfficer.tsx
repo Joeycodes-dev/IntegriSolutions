@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { ArrowLeft, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, Copy } from 'lucide-react';
 import { createFieldOfficer, getAccessToken } from '../../services/api';
 import type { FieldOfficer } from '../../types';
 import { serializeOfficerLocation } from '../../lib/officerLocation';
@@ -30,10 +30,20 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [createdOfficer, setCreatedOfficer] = useState<FieldOfficer | null>(null);
+  const [copyStatus, setCopyStatus] = useState<'copied' | 'failed' | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const copyInviteLink = async () => {
+    if (!createdOfficer?.inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(createdOfficer.inviteLink);
+      setCopyStatus('copied');
+    } catch {
+      setCopyStatus('failed');
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -47,16 +57,6 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
       !address.trim()
     ) {
       setError('Please complete all required fields.');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.');
-      return;
-    }
-
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
       return;
     }
 
@@ -78,7 +78,6 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
 
       const created = await createFieldOfficer({
         email,
-        password,
         name: firstName.trim(),
         surname: lastName.trim(),
         serviceNumber: serviceNumber.trim(),
@@ -90,6 +89,8 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
         phone: phone.trim(),
         idNumber
       });
+      setCreatedOfficer(created);
+      setCopyStatus(null);
       onCreated(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add officer');
@@ -97,6 +98,80 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
       setIsLoading(false);
     }
   };
+
+  if (createdOfficer) {
+    return (
+      <div className={`${pageShell} min-w-0`} style={{ backgroundColor: PAGE_BG }}>
+        <div className="flex-1 px-5 py-5">
+          <div
+            className="mx-auto w-full max-w-[720px] rounded-xl border bg-white px-5 py-5 shadow-sm"
+            style={{ borderColor: BORDER }}
+          >
+            <div className="mb-4 flex items-start gap-2.5">
+              <button
+                type="button"
+                onClick={onBack}
+                className="mt-0.5 shrink-0 rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+                aria-label="Back to officers"
+              >
+                <ArrowLeft size={18} strokeWidth={2} />
+              </button>
+              <div>
+                <h1 className="text-[0.9375rem] font-bold leading-tight" style={{ color: NAVY }}>
+                  Officer Invite Ready
+                </h1>
+                <p className="mt-0.5 text-[0.75rem] leading-snug text-slate-500">
+                  Share this link with {createdOfficer.firstName}. They will paste it in the mobile app to create their own login.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-lg border bg-slate-50 p-3" style={{ borderColor: BORDER }}>
+              <FieldLabel>Invite Link</FieldLabel>
+              <textarea
+                readOnly
+                value={createdOfficer.inviteLink ?? 'Invite link was not returned. Try creating the officer again.'}
+                className="mt-1 min-h-[84px] w-full resize-none rounded-lg border bg-white px-3 py-2 font-mono text-[0.75rem] text-slate-700 outline-none"
+                style={{ borderColor: BORDER }}
+              />
+              {createdOfficer.invitationExpiresAt ? (
+                <p className="mt-1 text-[0.6875rem] text-slate-500">
+                  Expires {new Date(createdOfficer.invitationExpiresAt).toLocaleDateString()}.
+                </p>
+              ) : null}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={copyInviteLink}
+                disabled={!createdOfficer.inviteLink}
+                className="inline-flex h-[34px] items-center gap-2 rounded-lg px-4 text-[0.75rem] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                style={{ backgroundColor: NAVY }}
+              >
+                {copyStatus === 'copied' ? <Check size={14} /> : <Copy size={14} />}
+                {copyStatus === 'copied' ? 'Copied' : 'Copy invite link'}
+              </button>
+              <button
+                type="button"
+                onClick={onBack}
+                className="h-[34px] rounded-lg border bg-white px-4 text-[0.75rem] font-bold text-slate-700 transition hover:bg-slate-50"
+                style={{ borderColor: BORDER }}
+              >
+                Done
+              </button>
+            </div>
+
+            {copyStatus === 'failed' ? (
+              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[0.75rem] text-amber-800">
+                Copy failed. Select the invite link text and copy it manually.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`${pageShell} min-w-0`} style={{ backgroundColor: PAGE_BG }}>
@@ -119,7 +194,7 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
                 Add New Officer
               </h1>
               <p className="mt-0.5 text-[0.75rem] leading-snug text-slate-500">
-                Enter the officer details below to add them to the command system.
+                Enter the officer details below to generate a mobile onboarding invite.
               </p>
             </div>
           </div>
@@ -217,31 +292,6 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
               />
             </label>
 
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-              <label className="flex flex-col gap-1">
-                <FieldLabel>Create Password</FieldLabel>
-                <input
-                  type="password"
-                  className={inputClassName}
-                  style={{ borderColor: BORDER }}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <FieldLabel>Confirm Password</FieldLabel>
-                <input
-                  type="password"
-                  className={inputClassName}
-                  style={{ borderColor: BORDER }}
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                />
-              </label>
-            </div>
-
             {error && (
               <p className="rounded-lg bg-rose-50 px-3 py-2 text-[0.75rem] text-rose-700">{error}</p>
             )}
@@ -252,7 +302,7 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
               className="mt-1 w-full rounded-lg py-2.5 text-[0.75rem] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
               style={{ backgroundColor: NAVY }}
             >
-              {isLoading ? 'Adding officer…' : 'Add Officer'}
+              {isLoading ? 'Generating invite…' : 'Generate Officer Invite'}
             </button>
           </form>
         </div>

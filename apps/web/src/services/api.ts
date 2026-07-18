@@ -176,7 +176,6 @@ export async function getFieldOfficers() {
 
 export async function createFieldOfficer(payload: {
   email: string;
-  password: string;
   name: string;
   surname: string;
   serviceNumber: string;

@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -12,7 +11,7 @@ import {
   View
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { login, register } from '../services/auth';
+import { completeOfficerInvite, login } from '../services/auth';
 import { useAuth } from '../lib/AuthContext';
 import { canAccessMobileApp } from '../lib/roles';
 import type { UserProfile } from '../types';
@@ -24,18 +23,7 @@ type RootStackParamList = {
 };
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
-
-const PROVINCES = ['Gauteng', 'Western Cape', 'KwaZulu-Natal', 'Eastern Cape', 'Free State', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape'];
-const REGIONS = ['Johannesburg', 'Pretoria', 'Cape Town', 'Durban', 'Port Elizabeth', 'Bloemfontein', 'Polokwane', 'Nelspruit', 'Rustenburg', 'Kimberley'];
-const EMPLOYMENT_STATUS = ['Active'];
-const OFFICER_TYPES = [
-  { id: 1, name: 'Traffic Officer' },
-  { id: 2, name: 'Road Safety Officer' },
-  { id: 3, name: 'Highway Patrol' }
-];
-const ROLES = [
-  { id: 1, name: 'Officer' }
-];
+type AuthMode = 'login' | 'invite';
 
 const MOBILE_ACCESS_ERROR = 'This mobile app is for officer accounts. Supervisors and administrators must use the web portal.';
 
@@ -46,18 +34,13 @@ function ensureMobileAccess(profile: UserProfile): void {
 }
 
 export function LoginScreen({ navigation }: Props) {
-  const [isLogin, setIsLogin] = useState(true);
+  const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [surname, setSurname] = useState('');
-  const [badgeNumber, setBadgeNumber] = useState('');
-  const [idNumber, setIdNumber] = useState('');
-  const [employmentStatus, setEmploymentStatus] = useState('Active');
-  const [province, setProvince] = useState('Gauteng');
-  const [region, setRegion] = useState('Johannesburg');
-  const [officerTypeId, setOfficerTypeId] = useState(1);
-  const [roleId, setRoleId] = useState(1);
+  const [inviteLink, setInviteLink] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [invitePassword, setInvitePassword] = useState('');
+  const [inviteConfirmPassword, setInviteConfirmPassword] = useState('');
   const [devMode, setDevMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,33 +57,66 @@ export function LoginScreen({ navigation }: Props) {
     }
   }, [isRestoring, profile, signOut, navigation]);
 
+  const switchMode = () => {
+    setError(null);
+    setMode((current) => current === 'login' ? 'invite' : 'login');
+  };
+
   const handleSubmit = async () => {
     setError(null);
     setIsLoading(true);
 
-    if (!email || !password) {
+    if (mode === 'invite') {
+      if (!inviteLink.trim() || !inviteEmail.trim() || !invitePassword) {
+        setError('Invite link, email, and password are required.');
+        setIsLoading(false);
+        return;
+      }
+
+      if (invitePassword !== inviteConfirmPassword) {
+        setError('Passwords do not match.');
+        setIsLoading(false);
+        return;
+      }
+
+      if (invitePassword.length < 6) {
+        setError('Password must be at least 6 characters.');
+        setIsLoading(false);
+        return;
+      }
+    } else if (!email || !password) {
       setError('Email and password are required.');
       setIsLoading(false);
       return;
     }
 
-    if (!isLogin) {
-      if (!name || !surname || !badgeNumber || !idNumber) {
-        setError('Please complete all required fields.');
-        setIsLoading(false);
-        return;
-      }
-    }
-
     try {
+      if (mode === 'invite') {
+        const response = await completeOfficerInvite({
+          invite: inviteLink.trim(),
+          email: inviteEmail.trim(),
+          password: invitePassword
+        });
+
+        if (response.session?.access_token && response.profile) {
+          const profile = response.profile as UserProfile;
+          ensureMobileAccess(profile);
+          await signIn(profile, response.session.access_token);
+          navigation.replace('OfficerDashboard');
+          return;
+        }
+
+        throw new Error('Invite setup failed.');
+      }
+
       if (devMode) {
         const profile: UserProfile = {
           uid: `local-${Date.now()}`,
           email,
-          name: isLogin ? email.split('@')[0] : name,
-          surname: isLogin ? '' : surname,
-          badgeNumber: isLogin ? '0000' : badgeNumber,
-          idNumber: isLogin ? '0000000000000' : idNumber,
+          name: email.split('@')[0],
+          surname: '',
+          badgeNumber: '0000',
+          idNumber: '0000000000000',
           employmentStatus: 'Active',
           province: 'Gauteng',
           region: 'Johannesburg',
@@ -115,33 +131,7 @@ export function LoginScreen({ navigation }: Props) {
         return;
       }
 
-      if (isLogin) {
-        const response = await login(email.trim(), password);
-        if (response.session?.access_token && response.profile) {
-          const profile = response.profile as UserProfile;
-          ensureMobileAccess(profile);
-          await signIn(profile, response.session.access_token);
-          navigation.replace('OfficerDashboard');
-          return;
-        }
-
-        throw new Error('Login failed.');
-      }
-
-      const response = await register({
-        email: email.trim(),
-        password,
-        name: name.trim(),
-        surname: surname.trim(),
-        badgeNumber: badgeNumber.trim(),
-        idNumber: idNumber.trim(),
-        employmentStatus,
-        province,
-        region,
-        officerTypeId,
-        roleId
-      });
-
+      const response = await login(email.trim(), password);
       if (response.session?.access_token && response.profile) {
         const profile = response.profile as UserProfile;
         ensureMobileAccess(profile);
@@ -150,38 +140,13 @@ export function LoginScreen({ navigation }: Props) {
         return;
       }
 
-      Alert.alert('Registration complete', 'Please sign in with your new credentials.');
-      setIsLogin(true);
+      throw new Error('Login failed.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Auth failed');
     } finally {
       setIsLoading(false);
     }
   };
-
-  const renderDropdown = <T extends string | number>(
-    label: string,
-    value: T,
-    options: { label: string; value: T }[],
-    onChange: (val: T) => void
-  ) => (
-    <View style={styles.dropdownContainer}>
-      <Text style={styles.dropdownLabel}>{label}</Text>
-      <View style={styles.dropdownRow}>
-        {options.map((opt) => (
-          <Pressable
-            key={opt.value}
-            style={[styles.dropdownButton, value === opt.value && styles.dropdownButtonActive]}
-            onPress={() => onChange(opt.value)}
-          >
-            <Text style={[styles.dropdownButtonText, value === opt.value && styles.dropdownButtonTextActive]}>
-              {opt.label}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-    </View>
-  );
 
   return (
     <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -198,85 +163,96 @@ export function LoginScreen({ navigation }: Props) {
           </View>
 
           <View style={styles.form}>
-            {!isLogin && (
+            {mode === 'invite' ? (
+              <>
+                <Text style={styles.inviteHelp}>
+                  Get an invite link from your supervisor or admin, paste it here, then create your officer login.
+                </Text>
+                <TextInput
+                  value={inviteLink}
+                  onChangeText={setInviteLink}
+                  placeholder="Paste invite link"
+                  style={[styles.input, styles.inviteInput]}
+                  multiline
+                  autoCapitalize="none"
+                  placeholderTextColor="#94a3b8"
+                />
+                <TextInput
+                  value={inviteEmail}
+                  onChangeText={setInviteEmail}
+                  placeholder="Email / username"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  style={styles.input}
+                  textContentType="emailAddress"
+                  placeholderTextColor="#94a3b8"
+                />
+                <TextInput
+                  value={invitePassword}
+                  onChangeText={setInvitePassword}
+                  placeholder="Create password"
+                  secureTextEntry
+                  style={styles.input}
+                  textContentType="newPassword"
+                  placeholderTextColor="#94a3b8"
+                />
+                <TextInput
+                  value={inviteConfirmPassword}
+                  onChangeText={setInviteConfirmPassword}
+                  placeholder="Confirm password"
+                  secureTextEntry
+                  style={styles.input}
+                  textContentType="newPassword"
+                  placeholderTextColor="#94a3b8"
+                />
+              </>
+            ) : (
               <>
                 <TextInput
-                  value={name}
-                  onChangeText={setName}
-                  placeholder="First Name"
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder="Email"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
                   style={styles.input}
+                  textContentType="emailAddress"
                   placeholderTextColor="#94a3b8"
                 />
                 <TextInput
-                  value={surname}
-                  onChangeText={setSurname}
-                  placeholder="Surname"
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="Password"
+                  secureTextEntry
                   style={styles.input}
+                  textContentType="password"
                   placeholderTextColor="#94a3b8"
                 />
-                <TextInput
-                  value={badgeNumber}
-                  onChangeText={setBadgeNumber}
-                  placeholder="Badge / ID Number"
-                  style={styles.input}
-                  placeholderTextColor="#94a3b8"
-                />
-                <TextInput
-                  value={idNumber}
-                  onChangeText={setIdNumber}
-                  placeholder="SA ID Number (13 digits)"
-                  keyboardType="number-pad"
-                  maxLength={13}
-                  style={styles.input}
-                  placeholderTextColor="#94a3b8"
-                />
-                {renderDropdown('Employment Status', employmentStatus, EMPLOYMENT_STATUS.map(s => ({ label: s, value: s })), setEmploymentStatus)}
-                {renderDropdown('Province', province, PROVINCES.map(p => ({ label: p, value: p })), setProvince)}
-                {renderDropdown('Region', region, REGIONS.map(r => ({ label: r, value: r })), setRegion)}
-                {renderDropdown('Officer Type', officerTypeId, OFFICER_TYPES.map(t => ({ label: t.name, value: t.id })), setOfficerTypeId)}
-                {renderDropdown('Role', roleId, ROLES.map(r => ({ label: r.name, value: r.id })), setRoleId)}
+
+                {__DEV__ ? (
+                  <Pressable style={styles.devRow} onPress={() => setDevMode((current) => !current)}>
+                    <View style={[styles.devToggle, devMode && styles.devToggleActive]}>
+                      <View style={[styles.devDot, devMode && styles.devDotActive]} />
+                    </View>
+                    <Text style={styles.devLabel}>Developer bypass login</Text>
+                  </Pressable>
+                ) : null}
               </>
             )}
-
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              placeholder="Email"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              style={styles.input}
-              textContentType="emailAddress"
-              placeholderTextColor="#94a3b8"
-            />
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Password"
-              secureTextEntry
-              style={styles.input}
-              textContentType="password"
-              placeholderTextColor="#94a3b8"
-            />
-
-            {__DEV__ ? (
-              <Pressable style={styles.devRow} onPress={() => setDevMode((current) => !current)}>
-                <View style={[styles.devToggle, devMode && styles.devToggleActive]}>
-                  <View style={[styles.devDot, devMode && styles.devDotActive]} />
-                </View>
-                <Text style={styles.devLabel}>Developer bypass login</Text>
-              </Pressable>
-            ) : null}
 
             {error ? <Text style={styles.error}>{error}</Text> : null}
 
             <Pressable style={[styles.primaryButton, isLoading && styles.buttonDisabled]} onPress={handleSubmit} disabled={isLoading}>
-              {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>{isLogin ? 'Login to Portal' : 'Register Service Profile'}</Text>}
+              {isLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.primaryButtonText}>{mode === 'invite' ? 'Create Officer Login' : 'Login to Portal'}</Text>
+              )}
             </Pressable>
 
             <Text style={styles.switchText}>
-              {isLogin ? "Don't have an account?" : 'Already have an account?'}
-              <Text style={styles.switchLink} onPress={() => setIsLogin(!isLogin)}>
-                {isLogin ? ' Register' : ' Login'}
+              {mode === 'login' ? 'Need access?' : 'Already onboarded?'}
+              <Text style={styles.switchLink} onPress={switchMode}>
+                {mode === 'login' ? ' Get invite link from admin' : ' Login'}
               </Text>
             </Text>
           </View>
@@ -359,40 +335,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#0f172a'
   },
-  dropdownContainer: {
-    gap: 6
+  inviteInput: {
+    minHeight: 92,
+    textAlignVertical: 'top'
   },
-  dropdownLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748b',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase'
-  },
-  dropdownRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8
-  },
-  dropdownButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0'
-  },
-  dropdownButtonActive: {
-    backgroundColor: '#eef2ff',
-    borderColor: '#4338ca'
-  },
-  dropdownButtonText: {
-    fontSize: 12,
+  inviteHelp: {
     color: '#475569',
-    fontWeight: '600'
-  },
-  dropdownButtonTextActive: {
-    color: '#4338ca'
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center'
   },
   devRow: {
     flexDirection: 'row',

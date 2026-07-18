@@ -4,6 +4,12 @@ import { ROLE_OFFICER } from '../../constants/roles';
 import { requireSupervisor, type SupervisorRequest } from '../../middleware/requireSupervisor';
 import { writeAuditLog } from '../../utilities/auditLog';
 import { asyncHandler } from '../../asyncHandler';
+import {
+  buildOfficerInviteLink,
+  generateOfficerInviteToken,
+  hashOfficerInviteToken,
+  officerInviteExpiresAt
+} from '../../utilities/officerInvites';
 
 const router = Router();
 
@@ -58,34 +64,11 @@ function formatDbError(error: DbError | null): string {
   return parts.join(' — ') || 'Database operation failed';
 }
 
-async function removeOrphanAuthUser(email: string): Promise<boolean> {
+async function safeDeleteOfficer(officerId: number): Promise<void> {
   try {
-    const { data: officers } = await serviceSupabase
-      .from('officer_users')
-      .select('officer_id')
-      .eq('officer_email_address', email)
-      .limit(1);
-
-    if (officers?.length) return false;
-
-    const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    const authUser = authList?.users?.find(
-      (u) => u.email?.toLowerCase() === email.toLowerCase()
-    );
-    if (!authUser) return false;
-
-    const { error } = await serviceSupabase.auth.admin.deleteUser(authUser.id);
-    return !error;
-  } catch {
-    return false;
-  }
-}
-
-async function safeDeleteAuthUser(userId: string): Promise<void> {
-  try {
-    await serviceSupabase.auth.admin.deleteUser(userId);
+    await serviceSupabase.from('officer_users').delete().eq('officer_id', officerId);
   } catch (err) {
-    console.error('[supervisor/officers] auth cleanup failed:', err);
+    console.error('[supervisor/officers] officer cleanup failed:', err);
   }
 }
 
@@ -126,7 +109,6 @@ router.post('/', asyncHandler(async (req, res) => {
   const authReq = req as unknown as SupervisorRequest;
   const body = (req.body ?? {}) as Record<string, unknown>;
   const email = String(body.email ?? '');
-  const password = String(body.password ?? '');
   const name = String(body.name ?? '');
   const surname = String(body.surname ?? '');
   const serviceNumber = String(body.serviceNumber ?? '');
@@ -135,9 +117,9 @@ router.post('/', asyncHandler(async (req, res) => {
   const phone = String(body.phone ?? '');
   const idNumber = body.idNumber != null ? String(body.idNumber) : undefined;
 
-  if (!email || !password || !name || !surname || !serviceNumber) {
+  if (!email || !name || !surname || !serviceNumber) {
     return res.status(400).json({
-      error: 'Email, password, name, surname, and service number are required'
+      error: 'Email, name, surname, and service number are required'
     });
   }
 
@@ -151,33 +133,6 @@ router.post('/', asyncHandler(async (req, res) => {
     return res.status(409).json({ error: 'A user with this email already exists' });
   }
 
-  await removeOrphanAuthUser(email);
-
-  let authData = await serviceSupabase.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true
-  });
-
-  if (authData.error?.message?.toLowerCase().includes('already')) {
-    const cleaned = await removeOrphanAuthUser(email);
-    if (cleaned) {
-      authData = await serviceSupabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true
-      });
-    }
-  }
-
-  const { data: authUserData, error: authError } = authData;
-
-  if (authError || !authUserData.user) {
-    const msg = authError?.message ?? 'Failed to create auth account';
-    const status = msg.toLowerCase().includes('already') ? 409 : 400;
-    return res.status(status).json({ error: msg });
-  }
-
   const officerIdNumber = await allocateOfficerIdNumber(phone, serviceNumber, idNumber);
 
   const { data: inserted, error: insertError } = await serviceSupabase
@@ -189,7 +144,7 @@ router.post('/', asyncHandler(async (req, res) => {
         officer_surname: surname,
         officer_id_number: officerIdNumber,
         badge_number: serviceNumber.trim(),
-        officer_employment_status: 'Active',
+        officer_employment_status: 'Invited',
         province: rank.trim(),
         region: station.trim(),
         officer_type_id: 1,
@@ -199,19 +154,37 @@ router.post('/', asyncHandler(async (req, res) => {
     .select('*');
 
   if (insertError || !inserted?.length) {
-    await safeDeleteAuthUser(authUserData.user.id);
     return res.status(500).json({ error: formatDbError(insertError as DbError | null) });
   }
 
   const created = toFieldOfficer(inserted[0] as Record<string, unknown>);
+  const token = generateOfficerInviteToken();
+  const expiresAt = officerInviteExpiresAt();
+  const { error: inviteError } = await serviceSupabase.from('officer_invitations').insert([{
+    officer_id: created.officerId,
+    token_hash: hashOfficerInviteToken(token),
+    created_by_email: authReq.userEmail ?? null,
+    expires_at: expiresAt
+  }]);
+
+  if (inviteError) {
+    await safeDeleteOfficer(created.officerId);
+    return res.status(500).json({ error: formatDbError(inviteError as DbError | null) });
+  }
+
+  const createdWithInvite = {
+    ...created,
+    inviteLink: buildOfficerInviteLink(token),
+    invitationExpiresAt: expiresAt
+  };
 
   await writeAuditLog(
     authReq.userEmail ?? 'unknown',
-    'Created field officer account',
+    'Created field officer invite',
     created.userId
   );
 
-  return res.status(201).json(created);
+  return res.status(201).json(createdWithInvite);
 }));
 
 export default router;
