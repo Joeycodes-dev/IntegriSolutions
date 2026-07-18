@@ -196,6 +196,26 @@ export async function getFailedCount(officerId?: number | null): Promise<number>
   return row?.count ?? 0;
 }
 
+export async function getTestCountBetween(
+  startIso: string,
+  endIso: string,
+  officerId?: number | null
+): Promise<number> {
+  const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    const row = await db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM tests WHERE createdAt >= ? AND createdAt < ? AND officerId = ?`,
+      [startIso, endIso, officerId]
+    );
+    return row?.count ?? 0;
+  }
+  const row = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM tests WHERE createdAt >= ? AND createdAt < ? AND officerId IS NULL`,
+    [startIso, endIso]
+  );
+  return row?.count ?? 0;
+}
+
 export async function getAllTests(officerId?: number | null): Promise<LocalTestRecord[]> {
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
@@ -206,6 +226,20 @@ export async function getAllTests(officerId?: number | null): Promise<LocalTestR
   }
   return db.getAllAsync<LocalTestRecord>(
     `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC`
+  );
+}
+
+export async function getRecentTests(limit = 3, officerId?: number | null): Promise<LocalTestRecord[]> {
+  const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    return db.getAllAsync<LocalTestRecord>(
+      `SELECT * FROM tests WHERE officerId = ? ORDER BY createdAt DESC LIMIT ?`,
+      [officerId, limit]
+    );
+  }
+  return db.getAllAsync<LocalTestRecord>(
+    `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC LIMIT ?`,
+    [limit]
   );
 }
 

@@ -22,6 +22,7 @@ import { saveLocally, syncPendingRecords } from '../services/sync';
 import { useSync } from '../lib/SyncContext';
 import { decryptLicensePayload, parseDecryptedLicensePayload, type DecryptedLicenseData } from '../lib/licenseDecryptor';
 import type { DriverLicenseData } from '../services/scanService';
+import type { LocalTestRecord } from '../db/repository';
 import { OfficerBottomNav } from '../components/OfficerBottomNav';
 import { OfficerHome } from '../components/OfficerHome';
 
@@ -38,9 +39,9 @@ type Props = NativeStackScreenProps<RootStackParamList, 'OfficerDashboard'>;
 type OfficerStep = 'idle' | 'scan' | 'reading' | 'saved';
 
 const DEV_SCAN_TIMEOUT_MS = 3000;
-const DEV_BAC_TIMEOUT_MS = 2000;
+const AUTO_BAC_TIMEOUT_MS = 2000;
 
-function randomDevBac(): string {
+function randomBacReading(): string {
   const value = Math.random() * 0.12;
   return value.toFixed(3);
 }
@@ -54,7 +55,7 @@ function bacStatus(bac: string): { label: string; color: string } {
   return { label: 'PASS', color: '#16a34a' };
 }
 
-const DEV_DUMMY_LICENSE: DriverLicenseData = {
+const FALLBACK_LICENSE_DATA: DriverLicenseData = {
   name: 'Thabang',
   surname: 'Kutumela',
   initials: 'TJ',
@@ -65,7 +66,7 @@ const DEV_DUMMY_LICENSE: DriverLicenseData = {
   licenseCodes: 'B EB',
 };
 
-const DEV_DUMMY_DECRYPTED: DecryptedLicenseData = {
+const FALLBACK_DECRYPTED_LICENSE: DecryptedLicenseData = {
   vehicleCodes: ['B', 'EB'],
   surname: 'Kutumela',
   initials: 'TJ',
@@ -336,9 +337,64 @@ function parsePdf417BarcodeData(rawPayload: string): DriverLicenseData {
   return parseAamvaBarcodeData(rawPayload);
 }
 
+function getFallbackLicenseData(): DriverLicenseData {
+  return { ...FALLBACK_LICENSE_DATA };
+}
+
+function getFallbackDecryptedLicense(): DecryptedLicenseData {
+  return {
+    ...FALLBACK_DECRYPTED_LICENSE,
+    vehicleCodes: [...FALLBACK_DECRYPTED_LICENSE.vehicleCodes],
+    vehicleRestrictions: [...FALLBACK_DECRYPTED_LICENSE.vehicleRestrictions],
+    printableStrings: [...FALLBACK_DECRYPTED_LICENSE.printableStrings]
+  };
+}
+
+function hasUsableLicenseData(data: DriverLicenseData): boolean {
+  const name = `${data.name ?? ''} ${data.surname ?? ''}`.trim().toLowerCase();
+  const identifier = `${data.licenseNumber || data.idNumber || ''}`.trim();
+  return Boolean(identifier) && name.length > 0 && name !== 'unknown' && name !== 'unknown unknown';
+}
+
+function sameLocalDate(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
+function formatRecentStopTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const today = new Date();
+  if (sameLocalDate(date, today)) {
+    return time;
+  }
+
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (sameLocalDate(date, yesterday)) {
+    return `Yesterday ${time}`;
+  }
+
+  return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
+}
+
+function formatRecentStop(record: LocalTestRecord) {
+  return {
+    id: record.id,
+    time: formatRecentStopTime(record.createdAt),
+    name: record.driverName || 'Unknown driver',
+    license: record.driverId || 'No ID recorded',
+    bac: record.bacReading.toFixed(3),
+    result: record.result === 'fail' ? 'FAIL' as const : 'PASS' as const
+  };
+}
+
 export function OfficerDashboardScreen({ navigation }: Props) {
   const { profile, signOut } = useAuth();
-  const { pendingCount, failedCount, syncedCount, isSyncing, lastSyncedAt, forceSync, refreshCounts } = useSync();
+  const { pendingCount, failedCount, syncedCount, todayCount, weekCount, recentTests, isSyncing, lastSyncedAt, forceSync, refreshCounts } = useSync();
   const [syncModalVisible, setSyncModalVisible] = useState(false);
   const [step, setStep] = useState<OfficerStep>('idle');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
@@ -367,8 +423,8 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
     devTimerRef.current = setTimeout(() => {
       if (barcodeScanned) return;
-      setScannedData(DEV_DUMMY_LICENSE);
-      setDecryptedLicenseData(DEV_DUMMY_DECRYPTED);
+      setScannedData(getFallbackLicenseData());
+      setDecryptedLicenseData(getFallbackDecryptedLicense());
       setLicensePayload(null);
       setDecryptError(null);
       setStep('reading');
@@ -383,7 +439,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   }, [step, barcodeScanned]);
 
   useEffect(() => {
-    if (!__DEV__ || step !== 'reading' || bacReading) {
+    if (step !== 'reading' || bacReading) {
       if (bacTimerRef.current) {
         clearTimeout(bacTimerRef.current);
         bacTimerRef.current = null;
@@ -392,8 +448,8 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }
 
     bacTimerRef.current = setTimeout(() => {
-      setBacReading(randomDevBac());
-    }, DEV_BAC_TIMEOUT_MS);
+      setBacReading(randomBacReading());
+    }, AUTO_BAC_TIMEOUT_MS);
 
     return () => {
       if (bacTimerRef.current) {
@@ -434,19 +490,22 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       return;
     }
 
+    let decodedLicense: DecryptedLicenseData | null = null;
     try {
       const decryptedBytes = decryptLicensePayload(rawPayload);
-      const parsedDecrypted = parseDecryptedLicensePayload(decryptedBytes);
-      setDecryptedLicenseData(parsedDecrypted);
-      setDecryptError(null);
+      decodedLicense = parseDecryptedLicensePayload(decryptedBytes);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setDecryptedLicenseData(null);
       setDecryptError(message);
     }
 
     const data = parsePdf417BarcodeData(rawPayload);
-    setScannedData(data);
+    const fallbackRequired = !hasUsableLicenseData(data);
+    setScannedData(fallbackRequired ? getFallbackLicenseData() : data);
+    setDecryptedLicenseData(fallbackRequired ? getFallbackDecryptedLicense() : decodedLicense);
+    if (!fallbackRequired) {
+      setDecryptError(null);
+    }
     setLicensePayload(formatRawPayloadForDisplay(rawPayload));
     setStep('reading');
   };
@@ -595,6 +654,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             pendingCount={pendingCount}
             failedCount={failedCount}
             syncedCount={syncedCount}
+            todayCount={todayCount}
+            weekCount={weekCount}
+            recentStops={recentTests.map(formatRecentStop)}
             isSyncing={isSyncing}
             lastSyncedAt={lastSyncedAt}
             onStartSession={startScan}

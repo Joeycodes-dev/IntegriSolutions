@@ -1,9 +1,10 @@
 {
   "expo": {
-    "name": "IntegriSolutions Mobile",
+    "name": "IntegriScan",
     "slug": "integrisolutions-mobile",
     "version": "1.0.0",
     "sdkVersion": "54.0.0",
+    "icon": "./assets/icon.png",
     "platforms": [
       "ios",
       "android",
@@ -24,14 +25,19 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
-      }
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0b1f34"
+      },
+      "package": "com.thabza102.integrisolutionsmobile"
     },
     "plugins": [
       "expo-sqlite",
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "2fa3be11-a42b-4479-bbb4-945a0cec9fa6"
+      }
+    }
   }
 }
-
-
