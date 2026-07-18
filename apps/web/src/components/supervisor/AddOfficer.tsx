@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { ArrowLeft, Check, ChevronDown, Copy } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ChevronDown, Mail } from 'lucide-react';
 import { createFieldOfficer, getAccessToken } from '../../services/api';
 import type { FieldOfficer } from '../../types';
 import { serializeOfficerLocation } from '../../lib/officerLocation';
@@ -31,19 +31,8 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [createdOfficer, setCreatedOfficer] = useState<FieldOfficer | null>(null);
-  const [copyStatus, setCopyStatus] = useState<'copied' | 'failed' | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const copyInviteLink = async () => {
-    if (!createdOfficer?.inviteLink) return;
-    try {
-      await navigator.clipboard.writeText(createdOfficer.inviteLink);
-      setCopyStatus('copied');
-    } catch {
-      setCopyStatus('failed');
-    }
-  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -90,7 +79,6 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
         idNumber
       });
       setCreatedOfficer(created);
-      setCopyStatus(null);
       onCreated(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add officer');
@@ -118,24 +106,30 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
               </button>
               <div>
                 <h1 className="text-[0.9375rem] font-bold leading-tight" style={{ color: NAVY }}>
-                  Officer Invite Ready
+                  Officer Invite Sent
                 </h1>
                 <p className="mt-0.5 text-[0.75rem] leading-snug text-slate-500">
-                  Share this link with {createdOfficer.firstName}. They will paste it in the mobile app to create their own login.
+                  {createdOfficer.firstName} can now open the email, paste the invite link in the mobile app, and create a password.
                 </p>
               </div>
             </div>
 
-            <div className="rounded-lg border bg-slate-50 p-3" style={{ borderColor: BORDER }}>
-              <FieldLabel>Invite Link</FieldLabel>
-              <textarea
-                readOnly
-                value={createdOfficer.inviteLink ?? 'Invite link was not returned. Try creating the officer again.'}
-                className="mt-1 min-h-[84px] w-full resize-none rounded-lg border bg-white px-3 py-2 font-mono text-[0.75rem] text-slate-700 outline-none"
-                style={{ borderColor: BORDER }}
-              />
+            <div className="rounded-lg border bg-emerald-50 p-4" style={{ borderColor: '#bbf7d0' }}>
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 rounded-full bg-emerald-100 p-2 text-emerald-700">
+                  <CheckCircle2 size={18} />
+                </div>
+                <div>
+                  <p className="text-[0.8125rem] font-bold text-emerald-900">
+                    Invite email sent to {createdOfficer.email}
+                  </p>
+                  <p className="mt-1 text-[0.75rem] leading-snug text-emerald-800">
+                    The invite link is single-use. The officer will sign in with this email after creating their password.
+                  </p>
+                </div>
+              </div>
               {createdOfficer.invitationExpiresAt ? (
-                <p className="mt-1 text-[0.6875rem] text-slate-500">
+                <p className="mt-3 text-[0.6875rem] text-emerald-800">
                   Expires {new Date(createdOfficer.invitationExpiresAt).toLocaleDateString()}.
                 </p>
               ) : null}
@@ -144,29 +138,14 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
             <div className="mt-4 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={copyInviteLink}
-                disabled={!createdOfficer.inviteLink}
-                className="inline-flex h-[34px] items-center gap-2 rounded-lg px-4 text-[0.75rem] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={onBack}
+                className="inline-flex h-[34px] items-center gap-2 rounded-lg px-4 text-[0.75rem] font-bold text-white transition hover:brightness-110"
                 style={{ backgroundColor: NAVY }}
               >
-                {copyStatus === 'copied' ? <Check size={14} /> : <Copy size={14} />}
-                {copyStatus === 'copied' ? 'Copied' : 'Copy invite link'}
-              </button>
-              <button
-                type="button"
-                onClick={onBack}
-                className="h-[34px] rounded-lg border bg-white px-4 text-[0.75rem] font-bold text-slate-700 transition hover:bg-slate-50"
-                style={{ borderColor: BORDER }}
-              >
+                <Mail size={14} />
                 Done
               </button>
             </div>
-
-            {copyStatus === 'failed' ? (
-              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[0.75rem] text-amber-800">
-                Copy failed. Select the invite link text and copy it manually.
-              </p>
-            ) : null}
           </div>
         </div>
       </div>

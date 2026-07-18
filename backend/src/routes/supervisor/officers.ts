@@ -10,6 +10,7 @@ import {
   hashOfficerInviteToken,
   officerInviteExpiresAt
 } from '../../utilities/officerInvites';
+import { sendOfficerInviteEmail } from '../../utilities/email';
 
 const router = Router();
 
@@ -108,7 +109,7 @@ router.get('/', async (_req, res) => {
 router.post('/', asyncHandler(async (req, res) => {
   const authReq = req as unknown as SupervisorRequest;
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const email = String(body.email ?? '');
+  const email = String(body.email ?? '').trim().toLowerCase();
   const name = String(body.name ?? '');
   const surname = String(body.surname ?? '');
   const serviceNumber = String(body.serviceNumber ?? '');
@@ -131,6 +132,22 @@ router.post('/', asyncHandler(async (req, res) => {
 
   if (existing?.length) {
     return res.status(409).json({ error: 'A user with this email already exists' });
+  }
+
+  const { data: existingSupervisors } = await serviceSupabase
+    .from('supervisor_users')
+    .select('supervisor_id')
+    .eq('supervisor_email_address', email)
+    .limit(1);
+
+  if (existingSupervisors?.length) {
+    return res.status(409).json({ error: 'A user with this email already exists' });
+  }
+
+  const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  const existingAuth = authList?.users?.find((u) => u.email?.toLowerCase() === email);
+  if (existingAuth) {
+    return res.status(409).json({ error: 'An auth account with this email already exists' });
   }
 
   const officerIdNumber = await allocateOfficerIdNumber(phone, serviceNumber, idNumber);
@@ -172,10 +189,25 @@ router.post('/', asyncHandler(async (req, res) => {
     return res.status(500).json({ error: formatDbError(inviteError as DbError | null) });
   }
 
+  const inviteLink = buildOfficerInviteLink(token);
+
+  try {
+    await sendOfficerInviteEmail({
+      to: email,
+      officerName: `${name} ${surname}`.trim(),
+      inviteLink,
+      expiresAt
+    });
+  } catch (error) {
+    await safeDeleteOfficer(created.officerId);
+    const message = error instanceof Error ? error.message : 'Failed to send officer invite email';
+    return res.status(502).json({ error: message });
+  }
+
   const createdWithInvite = {
     ...created,
-    inviteLink: buildOfficerInviteLink(token),
-    invitationExpiresAt: expiresAt
+    invitationExpiresAt: expiresAt,
+    inviteEmailSent: true
   };
 
   await writeAuditLog(

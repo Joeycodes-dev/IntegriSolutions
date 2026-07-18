@@ -61,11 +61,10 @@ router.post('/login', async (req, res) => {
 router.post('/officer-invite', asyncHandler(async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const inviteInput = String(body.invite ?? body.inviteLink ?? body.token ?? '');
-  const email = String(body.email ?? body.username ?? '').trim().toLowerCase();
   const password = String(body.password ?? '');
 
-  if (!inviteInput || !email || !password) {
-    return res.status(400).json({ error: 'Invite link, email, and password are required' });
+  if (!inviteInput || !password) {
+    return res.status(400).json({ error: 'Invite link and password are required' });
   }
 
   if (password.length < 6) {
@@ -117,6 +116,11 @@ router.post('/officer-invite', asyncHandler(async (req, res) => {
     return res.status(404).json({ error: 'Officer profile not found for this invite' });
   }
 
+  const email = String(officer.officer_email_address ?? '').trim().toLowerCase();
+  if (!email) {
+    return res.status(400).json({ error: 'Officer invite does not have an email address. Ask your supervisor for a new invite.' });
+  }
+
   const { data: officerEmailRows } = await serviceSupabase
     .from('officer_users')
     .select('officer_id')
@@ -157,7 +161,6 @@ router.post('/officer-invite', asyncHandler(async (req, res) => {
   const { error: profileError } = await serviceSupabase
     .from('officer_users')
     .update({
-      officer_email_address: email,
       officer_employment_status: 'Active'
     })
     .eq('officer_id', officerId);

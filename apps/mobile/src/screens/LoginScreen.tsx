@@ -38,7 +38,6 @@ export function LoginScreen({ navigation }: Props) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [inviteLink, setInviteLink] = useState('');
-  const [inviteEmail, setInviteEmail] = useState('');
   const [invitePassword, setInvitePassword] = useState('');
   const [inviteConfirmPassword, setInviteConfirmPassword] = useState('');
   const [devMode, setDevMode] = useState(false);
@@ -67,8 +66,8 @@ export function LoginScreen({ navigation }: Props) {
     setIsLoading(true);
 
     if (mode === 'invite') {
-      if (!inviteLink.trim() || !inviteEmail.trim() || !invitePassword) {
-        setError('Invite link, email, and password are required.');
+      if (!inviteLink.trim() || !invitePassword) {
+        setError('Invite link and password are required.');
         setIsLoading(false);
         return;
       }
@@ -94,7 +93,6 @@ export function LoginScreen({ navigation }: Props) {
       if (mode === 'invite') {
         const response = await completeOfficerInvite({
           invite: inviteLink.trim(),
-          email: inviteEmail.trim(),
           password: invitePassword
         });
 
@@ -166,7 +164,7 @@ export function LoginScreen({ navigation }: Props) {
             {mode === 'invite' ? (
               <>
                 <Text style={styles.inviteHelp}>
-                  Get an invite link from your supervisor or admin, paste it here, then create your officer login.
+                  Paste the invite link from your email, then create your password. Your email address is already tied to the invite.
                 </Text>
                 <TextInput
                   value={inviteLink}
@@ -175,16 +173,6 @@ export function LoginScreen({ navigation }: Props) {
                   style={[styles.input, styles.inviteInput]}
                   multiline
                   autoCapitalize="none"
-                  placeholderTextColor="#94a3b8"
-                />
-                <TextInput
-                  value={inviteEmail}
-                  onChangeText={setInviteEmail}
-                  placeholder="Email / username"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  style={styles.input}
-                  textContentType="emailAddress"
                   placeholderTextColor="#94a3b8"
                 />
                 <TextInput

@@ -88,7 +88,6 @@ export async function login(email: string, password: string) {
 
 export async function completeOfficerInvite(params: {
   invite: string;
-  email: string;
   password: string;
 }) {
   return request<{ session?: { access_token: string }; profile: any }>('/auth/officer-invite', {
