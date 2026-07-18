@@ -14,6 +14,7 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { login, register } from '../services/auth';
 import { useAuth } from '../lib/AuthContext';
+import { canAccessMobileApp } from '../lib/roles';
 import type { UserProfile } from '../types';
 
 type RootStackParamList = {
@@ -36,6 +37,14 @@ const ROLES = [
   { id: 1, name: 'Officer' }
 ];
 
+const MOBILE_ACCESS_ERROR = 'This mobile app is for officer accounts. Supervisors and administrators must use the web portal.';
+
+function ensureMobileAccess(profile: UserProfile): void {
+  if (!canAccessMobileApp(profile.roleId)) {
+    throw new Error(MOBILE_ACCESS_ERROR);
+  }
+}
+
 export function LoginScreen({ navigation }: Props) {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
@@ -52,13 +61,18 @@ export function LoginScreen({ navigation }: Props) {
   const [devMode, setDevMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { signIn, signInLocal, isRestoring, profile } = useAuth();
+  const { signIn, signInLocal, signOut, isRestoring, profile } = useAuth();
 
   useEffect(() => {
     if (!isRestoring && profile) {
+      if (!canAccessMobileApp(profile.roleId)) {
+        setError(MOBILE_ACCESS_ERROR);
+        void signOut();
+        return;
+      }
       navigation.replace('OfficerDashboard');
     }
-  }, [isRestoring, profile, navigation]);
+  }, [isRestoring, profile, signOut, navigation]);
 
   const handleSubmit = async () => {
     setError(null);
@@ -95,6 +109,7 @@ export function LoginScreen({ navigation }: Props) {
           createdAt: new Date().toISOString()
         };
 
+        ensureMobileAccess(profile);
         await signInLocal(profile);
         navigation.replace('OfficerDashboard');
         return;
@@ -103,7 +118,9 @@ export function LoginScreen({ navigation }: Props) {
       if (isLogin) {
         const response = await login(email.trim(), password);
         if (response.session?.access_token && response.profile) {
-          await signIn(response.profile as UserProfile, response.session.access_token);
+          const profile = response.profile as UserProfile;
+          ensureMobileAccess(profile);
+          await signIn(profile, response.session.access_token);
           navigation.replace('OfficerDashboard');
           return;
         }
@@ -126,7 +143,9 @@ export function LoginScreen({ navigation }: Props) {
       });
 
       if (response.session?.access_token && response.profile) {
-        await signIn(response.profile as UserProfile, response.session.access_token);
+        const profile = response.profile as UserProfile;
+        ensureMobileAccess(profile);
+        await signIn(profile, response.session.access_token);
         navigation.replace('OfficerDashboard');
         return;
       }

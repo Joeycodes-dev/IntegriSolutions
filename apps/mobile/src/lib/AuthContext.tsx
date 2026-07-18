@@ -9,6 +9,15 @@ import {
   clearStoredProfile
 } from '../services/auth';
 import { logAuditEvent } from '../services/audit';
+import { canAccessMobileApp } from './roles';
+
+const MOBILE_ACCESS_ERROR = 'This mobile app is for officer accounts. Supervisors and administrators must use the web portal.';
+
+function assertMobileAccess(profile: UserProfile): void {
+  if (!canAccessMobileApp(profile.roleId)) {
+    throw new Error(MOBILE_ACCESS_ERROR);
+  }
+}
 
 type AuthContextType = {
   profile: UserProfile | null;
@@ -32,6 +41,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const storedToken = await getAccessToken();
         const storedProfile = await getStoredProfile();
         if (storedToken && storedProfile) {
+          if (!canAccessMobileApp(storedProfile.roleId)) {
+            await clearAccessToken();
+            await clearStoredProfile();
+            return;
+          }
           setProfile(storedProfile);
           setToken(storedToken);
         }
@@ -45,6 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = useCallback(async (profileData: UserProfile, tokenValue: string | null) => {
+    assertMobileAccess(profileData);
     setProfile(profileData);
     setToken(tokenValue);
     if (tokenValue) {
@@ -63,6 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signInLocal = useCallback(async (profileData: UserProfile) => {
+    assertMobileAccess(profileData);
     setProfile(profileData);
     setToken(null);
     await clearAccessToken();
