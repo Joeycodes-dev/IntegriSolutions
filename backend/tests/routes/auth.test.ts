@@ -117,5 +117,22 @@ describe('Auth Routes', () => {
       expect(response.status).toBe(400);
       expect(response.body.error).toBe('Email, password, name, surname, badge number, and ID number are required');
     });
+
+    it('should reject direct officer registration', async () => {
+      const response = await request(app)
+        .post('/api/auth/register')
+        .send({
+          email: 'officer@example.com',
+          password: 'password123',
+          name: 'Test',
+          surname: 'Officer',
+          badgeNumber: 'BADGE-1',
+          idNumber: '9001015009087',
+          roleId: 1,
+        });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error).toBe('Officer accounts must be created with an invite from the web portal.');
+    });
   });
 });

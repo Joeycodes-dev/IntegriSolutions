@@ -92,6 +92,8 @@ export interface FieldOfficer {
   station: string;
   status: string;
   createdAt: string;
+  invitationExpiresAt?: string;
+  inviteEmailSent?: boolean;
 }
 
 export type OfficerShiftStatus = 'On Patrol' | 'Checkpoint' | 'Break';

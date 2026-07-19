@@ -86,20 +86,11 @@ export async function login(email: string, password: string) {
   });
 }
 
-export async function register(params: {
-  email: string;
+export async function completeOfficerInvite(params: {
+  invite: string;
   password: string;
-  name: string;
-  surname: string;
-  badgeNumber: string;
-  idNumber: string;
-  employmentStatus: string;
-  province: string;
-  region: string;
-  officerTypeId: number;
-  roleId: number;
 }) {
-  return request<{ session?: { access_token: string }; profile: any }>('/auth/register', {
+  return request<{ session?: { access_token: string }; profile: any }>('/auth/officer-invite', {
     method: 'POST',
     body: JSON.stringify(params)
   });

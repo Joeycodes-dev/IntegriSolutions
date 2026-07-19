@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { ArrowLeft, ChevronDown } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ChevronDown, Mail } from 'lucide-react';
 import { createFieldOfficer, getAccessToken } from '../../services/api';
 import type { FieldOfficer } from '../../types';
 import { serializeOfficerLocation } from '../../lib/officerLocation';
@@ -30,8 +30,7 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [createdOfficer, setCreatedOfficer] = useState<FieldOfficer | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,16 +46,6 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
       !address.trim()
     ) {
       setError('Please complete all required fields.');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.');
-      return;
-    }
-
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
       return;
     }
 
@@ -78,7 +67,6 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
 
       const created = await createFieldOfficer({
         email,
-        password,
         name: firstName.trim(),
         surname: lastName.trim(),
         serviceNumber: serviceNumber.trim(),
@@ -90,6 +78,7 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
         phone: phone.trim(),
         idNumber
       });
+      setCreatedOfficer(created);
       onCreated(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add officer');
@@ -97,6 +86,71 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
       setIsLoading(false);
     }
   };
+
+  if (createdOfficer) {
+    return (
+      <div className={`${pageShell} min-w-0`} style={{ backgroundColor: PAGE_BG }}>
+        <div className="flex-1 px-5 py-5">
+          <div
+            className="mx-auto w-full max-w-[720px] rounded-xl border bg-white px-5 py-5 shadow-sm"
+            style={{ borderColor: BORDER }}
+          >
+            <div className="mb-4 flex items-start gap-2.5">
+              <button
+                type="button"
+                onClick={onBack}
+                className="mt-0.5 shrink-0 rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+                aria-label="Back to officers"
+              >
+                <ArrowLeft size={18} strokeWidth={2} />
+              </button>
+              <div>
+                <h1 className="text-[0.9375rem] font-bold leading-tight" style={{ color: NAVY }}>
+                  Officer Invite Sent
+                </h1>
+                <p className="mt-0.5 text-[0.75rem] leading-snug text-slate-500">
+                  {createdOfficer.firstName} can now open the email, paste the invite link in the mobile app, and create a password.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-lg border bg-emerald-50 p-4" style={{ borderColor: '#bbf7d0' }}>
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 rounded-full bg-emerald-100 p-2 text-emerald-700">
+                  <CheckCircle2 size={18} />
+                </div>
+                <div>
+                  <p className="text-[0.8125rem] font-bold text-emerald-900">
+                    Invite email sent to {createdOfficer.email}
+                  </p>
+                  <p className="mt-1 text-[0.75rem] leading-snug text-emerald-800">
+                    The invite link is single-use. The officer will sign in with this email after creating their password.
+                  </p>
+                </div>
+              </div>
+              {createdOfficer.invitationExpiresAt ? (
+                <p className="mt-3 text-[0.6875rem] text-emerald-800">
+                  Expires {new Date(createdOfficer.invitationExpiresAt).toLocaleDateString()}.
+                </p>
+              ) : null}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={onBack}
+                className="inline-flex h-[34px] items-center gap-2 rounded-lg px-4 text-[0.75rem] font-bold text-white transition hover:brightness-110"
+                style={{ backgroundColor: NAVY }}
+              >
+                <Mail size={14} />
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`${pageShell} min-w-0`} style={{ backgroundColor: PAGE_BG }}>
@@ -119,7 +173,7 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
                 Add New Officer
               </h1>
               <p className="mt-0.5 text-[0.75rem] leading-snug text-slate-500">
-                Enter the officer details below to add them to the command system.
+                Enter the officer details below to generate a mobile onboarding invite.
               </p>
             </div>
           </div>
@@ -217,31 +271,6 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
               />
             </label>
 
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-              <label className="flex flex-col gap-1">
-                <FieldLabel>Create Password</FieldLabel>
-                <input
-                  type="password"
-                  className={inputClassName}
-                  style={{ borderColor: BORDER }}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <FieldLabel>Confirm Password</FieldLabel>
-                <input
-                  type="password"
-                  className={inputClassName}
-                  style={{ borderColor: BORDER }}
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                />
-              </label>
-            </div>
-
             {error && (
               <p className="rounded-lg bg-rose-50 px-3 py-2 text-[0.75rem] text-rose-700">{error}</p>
             )}
@@ -252,7 +281,7 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
               className="mt-1 w-full rounded-lg py-2.5 text-[0.75rem] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
               style={{ backgroundColor: NAVY }}
             >
-              {isLoading ? 'Adding officer…' : 'Add Officer'}
+              {isLoading ? 'Generating invite…' : 'Generate Officer Invite'}
             </button>
           </form>
         </div>

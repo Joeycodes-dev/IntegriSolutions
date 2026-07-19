@@ -4,6 +4,7 @@ import express from 'express';
 const mockServiceSupabase = {
   from: jest.fn(),
 };
+const mockResolveProfileByEmail = jest.fn();
 
 jest.mock('../../src/supabase', () => ({
   supabase: {
@@ -15,6 +16,10 @@ jest.mock('../../src/supabase', () => ({
 
 jest.mock('@supabase/supabase-js', () => ({
   createClient: jest.fn(() => mockServiceSupabase),
+}));
+
+jest.mock('../../src/utilities/resolveProfile', () => ({
+  resolveProfileByEmail: mockResolveProfileByEmail,
 }));
 
 import syncRoutes from '../../src/routes/sync';
@@ -115,6 +120,55 @@ describe('Sync Routes', () => {
       expect(response.status).toBe(200);
       expect(response.body.synced).toContain('test-123');
       expect(response.body.failed).toHaveLength(0);
+    });
+
+    it('should use the authenticated officer profile instead of stale local officer ids', async () => {
+      const insert = jest.fn().mockResolvedValue({ error: null });
+      mockResolveProfileByEmail.mockResolvedValue({
+        source: 'officer_users',
+        dbId: 1,
+        profile: {
+          uid: 'user-123',
+          officerId: 1,
+          email: 'officer@example.com',
+          name: 'John Doe',
+          surname: 'Doe',
+          badgeNumber: '12345',
+          idNumber: '9001015009087',
+          employmentStatus: 'Active',
+          province: 'Gauteng',
+          region: 'Tshwane',
+          officerTypeId: 1,
+          roleId: 1,
+          createdAt: '2026-05-30T09:00:00Z',
+        },
+      });
+      mockServiceSupabase.from
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              single: jest.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({ insert });
+
+      const response = await request(app)
+        .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
+        .send({ records: [{ ...validRecord, officerId: 999, officerName: 'Stale Officer', badgeNumber: 'OLD' }] });
+
+      expect(response.status).toBe(200);
+      expect(response.body.synced).toContain('test-123');
+      expect(response.body.failed).toHaveLength(0);
+      expect(mockResolveProfileByEmail).toHaveBeenCalledWith('officer@example.com', 'user-123');
+      expect(insert).toHaveBeenCalledWith([
+        expect.objectContaining({
+          officer_id: 1,
+          officer_name: 'John Doe',
+          badge_number: '12345',
+        }),
+      ]);
     });
 
     it('should handle records with missing required fields', async () => {

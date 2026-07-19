@@ -15,7 +15,9 @@ jest.mock('../../src/lib/AuthContext', () => ({
 jest.mock('../../src/db/repository', () => ({
   getPendingCount: jest.fn(),
   getFailedCount: jest.fn(),
-  getSyncedCount: jest.fn()
+  getSyncedCount: jest.fn(),
+  getTestCountBetween: jest.fn(),
+  getRecentTests: jest.fn()
 }));
 
 jest.mock('../../src/services/sync', () => ({
@@ -33,6 +35,31 @@ describe('SyncContext', () => {
     (repository.getPendingCount as jest.Mock).mockResolvedValue(5);
     (repository.getFailedCount as jest.Mock).mockResolvedValue(2);
     (repository.getSyncedCount as jest.Mock).mockResolvedValue(10);
+    (repository.getTestCountBetween as jest.Mock).mockImplementation((startIso: string, endIso: string) => {
+      const days = (new Date(endIso).getTime() - new Date(startIso).getTime()) / 86400000;
+      return Promise.resolve(days > 1 ? 18 : 4);
+    });
+    (repository.getRecentTests as jest.Mock).mockResolvedValue([
+      {
+        id: 'record-1',
+        officerId: 1,
+        officerName: 'Test Officer',
+        badgeNumber: 'BADGE-1',
+        driverName: 'Test Driver',
+        driverId: 'DL123',
+        driverDob: '1990-01-01',
+        bacReading: 0,
+        result: 'pass',
+        location: '{}',
+        hash: 'hash',
+        syncStatus: 'synced',
+        createdAt: new Date().toISOString(),
+        syncedAt: new Date().toISOString(),
+        retryCount: 0,
+        photoUri: null,
+        originalTestId: null
+      }
+    ]);
     (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true });
     (sync.syncPendingRecords as jest.Mock).mockResolvedValue({ synced: [], failed: [] });
   });
@@ -48,6 +75,10 @@ describe('SyncContext', () => {
       expect(result.current.pendingCount).toBe(5);
       expect(result.current.failedCount).toBe(2);
       expect(result.current.syncedCount).toBe(10);
+      expect(result.current.todayCount).toBe(4);
+      expect(result.current.weekCount).toBe(18);
+      expect(result.current.recentTests).toHaveLength(1);
+      expect(result.current.recentTests[0].driverName).toBe('Test Driver');
     });
   });
 

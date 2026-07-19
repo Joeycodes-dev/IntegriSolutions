@@ -1,7 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { AppState } from 'react-native';
 import * as Network from 'expo-network';
-import { getPendingCount, getFailedCount, getSyncedCount } from '../db/repository';
+import {
+  getPendingCount,
+  getFailedCount,
+  getSyncedCount,
+  getTestCountBetween,
+  getRecentTests,
+  type LocalTestRecord
+} from '../db/repository';
 import { syncPendingRecords } from '../services/sync';
 import { useAuth } from '../lib/AuthContext';
 
@@ -9,6 +16,9 @@ type SyncContextType = {
   pendingCount: number;
   failedCount: number;
   syncedCount: number;
+  todayCount: number;
+  weekCount: number;
+  recentTests: LocalTestRecord[];
   isSyncing: boolean;
   lastSyncedAt: Date | null;
   forceSync: () => Promise<void>;
@@ -19,11 +29,33 @@ const SyncContext = createContext<SyncContextType | undefined>(undefined);
 
 const SYNC_INTERVAL_MS = 10_000;
 
+function getTodayRange(now = new Date()): { start: string; end: string } {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+function getWeekRange(now = new Date()): { start: string; end: string } {
+  const start = new Date(now);
+  const day = start.getDay();
+  const daysSinceMonday = day === 0 ? 6 : day - 1;
+  start.setDate(start.getDate() - daysSinceMonday);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   const { profile } = useAuth();
   const [pendingCount, setPendingCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
   const [syncedCount, setSyncedCount] = useState(0);
+  const [todayCount, setTodayCount] = useState(0);
+  const [weekCount, setWeekCount] = useState(0);
+  const [recentTests, setRecentTests] = useState<LocalTestRecord[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const isSyncingRef = useRef(false);
@@ -35,9 +67,17 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       const pending = await getPendingCount(officerId);
       const failed = await getFailedCount(officerId);
       const synced = await getSyncedCount(officerId);
+      const todayRange = getTodayRange();
+      const weekRange = getWeekRange();
+      const today = await getTestCountBetween(todayRange.start, todayRange.end, officerId);
+      const week = await getTestCountBetween(weekRange.start, weekRange.end, officerId);
+      const recent = await getRecentTests(3, officerId);
       setPendingCount(pending);
       setFailedCount(failed);
       setSyncedCount(synced);
+      setTodayCount(today);
+      setWeekCount(week);
+      setRecentTests(recent);
     } catch {
       // DB not ready yet
     }
@@ -119,7 +159,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   }, [refreshCounts, doSync]);
 
   return (
-    <SyncContext.Provider value={{ pendingCount, failedCount, syncedCount, isSyncing, lastSyncedAt, forceSync, refreshCounts }}>
+    <SyncContext.Provider value={{ pendingCount, failedCount, syncedCount, todayCount, weekCount, recentTests, isSyncing, lastSyncedAt, forceSync, refreshCounts }}>
       {children}
     </SyncContext.Provider>
   );

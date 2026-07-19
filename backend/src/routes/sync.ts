@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 import type { AuthRequest } from '../middleware/auth';
 import { hashData } from '../utilities/hash';
+import { resolveProfileByEmail } from '../utilities/resolveProfile';
 
 const serviceSupabase = createClient(
   process.env.SUPABASE_URL ?? '',
@@ -36,7 +37,7 @@ router.use(async (req: Request, _res: Response, next: NextFunction) => {
 
 interface SyncRecord {
   id: string;
-  officerId: number;
+  officerId: number | null;
   officerName: string;
   badgeNumber: string;
   driverName: string;
@@ -65,17 +66,47 @@ router.post('/', async (req, res) => {
   const synced: string[] = [];
   const failed: { id: string; error: string }[] = [];
   const duplicates: string[] = [];
+  const authReq = req as Partial<AuthRequest>;
+
+  let authenticatedOfficer: { officerId: number; officerName: string; badgeNumber: string } | null = null;
+  if (authReq.userEmail && authReq.userId) {
+    let resolved;
+    try {
+      resolved = await resolveProfileByEmail(authReq.userEmail, authReq.userId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Officer profile lookup failed';
+      return res.status(500).json({ error: message });
+    }
+
+    if (!resolved) {
+      return res.status(404).json({ error: 'Officer profile not found' });
+    }
+
+    if (resolved.source !== 'officer_users' || typeof resolved.profile.officerId !== 'number') {
+      return res.status(403).json({ error: 'Only officer accounts can sync test records' });
+    }
+
+    authenticatedOfficer = {
+      officerId: resolved.profile.officerId,
+      officerName: resolved.profile.name,
+      badgeNumber: resolved.profile.badgeNumber
+    };
+  }
 
   for (const record of records) {
-    if (!record.id || !record.officerId || !record.driverName || typeof record.bacReading !== 'number' || !record.result || !record.hash) {
+    const officerId = authenticatedOfficer?.officerId ?? record.officerId;
+    const officerName = authenticatedOfficer?.officerName ?? record.officerName;
+    const badgeNumber = authenticatedOfficer?.badgeNumber ?? record.badgeNumber;
+
+    if (!record.id || !officerId || !officerName || !badgeNumber || !record.driverName || typeof record.bacReading !== 'number' || !record.result || !record.hash) {
       failed.push({ id: record.id || 'unknown', error: 'Missing or invalid fields' });
       continue;
     }
 
     const reconstructed = {
-      officerId: record.officerId,
-      officerName: record.officerName,
-      badgeNumber: record.badgeNumber,
+      officerId,
+      officerName,
+      badgeNumber,
       driverName: record.driverName,
       driverId: record.driverId,
       driverDob: record.driverDob,
@@ -110,16 +141,16 @@ router.post('/', async (req, res) => {
 
     const insertPayload = {
       id: record.id,
-      officer_id: record.officerId,
-      officer_name: record.officerName,
-      badge_number: record.badgeNumber,
+      officer_id: officerId,
+      officer_name: officerName,
+      badge_number: badgeNumber,
       driver_name: record.driverName,
       driver_id: record.driverId,
       driver_dob: record.driverDob,
       bac_reading: record.bacReading,
       result: record.result,
       location: JSON.stringify(record.location),
-      hash: record.hash,
+      hash: authenticatedOfficer ? computedHash : record.hash,
       created_at: record.createdAt,
       original_test_id: record.originalTestId || null
     };

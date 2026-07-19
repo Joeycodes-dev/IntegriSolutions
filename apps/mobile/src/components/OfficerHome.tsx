@@ -7,7 +7,7 @@ import {
   Text,
   View
 } from 'react-native';
-import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import type { UserProfile } from '../types';
 
 interface Props {
@@ -15,6 +15,9 @@ interface Props {
   pendingCount: number;
   failedCount: number;
   syncedCount: number;
+  todayCount: number;
+  weekCount: number;
+  recentStops: RecentStop[];
   isSyncing: boolean;
   lastSyncedAt: Date | null;
   onStartSession: () => void;
@@ -25,22 +28,6 @@ interface Props {
 
 type DutyStatus = 'on' | 'off' | 'break';
 
-interface QuickAction {
-  key: string;
-  label: string;
-  iconLib: 'feather' | 'ionicons' | 'material';
-  iconName: string;
-  tint: string;
-  bg: string;
-}
-
-const QUICK_ACTIONS: QuickAction[] = [
-  { key: 'scan', label: 'Scan License', iconLib: 'feather', iconName: 'camera', tint: '#4338ca', bg: '#eef2ff' },
-  { key: 'manual', label: 'Manual Entry', iconLib: 'feather', iconName: 'edit-3', tint: '#0ea5e9', bg: '#e0f2fe' },
-  { key: 'photo', label: 'Quick Photo', iconLib: 'feather', iconName: 'image', tint: '#16a34a', bg: '#dcfce7' },
-  { key: 'retest', label: 'Retest', iconLib: 'feather', iconName: 'refresh-cw', tint: '#f59e0b', bg: '#fef3c7' }
-];
-
 interface RecentStop {
   id: string;
   time: string;
@@ -49,12 +36,6 @@ interface RecentStop {
   bac: string;
   result: 'PASS' | 'FAIL';
 }
-
-const RECENT_STOPS: RecentStop[] = [
-  { id: '1', time: '08:42', name: 'J. Naidoo', license: 'DL882104', bac: '0.000', result: 'PASS' },
-  { id: '2', time: '07:15', name: 'S. van Wyk', license: 'DL661203', bac: '0.071', result: 'FAIL' },
-  { id: '3', time: 'Yesterday 22:08', name: 'M. Dlamini', license: 'DL445091', bac: '0.000', result: 'PASS' }
-];
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -74,17 +55,14 @@ function formatLastSync(d: Date | null): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function ActionIcon({ lib, name, color, size = 22 }: { lib: QuickAction['iconLib']; name: string; color: string; size?: number }) {
-  if (lib === 'ionicons') return <Ionicons name={name as any} size={size} color={color} />;
-  if (lib === 'material') return <MaterialCommunityIcons name={name as any} size={size} color={color} />;
-  return <Feather name={name as any} size={size} color={color} />;
-}
-
 export function OfficerHome({
   profile,
   pendingCount,
   failedCount,
   syncedCount,
+  todayCount,
+  weekCount,
+  recentStops,
   isSyncing,
   lastSyncedAt,
   onStartSession,
@@ -95,13 +73,12 @@ export function OfficerHome({
   const [duty, setDuty] = useState<DutyStatus>('on');
 
   const todayStats = useMemo(() => {
-    const total = syncedCount + pendingCount + failedCount;
     return {
-      today: 12,
-      week: 47,
+      today: todayCount,
+      week: weekCount,
       pending: pendingCount
     };
-  }, [pendingCount, syncedCount, failedCount]);
+  }, [pendingCount, todayCount, weekCount]);
 
   const dutyMeta = {
     on: { label: 'On Duty', color: '#16a34a', bg: '#dcfce7', dot: '#22c55e' },
@@ -207,18 +184,6 @@ export function OfficerHome({
         </View>
       </View>
 
-      <Text style={styles.sectionLabel}>QUICK ACTIONS</Text>
-      <View style={styles.actionsGrid}>
-        {QUICK_ACTIONS.map((action) => (
-          <Pressable key={action.key} style={styles.actionCard}>
-            <View style={[styles.actionIconWrap, { backgroundColor: action.bg }]}>
-              <ActionIcon lib={action.iconLib} name={action.iconName} color={action.tint} />
-            </View>
-            <Text style={styles.actionLabel}>{action.label}</Text>
-          </Pressable>
-        ))}
-      </View>
-
       <Pressable style={styles.cta} onPress={onStartSession}>
         <View style={styles.ctaInner}>
           <View style={styles.ctaIconWrap}>
@@ -239,38 +204,45 @@ export function OfficerHome({
         </Pressable>
       </View>
       <View style={styles.recentList}>
-        {RECENT_STOPS.map((stop) => (
-          <View key={stop.id} style={styles.recentItem}>
-            <View style={styles.recentAvatar}>
-              <Text style={styles.recentAvatarText}>
-                {stop.name.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase()}
-              </Text>
-            </View>
-            <View style={styles.recentBody}>
-              <View style={styles.recentTopRow}>
-                <Text style={styles.recentName}>{stop.name}</Text>
-                <View
-                  style={[
-                    styles.recentResult,
-                    stop.result === 'FAIL' ? styles.recentResultFail : styles.recentResultPass
-                  ]}
-                >
-                  <Text
+        {recentStops.length === 0 ? (
+          <View style={styles.recentEmpty}>
+            <Text style={styles.recentEmptyTitle}>No recent stops yet</Text>
+            <Text style={styles.recentEmptyText}>Completed test records will appear here.</Text>
+          </View>
+        ) : (
+          recentStops.map((stop) => (
+            <View key={stop.id} style={styles.recentItem}>
+              <View style={styles.recentAvatar}>
+                <Text style={styles.recentAvatarText}>
+                  {stop.name.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase()}
+                </Text>
+              </View>
+              <View style={styles.recentBody}>
+                <View style={styles.recentTopRow}>
+                  <Text style={styles.recentName}>{stop.name}</Text>
+                  <View
                     style={[
-                      styles.recentResultText,
-                      stop.result === 'FAIL' ? styles.recentResultTextFail : styles.recentResultTextPass
+                      styles.recentResult,
+                      stop.result === 'FAIL' ? styles.recentResultFail : styles.recentResultPass
                     ]}
                   >
-                    {stop.result}
-                  </Text>
+                    <Text
+                      style={[
+                        styles.recentResultText,
+                        stop.result === 'FAIL' ? styles.recentResultTextFail : styles.recentResultTextPass
+                      ]}
+                    >
+                      {stop.result}
+                    </Text>
+                  </View>
                 </View>
+                <Text style={styles.recentMeta}>
+                  {stop.license} · {stop.bac} g/100ml · {stop.time}
+                </Text>
               </View>
-              <Text style={styles.recentMeta}>
-                {stop.license} · {stop.bac} g/100ml · {stop.time}
-              </Text>
             </View>
-          </View>
-        ))}
+          ))
+        )}
       </View>
 
       <View style={styles.tipCard}>
@@ -501,36 +473,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     marginBottom: 10
   },
-  actionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 18
-  },
-  actionCard: {
-    width: '48.4%',
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12
-  },
-  actionIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  actionLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#0f172a',
-    flex: 1
-  },
   cta: {
     backgroundColor: '#fff',
     borderRadius: 20,
@@ -648,6 +590,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     marginTop: 2
+  },
+  recentEmpty: {
+    padding: 16
+  },
+  recentEmptyTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a'
+  },
+  recentEmptyText: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 3
   },
   tipCard: {
     flexDirection: 'row',

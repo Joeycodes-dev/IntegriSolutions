@@ -1,12 +1,16 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
-import { ROLE_SUPERVISOR } from '../constants/roles';
+import { ROLE_OFFICER, ROLE_SUPERVISOR } from '../constants/roles';
 import { portalUserId, roleLabel } from '../constants/roles';
 import { writeAuditLog } from '../utilities/auditLog';
 import { resolveProfileByEmail } from '../utilities/resolveProfile';
+import { asyncHandler } from '../asyncHandler';
+import { extractOfficerInviteToken, hashOfficerInviteToken } from '../utilities/officerInvites';
 
 const router = Router();
+
+type DbError = { message?: string; code?: string; details?: string; hint?: string };
 
 const serviceSupabase = createClient(
   process.env.SUPABASE_URL ?? '',
@@ -54,6 +58,152 @@ router.post('/login', async (req, res) => {
   });
 });
 
+router.post('/officer-invite', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const inviteInput = String(body.invite ?? body.inviteLink ?? body.token ?? '');
+  const password = String(body.password ?? '');
+
+  if (!inviteInput || !password) {
+    return res.status(400).json({ error: 'Invite link and password are required' });
+  }
+
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+
+  const token = extractOfficerInviteToken(inviteInput);
+  if (!token) {
+    return res.status(400).json({ error: 'Invalid invite link' });
+  }
+
+  const { data: inviteRows, error: inviteError } = await serviceSupabase
+    .from('officer_invitations')
+    .select('*')
+    .eq('token_hash', hashOfficerInviteToken(token))
+    .limit(1);
+
+  if (inviteError) {
+    return res.status(500).json({ error: inviteError.message });
+  }
+
+  const invite = Array.isArray(inviteRows) ? inviteRows[0] as Record<string, unknown> : null;
+  if (!invite) {
+    return res.status(400).json({ error: 'Invite link is invalid or has been revoked' });
+  }
+
+  if (invite.accepted_at) {
+    return res.status(409).json({ error: 'Invite link has already been used' });
+  }
+
+  const expiresAt = new Date(String(invite.expires_at));
+  if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() < Date.now()) {
+    return res.status(410).json({ error: 'Invite link has expired. Ask your supervisor for a new invite.' });
+  }
+
+  const officerId = Number(invite.officer_id);
+  const { data: officerRows, error: officerError } = await serviceSupabase
+    .from('officer_users')
+    .select('*')
+    .eq('officer_id', officerId)
+    .limit(1);
+
+  if (officerError) {
+    return res.status(500).json({ error: officerError.message });
+  }
+
+  const officer = Array.isArray(officerRows) ? officerRows[0] as Record<string, unknown> : null;
+  if (!officer || Number(officer.role_id) !== ROLE_OFFICER) {
+    return res.status(404).json({ error: 'Officer profile not found for this invite' });
+  }
+
+  const email = String(officer.officer_email_address ?? '').trim().toLowerCase();
+  if (!email) {
+    return res.status(400).json({ error: 'Officer invite does not have an email address. Ask your supervisor for a new invite.' });
+  }
+
+  const { data: officerEmailRows } = await serviceSupabase
+    .from('officer_users')
+    .select('officer_id')
+    .eq('officer_email_address', email)
+    .limit(1);
+  const existingOfficer = Array.isArray(officerEmailRows) ? officerEmailRows[0] as Record<string, unknown> : null;
+  if (existingOfficer && Number(existingOfficer.officer_id) !== officerId) {
+    return res.status(409).json({ error: 'A user with this email already exists' });
+  }
+
+  const { data: supervisorRows } = await serviceSupabase
+    .from('supervisor_users')
+    .select('supervisor_id')
+    .eq('supervisor_email_address', email)
+    .limit(1);
+  if (supervisorRows?.length) {
+    return res.status(409).json({ error: 'A user with this email already exists' });
+  }
+
+  const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  const existingAuth = authList?.users?.find((u) => u.email?.toLowerCase() === email);
+  if (existingAuth) {
+    return res.status(409).json({ error: 'An auth account with this email already exists' });
+  }
+
+  const { data: authData, error: authError } = await serviceSupabase.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true
+  });
+
+  if (authError || !authData.user) {
+    const msg = authError?.message ?? 'Failed to create officer login';
+    const status = msg.toLowerCase().includes('already') ? 409 : 400;
+    return res.status(status).json({ error: msg });
+  }
+
+  const { error: profileError } = await serviceSupabase
+    .from('officer_users')
+    .update({
+      officer_employment_status: 'Active'
+    })
+    .eq('officer_id', officerId);
+
+  if (profileError) {
+    await serviceSupabase.auth.admin.deleteUser(authData.user.id);
+    return res.status(500).json({ error: (profileError as DbError).message ?? 'Failed to activate officer profile' });
+  }
+
+  const acceptedAt = new Date().toISOString();
+  const { error: inviteUpdateError } = await serviceSupabase
+    .from('officer_invitations')
+    .update({ accepted_at: acceptedAt, accepted_email: email })
+    .eq('id', invite.id);
+
+  if (inviteUpdateError) {
+    await serviceSupabase.auth.admin.deleteUser(authData.user.id);
+    return res.status(500).json({ error: inviteUpdateError.message });
+  }
+
+  const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  if (loginError || !loginData.session || !loginData.user) {
+    return res.status(500).json({ error: loginError?.message ?? 'Officer login was created but automatic sign-in failed' });
+  }
+
+  const resolved = await resolveProfileByEmail(email, loginData.user.id);
+  if (!resolved) {
+    return res.status(500).json({ error: 'Officer profile activation failed' });
+  }
+
+  await writeAuditLog(email, 'Accepted officer invite', portalUserId(resolved.dbId, resolved.profile.roleId));
+
+  return res.status(201).json({
+    session: loginData.session,
+    user: loginData.user,
+    profile: resolved.profile
+  });
+}));
+
 router.post('/register', async (req, res) => {
   const {
     email,
@@ -76,6 +226,10 @@ router.post('/register', async (req, res) => {
   }
 
   const resolvedRoleId = Number(roleId ?? 1);
+  if (resolvedRoleId === ROLE_OFFICER) {
+    return res.status(403).json({ error: 'Officer accounts must be created with an invite from the web portal.' });
+  }
+
   const isSupervisor = resolvedRoleId === ROLE_SUPERVISOR;
 
   const { data: existingOfficers } = await serviceSupabase

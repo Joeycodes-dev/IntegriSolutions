@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { AuthProvider, useAuth } from '../../src/lib/AuthContext';
+import { AUTH_EXPIRED_EVENT } from '../../src/services/api';
 
 const mockProfile = {
   uid: 'abc-123',
@@ -80,6 +81,27 @@ describe('AuthContext', () => {
 
     await act(async () => {
       await result.current.signOut();
+    });
+
+    expect(result.current.user).toBeNull();
+    expect(result.current.profile).toBeNull();
+    expect(localStorage.getItem('backend_access_token')).toBeNull();
+    expect(localStorage.getItem('local_auth_profile')).toBeNull();
+  });
+
+  it('clears profile and token when the API reports an expired auth token', async () => {
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    act(() => {
+      result.current.signIn(mockProfile, 'expired-token');
+    });
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
     });
 
     expect(result.current.user).toBeNull();
