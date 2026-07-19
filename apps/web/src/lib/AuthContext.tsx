@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { clearAccessToken, getAccessToken, getProfile, setAccessToken } from '../services/api';
+import { AUTH_EXPIRED_EVENT, clearAccessToken, getAccessToken, getProfile, setAccessToken } from '../services/api';
 import type { UserProfile } from '../types';
 
 const PROFILE_STORAGE_KEY = 'local_auth_profile';
@@ -38,6 +38,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const clearAuthState = () => {
+    clearAccessToken();
+    clearLocalProfile();
+    setUser(null);
+    setProfile(null);
+  };
+
   useEffect(() => {
     const initAuth = async () => {
       const savedProfile = loadLocalProfile();
@@ -69,6 +76,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initAuth();
   }, []);
 
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      clearAuthState();
+    };
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => {
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    };
+  }, []);
+
   const signIn = (profileData: UserProfile, token: string) => {
     setAccessToken(token);
     saveLocalProfile(profileData);
@@ -84,10 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
-    clearAccessToken();
-    clearLocalProfile();
-    setUser(null);
-    setProfile(null);
+    clearAuthState();
   };
 
   return (

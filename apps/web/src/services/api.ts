@@ -1,8 +1,17 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 const ACCESS_TOKEN_KEY = 'backend_access_token';
+export const AUTH_EXPIRED_EVENT = 'integriscan:auth-expired';
 
 if (!import.meta.env.VITE_API_BASE_URL) {
   console.warn('VITE_API_BASE_URL is not defined; falling back to http://localhost:4000');
+}
+
+function emitAuthExpired(message: string) {
+  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { message } }));
+}
+
+function isExpiredTokenResponse(status: number, message: string): boolean {
+  return status === 401 && /invalid or expired access token/i.test(message);
 }
 
 async function request<T>(path: string, options: RequestInit = {}) {
@@ -31,6 +40,9 @@ async function request<T>(path: string, options: RequestInit = {}) {
       (typeof payload.message === 'string' ? payload.message : null) ||
       (rawText ? rawText.slice(0, 300) : null) ||
       `Request failed (${response.status} ${response.statusText})`;
+    if (isExpiredTokenResponse(response.status, message)) {
+      emitAuthExpired(message);
+    }
     throw new Error(message);
   }
 
@@ -269,6 +281,9 @@ export async function uploadEvidence(testId: string, file: File, notes?: string)
     const message =
       (typeof payload.error === 'string' ? payload.error : null) ||
       `Upload failed (${response.status} ${response.statusText})`;
+    if (isExpiredTokenResponse(response.status, message)) {
+      emitAuthExpired(message);
+    }
     throw new Error(message);
   }
 
