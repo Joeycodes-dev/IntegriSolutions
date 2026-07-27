@@ -103,7 +103,8 @@ function toFieldOfficer(row: Record<string, unknown>) {
     rank: String(row.province || 'Constable'),
     station: String(row.region || row.province || '—'),
     status: String(row.officer_employment_status || 'Active'),
-    dutyStatus: normalizeDutyStatus(row.duty_status),
+    // Hardcoded until duty_status column is added to officer_users
+    dutyStatus: normalizeDutyStatus(undefined),
     createdAt: String(row.created_at ?? '')
   };
 }
@@ -192,7 +193,6 @@ router.post('/', asyncHandler(async (req, res) => {
         officer_id_number: officerIdNumber,
         badge_number: serviceNumber.trim(),
         officer_employment_status: 'Active',
-        duty_status: 'Off Duty',
         province: rank.trim(),
         region: station.trim(),
         officer_type_id: 1,

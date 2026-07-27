@@ -60,7 +60,8 @@ router.post('/login', async (req, res) => {
     badgeNumber: officerData.badge_number,
     idNumber: String(officerData.officer_id_number),
     employmentStatus: officerData.officer_employment_status,
-    dutyStatus: normalizeDutyStatus(officerData.duty_status),
+    // Hardcoded until duty_status column is added to officer_users
+    dutyStatus: normalizeDutyStatus(undefined),
     province: officerData.province,
     region: officerData.region,
     officerTypeId: officerData.officer_type_id,
@@ -119,7 +120,6 @@ router.post('/register', async (req, res) => {
     officer_id_number: Number(idNumber),
     badge_number: badgeNumber,
     officer_employment_status: employmentStatus ?? 'Active',
-    duty_status: 'Off Duty',
     province: province ?? '',
     region: region ?? '',
     officer_type_id: Number(officerTypeId ?? 1),
@@ -157,7 +157,8 @@ router.post('/register', async (req, res) => {
     badgeNumber: officerData?.badge_number ?? badgeNumber,
     idNumber: String(officerData?.officer_id_number ?? idNumber),
     employmentStatus: officerData?.officer_employment_status ?? 'Active',
-    dutyStatus: normalizeDutyStatus(officerData?.duty_status),
+    // Hardcoded until duty_status column is added to officer_users
+    dutyStatus: normalizeDutyStatus(undefined),
     province: officerData?.province ?? '',
     region: officerData?.region ?? '',
     officerTypeId: officerData?.officer_type_id ?? 1,

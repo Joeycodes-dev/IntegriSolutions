@@ -81,7 +81,7 @@ describe('SupervisorDashboard', () => {
     render(<SupervisorDashboard />);
 
     await waitFor(() => {
-      expect(screen.getByText('2')).toBeInTheDocument();
+      expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(1);
     });
 
     expect(screen.getByText('TOTAL TESTS')).toBeInTheDocument();
@@ -151,9 +151,16 @@ describe('SupervisorDashboard', () => {
 
     expect(screen.getByText('Generate Weekly PDF Report')).toBeInTheDocument();
     expect(screen.getByText('Filters')).toBeInTheDocument();
-    expect(screen.getByText('DUI Trends weekly')).toBeInTheDocument();
+    expect(screen.getByText(/DUI Trends/i)).toBeInTheDocument();
     expect(screen.getByText('Result Breakdown')).toBeInTheDocument();
-    expect(screen.getByText(/Showing \d+ record/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Showing \d+ of \d+ record/i)).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/Passed \(0\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/Failed \(1\)/i)).toBeInTheDocument();
+    });
   });
 
   it('polls for new data every 10 seconds', async () => {

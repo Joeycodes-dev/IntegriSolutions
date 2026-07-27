@@ -19,7 +19,11 @@ const serviceSupabase = createClient(
 
 const router = Router();
 
-function toProfile(uid: string, officerData: Record<string, any>): UserProfile {
+function toProfile(
+  uid: string,
+  officerData: Record<string, any>,
+  dutyStatusOverride?: unknown
+): UserProfile {
   return {
     uid,
     officerId: officerData.officer_id,
@@ -29,7 +33,8 @@ function toProfile(uid: string, officerData: Record<string, any>): UserProfile {
     badgeNumber: officerData.badge_number,
     idNumber: String(officerData.officer_id_number),
     employmentStatus: officerData.officer_employment_status,
-    dutyStatus: normalizeDutyStatus(officerData.duty_status),
+    // Hardcoded default until duty_status column is added to officer_users
+    dutyStatus: normalizeDutyStatus(dutyStatusOverride),
     province: officerData.province,
     region: officerData.region,
     officerTypeId: officerData.officer_type_id,
@@ -73,34 +78,29 @@ router.patch(
       });
     }
 
-    const { data: updatedRows, error } = await serviceSupabase
+    // Temporary: do not persist to DB (column may be missing). Echo status for the session.
+    const { data: officerRows, error } = await serviceSupabase
       .from('officer_users')
-      .update({ duty_status: dutyStatus })
-      .eq('officer_email_address', authReq.userEmail)
       .select('*')
+      .eq('officer_email_address', authReq.userEmail)
       .limit(1);
 
     if (error) {
-      if (error.message.includes('duty_status') || error.code === '42703') {
-        return res.status(503).json({
-          error: 'duty_status column is missing. Run backend/sql/duty_status.sql in Supabase.'
-        });
-      }
       return res.status(500).json({ error: error.message });
     }
 
-    const officerData = updatedRows?.[0];
+    const officerData = officerRows?.[0];
     if (!officerData) {
       return res.status(404).json({ error: 'Officer profile not found' });
     }
 
     await writeAuditLog(
       authReq.userEmail ?? 'unknown',
-      `Updated duty status to ${dutyStatus}`,
+      `Updated duty status to ${dutyStatus} (not persisted)`,
       String(officerData.officer_id)
     );
 
-    return res.json(toProfile(authReq.userId, officerData));
+    return res.json(toProfile(authReq.userId, officerData, dutyStatus));
   })
 );
 
