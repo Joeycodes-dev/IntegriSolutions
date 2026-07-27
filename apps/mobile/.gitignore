@@ -1,0 +1,8 @@
+node_modules/
+.expo/
+.expo-shared/
+web-build/
+.expo-settings.json
+npm-debug.log*
+*.log
+.DS_Store

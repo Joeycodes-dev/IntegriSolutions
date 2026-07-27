@@ -1,0 +1,13 @@
+{
+  "name": "IntegriScan",
+  "description": "Digital DUI enforcement system for IntegriSolutions. Features tamper-proof roadside testing, ID scanning, and supervisor auditing.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "Firebase Auth",
+    "Firestore",
+    "Gemini OCR"
+  ]
+}

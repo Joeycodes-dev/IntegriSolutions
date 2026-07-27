@@ -1,0 +1,50 @@
+{
+  "name": "integrisolutions-mobile",
+  "private": true,
+  "version": "1.0.0",
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "eas": "node ./node_modules/eas-cli/bin/run",
+    "eas:login": "node ./node_modules/eas-cli/bin/run login",
+    "eas:whoami": "node ./node_modules/eas-cli/bin/run whoami",
+    "apk": "node ./node_modules/eas-cli/bin/run build --platform android --profile preview",
+    "apk:local": "node ./node_modules/eas-cli/bin/run build --platform android --profile preview --local",
+    "apk:list": "node ./node_modules/eas-cli/bin/run build:list --platform android --limit 5",
+    "eas-build": "node ./node_modules/eas-cli/bin/run build --platform all",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@react-navigation/native": "^7.2.2",
+    "@react-navigation/native-stack": "^7.14.11",
+    "babel-preset-expo": "~54.0.10",
+    "expo": "~54.0.36",
+    "expo-asset": "~12.0.13",
+    "expo-camera": "~17.0.10",
+    "expo-constants": "~18.0.13",
+    "expo-image-picker": "~17.0.11",
+    "expo-location": "~19.0.8",
+    "expo-network": "~8.0.8",
+    "expo-secure-store": "~15.0.8",
+    "expo-sqlite": "~16.0.10",
+    "expo-status-bar": "~3.0.9",
+    "js-sha256": "^0.11.1",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0"
+  },
+  "devDependencies": {
+    "@testing-library/react-native": "^13.3.3",
+    "@types/jest": "^29.5.14",
+    "@types/react": "~19.1.10",
+    "eas-cli": "^21.3.0",
+    "jest": "^29.7.0",
+    "jest-expo": "~54.0.17",
+    "react-test-renderer": "^19.1.0",
+    "typescript": "^5.6.0"
+  }
+}
