@@ -1,5 +1,7 @@
 export type UserRole = 'officer' | 'supervisor';
 
+import type { DutyStatus } from './constants/dutyStatus';
+
 export interface UserProfile {
   uid: string;                    // Supabase Auth user ID
   officerId?: number;           // DB auto-generated officer_id
@@ -9,6 +11,7 @@ export interface UserProfile {
   badgeNumber: string;
   idNumber: string;
   employmentStatus: string;
+  dutyStatus: DutyStatus;
   province: string;
   region: string;
   officerTypeId: number;

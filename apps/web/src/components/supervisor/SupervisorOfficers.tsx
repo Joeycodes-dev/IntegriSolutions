@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getFieldOfficers } from '../../services/api';
 import type { FieldOfficer, OfficerShiftStatus, TestRecord } from '../../types';
 import {
-  ROSTER_ASSIGNMENTS,
+  buildCoverageHealth,
   buildOfficerPerformance,
+  buildRosterAssignments,
   isToday
 } from '../../lib/officerDisplay';
 import { BORDER, NAVY, PAGE_BG, pageShell } from './supervisorStyles';
@@ -20,7 +21,9 @@ function StatusBadge({ status }: { status: OfficerShiftStatus }) {
       ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
       : status === 'Checkpoint'
         ? 'border-blue-200 bg-blue-50 text-blue-700'
-        : 'border-amber-200 bg-amber-50 text-amber-800';
+        : status === 'Break'
+          ? 'border-amber-200 bg-amber-50 text-amber-800'
+          : 'border-slate-200 bg-slate-50 text-slate-600';
 
   return (
     <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${styles}`}>
@@ -51,6 +54,10 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
 
   useEffect(() => {
     void loadOfficers();
+    const timer = setInterval(() => {
+      void loadOfficers();
+    }, 15000);
+    return () => clearInterval(timer);
   }, [loadOfficers]);
 
   const activeOfficers = useMemo(
@@ -69,6 +76,13 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
     () => buildOfficerPerformance(activeOfficers, tests),
     [activeOfficers, tests]
   );
+
+  const rosterAssignments = useMemo(
+    () => buildRosterAssignments(officers),
+    [officers]
+  );
+
+  const coverage = useMemo(() => buildCoverageHealth(officers), [officers]);
 
   const selectedOfficer = useMemo(
     () => officers.find((o) => o.officerId === selectedOfficerId) ?? null,
@@ -111,7 +125,8 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
               Officers
             </h1>
             <p className="mt-0.5 max-w-xl text-[0.75rem] leading-snug text-slate-500">
-              Manage shift rosters, track officer performance, and monitor live deployment status.
+              Live duty status from the mobile app, performance for today, and shift coverage from
+              real officer assignments.
             </p>
           </div>
           <button
@@ -136,7 +151,7 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
             <p className="mt-1 text-2xl font-bold leading-none text-slate-900">
               {loading ? '—' : activeOfficers.length}
             </p>
-            <p className="mt-1 text-[0.6875rem] font-medium text-emerald-600">+3 vs last week</p>
+            <p className="mt-1 text-[0.6875rem] text-slate-500">From officer registry</p>
           </div>
           <div className="rounded-xl border bg-white px-4 py-3" style={{ borderColor: BORDER }}>
             <p className="text-[0.75rem] text-slate-500">Average tests / officer</p>
@@ -146,10 +161,12 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
             <p className="mt-1 text-[0.6875rem] text-slate-500">Current 24-hour cycle</p>
           </div>
           <div className="rounded-xl border bg-white px-4 py-3" style={{ borderColor: BORDER }}>
-            <p className="text-[0.75rem] text-slate-500">Shift coverage health</p>
-            <p className="mt-1 text-2xl font-bold leading-none text-slate-900">92%</p>
-            <p className="mt-1 text-[0.6875rem] font-medium text-amber-600">
-              Night shift under target by 1 officer
+            <p className="text-[0.75rem] text-slate-500">On-duty coverage</p>
+            <p className="mt-1 text-2xl font-bold leading-none text-slate-900">
+              {loading ? '—' : `${coverage.percent}%`}
+            </p>
+            <p className="mt-1 text-[0.6875rem] text-slate-500">
+              {coverage.onDuty} of {coverage.active} active officers on duty
             </p>
           </div>
         </div>
@@ -243,8 +260,8 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
               Roster Assignment
             </h2>
             <ul className="mt-3 space-y-3">
-              {ROSTER_ASSIGNMENTS.map((slot) => {
-                const filled = slot.assigned >= slot.target;
+              {rosterAssignments.map((slot) => {
+                const filled = slot.target === 0 ? true : slot.assigned >= slot.target;
                 return (
                   <li
                     key={slot.label}
@@ -261,6 +278,10 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
                 );
               })}
             </ul>
+            <p className="mt-3 text-[0.6875rem] text-slate-400">
+              Counts come from each officer&apos;s station/shift assignment. Status refreshes from
+              mobile every 15s.
+            </p>
           </div>
         </div>
       </div>

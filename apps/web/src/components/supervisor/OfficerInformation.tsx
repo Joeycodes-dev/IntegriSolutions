@@ -71,6 +71,8 @@ export function OfficerInformation({ officer, onBack }: OfficerInformationProps)
             <InfoField label="Service Number" value={officer.serviceNumber} />
             <InfoField label="Rank" value={officer.rank} valueColor={RANK_BLUE} />
             <InfoField label="Phone" value={formatSouthAfricanPhone(location.phone)} />
+            <InfoField label="Employment" value={officer.status} />
+            <InfoField label="Duty Status" value={officer.dutyStatus ?? 'Off Duty'} valueColor={RANK_BLUE} />
           </div>
 
           <div className="mt-3 space-y-3">

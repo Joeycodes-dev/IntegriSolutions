@@ -181,3 +181,44 @@ export async function getSystemSettings() {
     headers: authHeaders()
   });
 }
+
+export type AnnotationStatus = 'approved' | 'referred';
+
+export interface Annotation {
+  id: number;
+  testId: string;
+  supervisorEmail: string;
+  comment: string | null;
+  status: AnnotationStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getAnnotations(testId: string) {
+  return request<Annotation[]>(`/api/supervisor/tests/${testId}/annotations`, {
+    headers: authHeaders()
+  });
+}
+
+export async function annotateTest(
+  testId: string,
+  payload: { status: AnnotationStatus; comment?: string }
+) {
+  return request<Annotation>(`/api/supervisor/tests/${testId}/annotations`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateAnnotation(
+  testId: string,
+  annotationId: number,
+  payload: { status?: AnnotationStatus; comment?: string | null }
+) {
+  return request<Annotation>(`/api/supervisor/tests/${testId}/annotations/${annotationId}`, {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}

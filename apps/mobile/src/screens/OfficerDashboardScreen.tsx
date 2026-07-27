@@ -16,9 +16,11 @@ import { Feather, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../lib/AuthContext';
 import { generateId, saveLocally, syncPendingRecords } from '../services/sync';
+import { updateDutyStatus } from '../services/api';
 import { useSync } from '../lib/SyncContext';
 import { decryptLicensePayload, parseDecryptedLicensePayload, type DecryptedLicenseData } from '../lib/licenseDecryptor';
 import type { DriverLicenseData } from '../services/scanService';
+import { DUTY_STATUSES, type DutyStatus } from '../types';
 
 type RootStackParamList = {
   Login: undefined;
@@ -330,7 +332,7 @@ function parsePdf417BarcodeData(rawPayload: string): DriverLicenseData {
 }
 
 export function OfficerDashboardScreen({ navigation }: Props) {
-  const { profile, signOut } = useAuth();
+  const { profile, signOut, updateProfile } = useAuth();
   const { pendingCount, failedCount, syncedCount, isSyncing, lastSyncedAt, forceSync, refreshCounts } = useSync();
   const [syncModalVisible, setSyncModalVisible] = useState(false);
   const [step, setStep] = useState<OfficerStep>('idle');
@@ -342,8 +344,29 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [barcodeScanned, setBarcodeScanned] = useState(false);
   const [bacReading, setBacReading] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [updatingDuty, setUpdatingDuty] = useState(false);
   const devTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bacTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const currentDuty = (profile?.dutyStatus as DutyStatus | undefined) ?? 'Off Duty';
+
+  const handleDutyStatusChange = async (next: DutyStatus) => {
+    if (!profile || next === currentDuty || updatingDuty) return;
+    setUpdatingDuty(true);
+    try {
+      const updated = await updateDutyStatus(next);
+      await updateProfile({
+        ...profile,
+        ...updated,
+        dutyStatus: updated.dutyStatus ?? next
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update duty status';
+      Alert.alert('Status update failed', message);
+    } finally {
+      setUpdatingDuty(false);
+    }
+  };
 
   useEffect(() => {
     if (!__DEV__ || step !== 'scan') {
@@ -538,17 +561,47 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
       <ScrollView contentContainerStyle={styles.content} style={styles.contentScroll}>
         {step === 'idle' && (
-          <View style={styles.card}>
-            <View style={styles.cardIcon}>
-              <Feather name="camera" size={32} color="#4338ca" />
+          <>
+            <View style={styles.card}>
+              <Text style={styles.overline}>Duty Status</Text>
+              <Text style={styles.dutyCurrent}>Currently: {currentDuty}</Text>
+              <Text style={styles.cardText}>
+                This status is shared with the supervisor Officers screen in real time.
+              </Text>
+              <View style={styles.dutyGrid}>
+                {DUTY_STATUSES.map((status) => {
+                  const selected = currentDuty === status;
+                  return (
+                    <Pressable
+                      key={status}
+                      style={[styles.dutyChip, selected && styles.dutyChipSelected]}
+                      disabled={updatingDuty}
+                      onPress={() => void handleDutyStatusChange(status)}
+                    >
+                      <Text style={[styles.dutyChipText, selected && styles.dutyChipTextSelected]}>
+                        {status}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {updatingDuty ? (
+                <ActivityIndicator style={{ marginTop: 8 }} color="#4338ca" />
+              ) : null}
             </View>
-            <Text style={styles.cardTitle}>New Roadside Stop</Text>
-            <Text style={styles.cardText}>Scan the driver's license to begin an incorruptible DUI record session.</Text>
-            <Pressable style={styles.primaryButton} onPress={startScan}>
-              <Feather name="camera" size={20} color="#fff" />
-              <Text style={styles.primaryButtonText}>START SESSION</Text>
-            </Pressable>
-          </View>
+
+            <View style={styles.card}>
+              <View style={styles.cardIcon}>
+                <Feather name="camera" size={32} color="#4338ca" />
+              </View>
+              <Text style={styles.cardTitle}>New Roadside Stop</Text>
+              <Text style={styles.cardText}>Scan the driver's license to begin an incorruptible DUI record session.</Text>
+              <Pressable style={styles.primaryButton} onPress={startScan}>
+                <Feather name="camera" size={20} color="#fff" />
+                <Text style={styles.primaryButtonText}>START SESSION</Text>
+              </Pressable>
+            </View>
+          </>
         )}
 
         {step === 'scan' && hasPermission && (
@@ -841,6 +894,39 @@ const styles = StyleSheet.create({
     color: '#64748b',
     lineHeight: 22,
     marginBottom: 24
+  },
+  dutyCurrent: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginTop: 6,
+    marginBottom: 8
+  },
+  dutyGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 4
+  },
+  dutyChip: {
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  dutyChipSelected: {
+    borderColor: '#4338ca',
+    backgroundColor: '#eef2ff'
+  },
+  dutyChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569'
+  },
+  dutyChipTextSelected: {
+    color: '#4338ca'
   },
   primaryButton: {
     backgroundColor: '#4338ca',

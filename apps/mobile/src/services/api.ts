@@ -41,3 +41,10 @@ export async function syncRecords(records: Record<string, unknown>[]) {
     body: JSON.stringify({ records })
   });
 }
+
+export async function updateDutyStatus(dutyStatus: string) {
+  return request<import('../types').UserProfile>('/profile/duty-status', {
+    method: 'PATCH',
+    body: JSON.stringify({ dutyStatus })
+  });
+}

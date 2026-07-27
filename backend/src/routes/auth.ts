@@ -4,6 +4,7 @@ import { supabase } from '../supabase';
 import type { UserProfile } from '../types';
 import { ROLE_ADMIN, portalUserId } from '../constants/roles';
 import { writeAuditLog } from '../utilities/auditLog';
+import { normalizeDutyStatus } from '../constants/dutyStatus';
 
 const router = Router();
 
@@ -59,6 +60,7 @@ router.post('/login', async (req, res) => {
     badgeNumber: officerData.badge_number,
     idNumber: String(officerData.officer_id_number),
     employmentStatus: officerData.officer_employment_status,
+    dutyStatus: normalizeDutyStatus(officerData.duty_status),
     province: officerData.province,
     region: officerData.region,
     officerTypeId: officerData.officer_type_id,
@@ -117,6 +119,7 @@ router.post('/register', async (req, res) => {
     officer_id_number: Number(idNumber),
     badge_number: badgeNumber,
     officer_employment_status: employmentStatus ?? 'Active',
+    duty_status: 'Off Duty',
     province: province ?? '',
     region: region ?? '',
     officer_type_id: Number(officerTypeId ?? 1),
@@ -154,6 +157,7 @@ router.post('/register', async (req, res) => {
     badgeNumber: officerData?.badge_number ?? badgeNumber,
     idNumber: String(officerData?.officer_id_number ?? idNumber),
     employmentStatus: officerData?.officer_employment_status ?? 'Active',
+    dutyStatus: normalizeDutyStatus(officerData?.duty_status),
     province: officerData?.province ?? '',
     region: officerData?.region ?? '',
     officerTypeId: officerData?.officer_type_id ?? 1,
@@ -170,9 +174,9 @@ router.post('/register', async (req, res) => {
   }
 
   return res.status(201).json({
+    session: loginData.session,
     user: authData.user,
-    profile,
-    session: loginData.session
+    profile
   });
 });
 

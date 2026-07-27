@@ -15,6 +15,7 @@ type AuthContextType = {
   isRestoring: boolean;
   signIn: (profile: UserProfile, token: string | null) => Promise<void>;
   signInLocal: (profile: UserProfile) => Promise<void>;
+  updateProfile: (profile: UserProfile) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -59,6 +60,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await saveProfile(profileData as any);
   }, []);
 
+  const updateProfile = useCallback(async (profileData: UserProfile) => {
+    setProfile(profileData);
+    await saveProfile(profileData as any);
+  }, []);
+
   const signOut = useCallback(async () => {
     setProfile(null);
     setToken(null);
@@ -67,7 +73,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ profile, token, isRestoring, signIn, signInLocal, signOut }}>
+    <AuthContext.Provider value={{ profile, token, isRestoring, signIn, signInLocal, updateProfile, signOut }}>
       {children}
     </AuthContext.Provider>
   );

@@ -3,6 +3,7 @@ import { ArrowLeft, ChevronDown } from 'lucide-react';
 import { createFieldOfficer, getAccessToken } from '../../services/api';
 import type { FieldOfficer } from '../../types';
 import { serializeOfficerLocation } from '../../lib/officerLocation';
+import { SHIFT_SLOTS } from '../../lib/officerDisplay';
 import { BORDER, NAVY, PAGE_BG, pageShell } from './supervisorStyles';
 
 const RANKS = ['Constable', 'Sergeant', 'Warrant Officer', 'Captain'] as const;
@@ -30,6 +31,7 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
+  const [shift, setShift] = useState<string>(SHIFT_SLOTS[0]);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -85,7 +87,8 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
         rank,
         station: serializeOfficerLocation({
           address: address.trim(),
-          phone: phone.trim() || undefined
+          phone: phone.trim() || undefined,
+          shift
         }),
         phone: phone.trim(),
         idNumber
@@ -215,6 +218,28 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
                 onChange={(e) => setAddress(e.target.value)}
                 required
               />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <FieldLabel>Shift</FieldLabel>
+              <div className="relative">
+                <select
+                  className={`${inputClassName} appearance-none pr-8`}
+                  style={{ borderColor: BORDER }}
+                  value={shift}
+                  onChange={(e) => setShift(e.target.value)}
+                >
+                  {SHIFT_SLOTS.map((slot) => (
+                    <option key={slot} value={slot}>
+                      {slot}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  size={14}
+                  className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                />
+              </div>
             </label>
 
             <div className="grid grid-cols-2 gap-x-4 gap-y-3">
