@@ -6,6 +6,7 @@ import {
   formatDriverCategoryForReport,
   resolveEvidencePhotoUrls
 } from './testEvidence';
+import { getAnnotations, getEvidence, type Annotation, type EvidencePhoto } from '../services/api';
 
 type RGB = [number, number, number];
 
@@ -102,6 +103,17 @@ async function renderEvidencePage(doc: jsPDF, test: TestRecord, pageIndex: numbe
   const resultColor = test.result === 'fail' ? RED : GREEN;
   const photos = resolveEvidencePhotoUrls(evidence.photoUrls);
 
+  let annotations: Annotation[] = [];
+  let evidencePhotos: EvidencePhoto[] = [];
+  try {
+    [annotations, evidencePhotos] = await Promise.all([
+      getAnnotations(test.id),
+      getEvidence(test.id)
+    ]);
+  } catch {
+    // Non-blocking: continue without annotations/evidence photos
+  }
+
   let y = MARGIN + 2;
 
   doc.setFont('helvetica', 'bold');
@@ -180,29 +192,122 @@ async function renderEvidencePage(doc: jsPDF, test: TestRecord, pageIndex: numbe
   y += 9;
 
   y = sectionTitle(doc, y, 'Evidence');
+  const allPhotos = evidencePhotos.length > 0
+    ? evidencePhotos.map((p) => p.photo_url)
+    : photos;
   const imgW = (CONTENT_W - 4) / 2;
   const imgH = 44;
-  const loaded = await Promise.all(photos.map((url) => loadImageDataUrl(url)));
+  const loaded = await Promise.all(allPhotos.slice(0, 4).map((url) => loadImageDataUrl(url)));
 
-  for (let i = 0; i < 2; i++) {
-    const x = MARGIN + i * (imgW + 4);
+  for (let i = 0; i < Math.min(loaded.length, 4); i++) {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = MARGIN + col * (imgW + 4);
+    const imgY = y + row * (imgH + 4);
     const img = loaded[i];
     if (img) {
       try {
-        doc.addImage(img.data, img.format, x, y, imgW, imgH, undefined, 'FAST');
+        doc.addImage(img.data, img.format, x, imgY, imgW, imgH, undefined, 'FAST');
       } catch {
-        drawPlaceholderImage(doc, x, y, imgW, imgH);
+        drawPlaceholderImage(doc, x, imgY, imgW, imgH);
       }
     } else {
-      drawPlaceholderImage(doc, x, y, imgW, imgH);
+      drawPlaceholderImage(doc, x, imgY, imgW, imgH);
     }
+  }
+  y += Math.ceil(loaded.length / 2) * (imgH + 4);
+  if (loaded.length === 0) {
+    y += 10;
+  }
+  y += 7;
+  drawHr(doc, y);
+  y += 9;
+
+  y = sectionTitle(doc, y, 'Integrity Verification');
+  const hashStatus = test.hashValid === true
+    ? 'VERIFIED'
+    : test.hashValid === false
+    ? 'TAMPERED'
+    : 'UNKNOWN';
+  const hashColor = test.hashValid === true
+    ? GREEN
+    : test.hashValid === false
+    ? RED
+    : GRAY_LABEL;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(...hashColor);
+  doc.text(`Status: ${hashStatus}`, MARGIN, y);
+  y += 5;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...GRAY_LABEL);
+  doc.text('SHA-256 Hash:', MARGIN, y);
+  y += 3.5;
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(...NAVY);
+  const hashLines = doc.splitTextToSize(test.hash ?? 'N/A', CONTENT_W);
+  doc.text(hashLines, MARGIN, y);
+  y += hashLines.length * 3.5 + 5;
+
+  if (test.hashValid === false) {
+    doc.setFillColor(254, 242, 242);
+    doc.setDrawColor(...RED);
+    doc.roundedRect(MARGIN, y, CONTENT_W, 12, 2, 2, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(...RED);
+    doc.text('WARNING: Record integrity compromised', MARGIN + 5, y + 5);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text('Hash does not match original capture. May not be admissible.', MARGIN + 5, y + 9);
+    y += 16;
+  }
+
+  y += 3;
+  drawHr(doc, y);
+  y += 9;
+
+  if (annotations.length > 0) {
+    y = sectionTitle(doc, y, 'Supervisor Annotations');
+    for (const ann of annotations.slice(0, 3)) {
+      const statusLabel = ann.status.toUpperCase();
+      const statusColor = ann.status === 'approved' ? GREEN : ann.status === 'referred' ? [245, 158, 11] as RGB : GRAY_LABEL;
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(...statusColor);
+      doc.text(`[${statusLabel}]`, MARGIN, y);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(...GRAY_LABEL);
+      const timeStr = new Date(ann.created_at).toLocaleString();
+      doc.text(`by ${ann.supervisor_email} · ${timeStr}`, MARGIN + 25, y);
+      y += 4;
+
+      if (ann.comment) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.setTextColor(...NAVY);
+        const commentLines = doc.splitTextToSize(ann.comment, CONTENT_W - 10);
+        doc.text(commentLines, MARGIN + 5, y);
+        y += commentLines.length * 3.8 + 2;
+      }
+      y += 2;
+    }
+    drawHr(doc, y);
+    y += 9;
   }
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.setTextColor(...GRAY_LABEL);
   doc.text(
-    `IntegriScan court-ready export · Page ${pageIndex + 1}`,
+    `IntegriScan court-ready export · Page ${pageIndex + 1} · Generated ${new Date().toISOString()}`,
     PAGE_W / 2,
     287,
     { align: 'center' }

@@ -1,0 +1,31 @@
+﻿{
+    "name":  "SF",
+    "surname":  "MOLUAGA",
+    "initials":  "SF",
+    "idNumber":  "2041020211910",
+    "licenseNumber":  "",
+    "dob":  "1989-12-21",
+    "expiryDate":  "2026-10-19",
+    "licenseCodes":  "",
+    "_ocr":  {
+                 "overallConfidence":  0.745,
+                 "fieldConfidence":  {
+                                         "initials":  0.773,
+                                         "surname":  0.789,
+                                         "idNumber":  0.749,
+                                         "licenseNumber":  0,
+                                         "expiryDate":  0.671,
+                                         "dob":  0.551,
+                                         "idOrLicense":  0.749
+                                     },
+                 "passes":  [
+                                {
+                                    "name":  "highlight_only_pass",
+                                    "confidence":  0.37,
+                                    "preview":  "5 SADC ; IE $A FECT \u003e Come 28872 TE SONDUCAD p ¢ SF MOLUAGA | No 5 Swe 02/8912215969088 wALE Fada Beg 21/12/1989 24 Restriction 8 E52 rca Nu"
+                                }
+                            ],
+                 "usedPaidFallback":  false,
+                 "fallbackReason":  "Primary OCR timed out; used highlighted-values fallback."
+             }
+}

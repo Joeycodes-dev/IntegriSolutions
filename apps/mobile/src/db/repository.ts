@@ -2,6 +2,34 @@ import { getDB } from './client';
 
 export type SyncStatus = 'pending_sync' | 'synced' | 'failed';
 
+export type AuditAction =
+  | 'auth.login'
+  | 'auth.login.failed'
+  | 'auth.logout'
+  | 'test.saved'
+  | 'test.invalidated'
+  | 'test.invalidation.failed'
+  | 'sync.batch.completed'
+  | 'sync.batch.failed';
+
+export type AuditOutcome = 'success' | 'failure';
+export type AuditSeverity = 'info' | 'warning' | 'critical';
+
+export interface AuditEvent {
+  id: string;
+  occurredAt: string;
+  officerId: number | null;
+  officerName: string | null;
+  badgeNumber: string | null;
+  action: AuditAction;
+  entityType: string | null;
+  entityId: string | null;
+  outcome: AuditOutcome;
+  severity: AuditSeverity;
+  message: string;
+  metadata: string | null;
+}
+
 export interface LocalTestRecord {
   id: string;
   officerId: number | null;
@@ -18,6 +46,8 @@ export interface LocalTestRecord {
   createdAt: string;
   syncedAt: string | null;
   retryCount: number;
+  photoUri: string | null;
+  originalTestId: string | null;
 }
 
 export interface LocalDraft {
@@ -31,8 +61,8 @@ export interface LocalDraft {
 export async function insertTest(record: LocalTestRecord): Promise<void> {
   const db = await getDB();
   await db.runAsync(
-    `INSERT INTO tests (id, officerId, officerName, badgeNumber, driverName, driverId, driverDob, bacReading, result, location, hash, syncStatus, createdAt, syncedAt, retryCount)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO tests (id, officerId, officerName, badgeNumber, driverName, driverId, driverDob, bacReading, result, location, hash, syncStatus, createdAt, syncedAt, retryCount, photoUri, originalTestId)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       record.id,
       record.officerId,
@@ -48,7 +78,9 @@ export async function insertTest(record: LocalTestRecord): Promise<void> {
       record.syncStatus,
       record.createdAt,
       record.syncedAt,
-      record.retryCount
+      record.retryCount,
+      record.photoUri,
+      record.originalTestId
     ]
   );
 }
@@ -119,6 +151,21 @@ export async function getFailedSync(officerId?: number | null): Promise<LocalTes
   );
 }
 
+export async function resetFailedToPending(officerId?: number | null): Promise<void> {
+  const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    await db.runAsync(
+      `UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND officerId = ?`,
+      [officerId]
+    );
+    return;
+  }
+
+  await db.runAsync(
+    `UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND officerId IS NULL`
+  );
+}
+
 export async function getSyncedCount(officerId?: number | null): Promise<number> {
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
@@ -164,16 +211,66 @@ export async function getFailedCount(officerId?: number | null): Promise<number>
   return row?.count ?? 0;
 }
 
+export async function getTestCountBetween(
+  startIso: string,
+  endIso: string,
+  officerId?: number | null
+): Promise<number> {
+  const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    const row = await db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM tests WHERE createdAt >= ? AND createdAt < ? AND officerId = ?`,
+      [startIso, endIso, officerId]
+    );
+    return row?.count ?? 0;
+  }
+  const row = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM tests WHERE createdAt >= ? AND createdAt < ? AND officerId IS NULL`,
+    [startIso, endIso]
+  );
+  return row?.count ?? 0;
+}
+
 export async function getAllTests(officerId?: number | null): Promise<LocalTestRecord[]> {
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
-    return db.getAllAsync<LocalTestRecord>(
+    const scoped = await db.getAllAsync<LocalTestRecord>(
       `SELECT * FROM tests WHERE officerId = ? ORDER BY createdAt DESC`,
       [officerId]
+    );
+    if (scoped.length > 0) {
+      return scoped;
+    }
+
+    // Backward compatibility for rows created before officer scoping was available.
+    return db.getAllAsync<LocalTestRecord>(
+      `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC`
     );
   }
   return db.getAllAsync<LocalTestRecord>(
     `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC`
+  );
+}
+
+export async function getRecentTests(limit = 3, officerId?: number | null): Promise<LocalTestRecord[]> {
+  const db = await getDB();
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 3;
+  if (officerId !== undefined && officerId !== null) {
+    const scoped = await db.getAllAsync<LocalTestRecord>(
+      `SELECT * FROM tests WHERE officerId = ? ORDER BY createdAt DESC LIMIT ${safeLimit}`,
+      [officerId]
+    );
+    if (scoped.length > 0) {
+      return scoped;
+    }
+
+    // Backward compatibility for rows created before officer scoping was available.
+    return db.getAllAsync<LocalTestRecord>(
+      `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC LIMIT ${safeLimit}`
+    );
+  }
+  return db.getAllAsync<LocalTestRecord>(
+    `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC LIMIT ${safeLimit}`
   );
 }
 
@@ -229,4 +326,78 @@ export async function getLatestDraft(): Promise<LocalDraft | null> {
   return db.getFirstAsync<LocalDraft>(
     `SELECT * FROM drafts ORDER BY createdAt DESC LIMIT 1`
   );
+}
+
+export async function insertAuditEvent(event: AuditEvent): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `INSERT INTO audit_events
+       (id, occurredAt, officerId, officerName, badgeNumber, action, entityType, entityId, outcome, severity, message, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      event.id,
+      event.occurredAt,
+      event.officerId,
+      event.officerName,
+      event.badgeNumber,
+      event.action,
+      event.entityType,
+      event.entityId,
+      event.outcome,
+      event.severity,
+      event.message,
+      event.metadata
+    ]
+  );
+}
+
+export async function getAllAuditEvents(limit = 500): Promise<AuditEvent[]> {
+  const db = await getDB();
+  return db.getAllAsync<AuditEvent>(
+    `SELECT * FROM audit_events ORDER BY occurredAt DESC LIMIT ?`,
+    [limit]
+  );
+}
+
+export async function getAuditEventsByAction(
+  actionPrefix: string,
+  limit = 500
+): Promise<AuditEvent[]> {
+  const db = await getDB();
+  return db.getAllAsync<AuditEvent>(
+    `SELECT * FROM audit_events WHERE action LIKE ? ORDER BY occurredAt DESC LIMIT ?`,
+    [`${actionPrefix}%`, limit]
+  );
+}
+
+export async function getAuditEventCounts(): Promise<{
+  total: number;
+  auth: number;
+  tests: number;
+  sync: number;
+  failures: number;
+}> {
+  const db = await getDB();
+  const totalRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM audit_events`
+  );
+  const authRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM audit_events WHERE action LIKE 'auth.%'`
+  );
+  const testsRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM audit_events WHERE action LIKE 'test.%'`
+  );
+  const syncRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM audit_events WHERE action LIKE 'sync.%'`
+  );
+  const failuresRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM audit_events WHERE outcome = 'failure'`
+  );
+  return {
+    total: totalRow?.count ?? 0,
+    auth: authRow?.count ?? 0,
+    tests: testsRow?.count ?? 0,
+    sync: syncRow?.count ?? 0,
+    failures: failuresRow?.count ?? 0
+  };
 }

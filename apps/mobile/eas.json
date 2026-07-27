@@ -2,21 +2,15 @@
   "build": {
     "preview": {
       "distribution": "internal",
-      "ios": {
-        "workflow": "managed"
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://integriscan-yddjv.ondigitalocean.app/api"
       },
       "android": {
-        "workflow": "managed"
+        "buildType": "apk"
       }
     },
     "production": {
-      "distribution": "store",
-      "ios": {
-        "workflow": "managed"
-      },
-      "android": {
-        "workflow": "managed"
-      }
+      "distribution": "store"
     }
   }
 }

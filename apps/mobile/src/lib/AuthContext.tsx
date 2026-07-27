@@ -8,6 +8,16 @@ import {
   getStoredProfile,
   clearStoredProfile
 } from '../services/auth';
+import { logAuditEvent } from '../services/audit';
+import { canAccessMobileApp } from './roles';
+
+const MOBILE_ACCESS_ERROR = 'This mobile app is for officer accounts. Supervisors and administrators must use the web portal.';
+
+function assertMobileAccess(profile: UserProfile): void {
+  if (!canAccessMobileApp(profile.roleId)) {
+    throw new Error(MOBILE_ACCESS_ERROR);
+  }
+}
 
 type AuthContextType = {
   profile: UserProfile | null;
@@ -15,7 +25,6 @@ type AuthContextType = {
   isRestoring: boolean;
   signIn: (profile: UserProfile, token: string | null) => Promise<void>;
   signInLocal: (profile: UserProfile) => Promise<void>;
-  updateProfile: (profile: UserProfile) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -32,6 +41,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const storedToken = await getAccessToken();
         const storedProfile = await getStoredProfile();
         if (storedToken && storedProfile) {
+          if (!canAccessMobileApp(storedProfile.roleId)) {
+            await clearAccessToken();
+            await clearStoredProfile();
+            return;
+          }
           setProfile(storedProfile);
           setToken(storedToken);
         }
@@ -45,35 +59,78 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = useCallback(async (profileData: UserProfile, tokenValue: string | null) => {
+    assertMobileAccess(profileData);
     setProfile(profileData);
     setToken(tokenValue);
     if (tokenValue) {
       await setAccessToken(tokenValue);
     }
     await saveProfile(profileData as any);
+    await logAuditEvent({
+      action: 'auth.login',
+      outcome: 'success',
+      message: `Officer ${profileData.name} ${profileData.surname} signed in`,
+      officerId: profileData.officerId ?? null,
+      officerName: `${profileData.name} ${profileData.surname}`.trim(),
+      badgeNumber: profileData.badgeNumber,
+      metadata: { mode: tokenValue ? 'remote' : 'local' }
+    });
   }, []);
 
   const signInLocal = useCallback(async (profileData: UserProfile) => {
+    assertMobileAccess(profileData);
     setProfile(profileData);
     setToken(null);
     await clearAccessToken();
     await saveProfile(profileData as any);
-  }, []);
-
-  const updateProfile = useCallback(async (profileData: UserProfile) => {
-    setProfile(profileData);
-    await saveProfile(profileData as any);
+    await logAuditEvent({
+      action: 'auth.login',
+      outcome: 'success',
+      message: `Officer ${profileData.name} ${profileData.surname} signed in (offline)`,
+      officerId: profileData.officerId ?? null,
+      officerName: `${profileData.name} ${profileData.surname}`.trim(),
+      badgeNumber: profileData.badgeNumber,
+      metadata: { mode: 'local' }
+    });
   }, []);
 
   const signOut = useCallback(async () => {
+    const current = profile;
+    // Clear in-memory auth state first so login screen does not auto-redirect back during logout.
     setProfile(null);
     setToken(null);
-    await clearAccessToken();
-    await clearStoredProfile();
-  }, []);
+
+    try {
+      const cleanup = await Promise.allSettled([
+        clearAccessToken(),
+        clearStoredProfile()
+      ]);
+      if (__DEV__) {
+        cleanup
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .forEach((result) => {
+            console.warn('Sign out cleanup warning:', result.reason);
+          });
+      }
+      if (current) {
+        await logAuditEvent({
+          action: 'auth.logout',
+          outcome: 'success',
+          message: `Officer ${current.name} ${current.surname} signed out`,
+          officerId: current.officerId ?? null,
+          officerName: `${current.name} ${current.surname}`.trim(),
+          badgeNumber: current.badgeNumber
+        });
+      }
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('Sign out warning:', error);
+      }
+    }
+  }, [profile]);
 
   return (
-    <AuthContext.Provider value={{ profile, token, isRestoring, signIn, signInLocal, updateProfile, signOut }}>
+    <AuthContext.Provider value={{ profile, token, isRestoring, signIn, signInLocal, signOut }}>
       {children}
     </AuthContext.Provider>
   );

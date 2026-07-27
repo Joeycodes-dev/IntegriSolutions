@@ -4,10 +4,6 @@ export type AdminNavItem = 'users' | 'audit' | 'config';
 
 export type SupervisorNavItem = 'dashboard' | 'logs' | 'officers' | 'reports';
 
-export type OfficerShiftStatus = 'On Patrol' | 'Checkpoint' | 'Break' | 'Off Duty';
-
-export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'outline';
-
 export interface SystemConfigCard {
   id: string;
   title: string;
@@ -44,13 +40,14 @@ export interface UserProfile {
   badgeNumber: string;
   idNumber: string;
   employmentStatus: string;
-  dutyStatus?: OfficerShiftStatus;
   province: string;
   region: string;
   officerTypeId: number;
   roleId: number;
   createdAt: string;
 }
+
+export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'outline';
 
 /** Optional evidence payload from mobile (may also be embedded in `location` JSON). */
 export interface TestEvidenceFields {
@@ -79,6 +76,7 @@ export interface TestRecord {
   createdAt: string;
   location?: string;
   hash?: string;
+  hashValid?: boolean | null;
   evidence?: TestEvidenceFields;
 }
 
@@ -93,9 +91,12 @@ export interface FieldOfficer {
   rank: string;
   station: string;
   status: string;
-  dutyStatus: OfficerShiftStatus;
   createdAt: string;
+  invitationExpiresAt?: string;
+  inviteEmailSent?: boolean;
 }
+
+export type OfficerShiftStatus = 'On Patrol' | 'Checkpoint' | 'Break';
 
 export interface TestEvidence {
   referenceId: string;

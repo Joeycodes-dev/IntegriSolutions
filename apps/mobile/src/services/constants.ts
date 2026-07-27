@@ -30,5 +30,6 @@ function getApiHost(): string {
 
   return Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
 }
+const productionApiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
 
-export const API_BASE_URL = `http://${getApiHost()}:4000/api`;
+export const API_BASE_URL = productionApiBaseUrl || `http://${getApiHost()}:4000/api`;

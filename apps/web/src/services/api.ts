@@ -1,8 +1,17 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 const ACCESS_TOKEN_KEY = 'backend_access_token';
+export const AUTH_EXPIRED_EVENT = 'integriscan:auth-expired';
 
 if (!import.meta.env.VITE_API_BASE_URL) {
   console.warn('VITE_API_BASE_URL is not defined; falling back to http://localhost:4000');
+}
+
+function emitAuthExpired(message: string) {
+  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { message } }));
+}
+
+function isExpiredTokenResponse(status: number, message: string): boolean {
+  return status === 401 && /invalid or expired access token/i.test(message);
 }
 
 async function request<T>(path: string, options: RequestInit = {}) {
@@ -31,6 +40,9 @@ async function request<T>(path: string, options: RequestInit = {}) {
       (typeof payload.message === 'string' ? payload.message : null) ||
       (rawText ? rawText.slice(0, 300) : null) ||
       `Request failed (${response.status} ${response.statusText})`;
+    if (isExpiredTokenResponse(response.status, message)) {
+      emitAuthExpired(message);
+    }
     throw new Error(message);
   }
 
@@ -86,10 +98,32 @@ export async function getProfile() {
   });
 }
 
-export async function getTests() {
-  const token = getAccessToken();
+export interface TestFilters {
+  search?: string;
+  result?: 'pass' | 'fail' | '';
+  officer?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  bacMin?: string;
+  bacMax?: string;
+}
 
-  return request<any[]>('/api/tests', {
+export async function getTests(filters?: TestFilters) {
+  const token = getAccessToken();
+  const params = new URLSearchParams();
+
+  if (filters) {
+    for (const [key, value] of Object.entries(filters)) {
+      if (value && value !== '') {
+        params.set(key, value);
+      }
+    }
+  }
+
+  const queryString = params.toString();
+  const path = queryString ? `/api/tests?${queryString}` : '/api/tests';
+
+  return request<any[]>(path, {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   });
 }
@@ -154,7 +188,6 @@ export async function getFieldOfficers() {
 
 export async function createFieldOfficer(payload: {
   email: string;
-  password: string;
   name: string;
   surname: string;
   serviceNumber: string;
@@ -182,43 +215,77 @@ export async function getSystemSettings() {
   });
 }
 
-export type AnnotationStatus = 'approved' | 'referred';
-
 export interface Annotation {
   id: number;
-  testId: string;
-  supervisorEmail: string;
+  test_id: string;
+  supervisor_email: string;
   comment: string | null;
-  status: AnnotationStatus;
-  createdAt: string;
-  updatedAt: string;
+  status: 'pending' | 'approved' | 'referred';
+  created_at: string;
 }
 
 export async function getAnnotations(testId: string) {
-  return request<Annotation[]>(`/api/supervisor/tests/${testId}/annotations`, {
+  return request<Annotation[]>(`/api/supervisor/tests/${testId}`, {
     headers: authHeaders()
   });
 }
 
-export async function annotateTest(
-  testId: string,
-  payload: { status: AnnotationStatus; comment?: string }
-) {
-  return request<Annotation>(`/api/supervisor/tests/${testId}/annotations`, {
+export async function annotateTest(testId: string, payload: { comment?: string; status: 'pending' | 'approved' | 'referred' }) {
+  return request<Annotation>(`/api/supervisor/tests/${testId}`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify(payload)
   });
 }
 
-export async function updateAnnotation(
-  testId: string,
-  annotationId: number,
-  payload: { status?: AnnotationStatus; comment?: string | null }
-) {
-  return request<Annotation>(`/api/supervisor/tests/${testId}/annotations/${annotationId}`, {
-    method: 'PATCH',
-    headers: authHeaders(),
-    body: JSON.stringify(payload)
+export interface EvidencePhoto {
+  id: number;
+  test_id: string;
+  photo_url: string;
+  notes: string | null;
+  uploaded_by: string;
+  created_at: string;
+}
+
+export async function getEvidence(testId: string) {
+  return request<EvidencePhoto[]>(`/api/evidence/${testId}`, {
+    headers: authHeaders()
   });
+}
+
+export async function uploadEvidence(testId: string, file: File, notes?: string) {
+  const token = getAccessToken();
+  if (!token) throw new Error('Not authenticated');
+
+  const formData = new FormData();
+  formData.append('photo', file);
+  if (notes) formData.append('notes', notes);
+
+  const response = await fetch(`${API_BASE}/api/evidence/${testId}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData
+  });
+
+  const rawText = await response.text();
+  let payload: Record<string, unknown> = {};
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      payload = { error: rawText.slice(0, 500) };
+    }
+  }
+
+  if (!response.ok) {
+    const message =
+      (typeof payload.error === 'string' ? payload.error : null) ||
+      `Upload failed (${response.status} ${response.statusText})`;
+    if (isExpiredTokenResponse(response.status, message)) {
+      emitAuthExpired(message);
+    }
+    throw new Error(message);
+  }
+
+  return payload as unknown as EvidencePhoto;
 }
