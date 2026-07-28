@@ -4,6 +4,9 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
+import { styles } from './OfficerBottomNav.styles';
+import { colors } from '../styles/colors';
+
 export type OfficerTab = 'OfficerDashboard' | 'OfficerReports' | 'Audit';
 
 interface TabConfig {
@@ -53,7 +56,7 @@ export function OfficerBottomNav({ active }: Props) {
     <View style={styles.bottomNav}>
       {TABS.map((tab) => {
         const isActive = tab.key === active;
-        const color = isActive ? '#4338ca' : '#94a3b8';
+        const color = isActive ? colors.primaryDark : colors.neutralGray;
         const iconName = isActive ? tab.iconNameActive : tab.iconName;
 
         return (
@@ -80,29 +83,3 @@ export function OfficerBottomNav({ active }: Props) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  bottomNav: {
-    flexDirection: 'row',
-    backgroundColor: '#ffffff',
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    paddingVertical: 8
-  },
-  navItem: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 6
-  },
-  navLabel: {
-    fontSize: 11,
-    color: '#4338ca',
-    marginTop: 4,
-    fontWeight: '600'
-  },
-  navLabelInactive: {
-    fontSize: 11,
-    color: '#94a3b8',
-    marginTop: 4
-  }
-});

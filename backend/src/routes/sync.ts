@@ -46,7 +46,17 @@ interface SyncRecord {
   driverDob: string;
   bacReading: number;
   result: string;
-  location: { lat: number; lng: number };
+  location: {
+    lat: number;
+    lng: number;
+    roadblock?: string;
+    station?: string;
+    officerRank?: string;
+    serviceNumber?: string;
+    officerNotes?: string;
+    label?: string;
+    driverCategory?: string;
+  };
   hash: string;
   createdAt: string;
   originalTestId?: string | null;

@@ -1,9 +1,11 @@
 import { sha256 } from 'js-sha256';
 import { insertTest, updateSyncStatus, getPendingSync, type LocalTestRecord } from '../db/repository';
+import type { TestLocationPayload } from '../lib/testLocation';
 import { syncRecords, uploadEvidencePhoto } from './api';
 import { logAuditEvent } from './audit';
 
 export { generateId } from '../lib/id';
+export type { TestLocationPayload } from '../lib/testLocation';
 
 function safeParseLocation(raw: string): unknown {
   try {
@@ -53,7 +55,7 @@ export async function saveLocally(params: {
   driverDob: string;
   bacReading: number;
   result: string;
-  location: { lat: number; lng: number };
+  location: TestLocationPayload;
   photoUri?: string | null;
   originalTestId?: string | null;
 }): Promise<LocalTestRecord> {
@@ -113,7 +115,8 @@ export async function saveLocally(params: {
       bacReading: record.bacReading,
       result: record.result,
       retest: !!record.originalTestId,
-      originalTestId: record.originalTestId
+      originalTestId: record.originalTestId,
+      roadblock: params.location.roadblock ?? null
     }
   });
   return record;
