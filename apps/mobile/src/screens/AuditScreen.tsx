@@ -202,7 +202,10 @@ export function AuditScreen({ navigation }: Props) {
         </View>
         <Pressable
           style={styles.signOutButton}
-          onPress={() => { void handleLogout(); }}
+          onPress={async () => {
+            await signOut();
+            navigation.replace('Login');
+          }}
         >
           <Feather name="log-out" size={20} color="#475569" />
         </Pressable>

@@ -972,6 +972,40 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             </View>
           </View>
         )}
+
+        {step === 'saved' && (
+          <View style={styles.card}>
+            <View style={styles.savedIcon}>
+              <Feather name="check-circle" size={48} color="#16a34a" />
+            </View>
+            <Text style={styles.savedTitle}>Record Saved</Text>
+            <Text style={styles.savedSubtitle}>
+              Test record has been committed to the ledger and will sync when network is available.
+            </Text>
+
+            {lastSavedDriver && (
+              <View style={styles.savedDriverCard}>
+                <Text style={styles.overline}>Driver</Text>
+                <Text style={styles.savedDriverName}>
+                  {lastSavedDriver.name} {lastSavedDriver.surname}
+                </Text>
+                <Text style={styles.savedDriverId}>
+                  ID: {lastSavedDriver.licenseNumber || lastSavedDriver.idNumber}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.actionRow}>
+              <Pressable style={styles.secondaryActionButton} onPress={handleRetest}>
+                <Feather name="refresh-cw" size={18} color="#4338ca" />
+                <Text style={styles.secondaryActionText}>Retest Driver</Text>
+              </Pressable>
+              <Pressable style={styles.primaryButton} onPress={handleFinishSession}>
+                <Text style={styles.primaryButtonText}>Finish Session</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       <OfficerBottomNav active="OfficerDashboard" />

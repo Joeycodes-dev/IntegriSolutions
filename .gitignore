@@ -4,6 +4,9 @@ node_modules/
 # Build output directories
 build/
 dist/
+Project Plan/
+backend/sql
+
 
 # dotenv environment variable files
 .env

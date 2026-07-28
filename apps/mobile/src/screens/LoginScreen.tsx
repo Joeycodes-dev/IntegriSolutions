@@ -5,16 +5,23 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
-  View
+  View,
+  TouchableOpacity,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { Feather, Ionicons } from '@expo/vector-icons';
+
 import { completeOfficerInvite, login } from '../services/auth';
 import { useAuth } from '../lib/AuthContext';
 import { canAccessMobileApp } from '../lib/roles';
 import type { UserProfile } from '../types';
+
+// importing external styles
+import { styles } from './LoginScreen.styles';
+import { colors } from '../styles/colors';
 
 type RootStackParamList = {
   Login: undefined;
@@ -37,6 +44,7 @@ export function LoginScreen({ navigation }: Props) {
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [inviteLink, setInviteLink] = useState('');
   const [invitePassword, setInvitePassword] = useState('');
   const [inviteConfirmPassword, setInviteConfirmPassword] = useState('');
@@ -147,250 +155,134 @@ export function LoginScreen({ navigation }: Props) {
   };
 
   return (
-    <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <View style={styles.card}>
-          <View style={styles.headerSection}>
-            <View style={styles.brandBadge}>
-              <Text style={styles.brandBadgeText}>IS</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+          
+          {/* Header sits OUTSIDE the card */}
+          <View style={styles.headerContainer}>
+            <View style={styles.logoBox}>
+              <Ionicons name="shield-checkmark" size={34} color="#fff" />
             </View>
-            <Text style={styles.title}>
+            <Text style={styles.mainTitle}>
               Integri<Text style={styles.titleAccent}>Scan</Text>
             </Text>
             <Text style={styles.subtitle}>Safer Roads, Incorruptible Records</Text>
           </View>
 
-          <View style={styles.form}>
-            {mode === 'invite' ? (
-              <>
-                <Text style={styles.inviteHelp}>
-                  Paste the invite link from your email, then create your password. Your email address is already tied to the invite.
-                </Text>
-                <TextInput
-                  value={inviteLink}
-                  onChangeText={setInviteLink}
-                  placeholder="Paste invite link"
-                  style={[styles.input, styles.inviteInput]}
-                  multiline
-                  autoCapitalize="none"
-                  placeholderTextColor="#94a3b8"
-                />
-                <TextInput
-                  value={invitePassword}
-                  onChangeText={setInvitePassword}
-                  placeholder="Create password"
-                  secureTextEntry
-                  style={styles.input}
-                  textContentType="newPassword"
-                  placeholderTextColor="#94a3b8"
-                />
-                <TextInput
-                  value={inviteConfirmPassword}
-                  onChangeText={setInviteConfirmPassword}
-                  placeholder="Confirm password"
-                  secureTextEntry
-                  style={styles.input}
-                  textContentType="newPassword"
-                  placeholderTextColor="#94a3b8"
-                />
-              </>
-            ) : (
-              <>
-                <TextInput
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="Email"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  style={styles.input}
-                  textContentType="emailAddress"
-                  placeholderTextColor="#94a3b8"
-                />
-                <TextInput
-                  value={password}
-                  onChangeText={setPassword}
-                  placeholder="Password"
-                  secureTextEntry
-                  style={styles.input}
-                  textContentType="password"
-                  placeholderTextColor="#94a3b8"
-                />
+          {/* Main Card Wrapper */}
+          <View style={styles.card}>
+            <View style={styles.form}>
+              {mode === 'invite' ? (
+                <>
+                  <Text style={styles.inviteHelp}>
+                    Paste the invite link from your email, then create your password. Your email address is already tied to the invite.
+                  </Text>
+                  
+                  <TextInput
+                    value={inviteLink}
+                    onChangeText={setInviteLink}
+                    placeholder="Paste invite link"
+                    style={[styles.input, styles.inviteInput]}
+                    multiline
+                    autoCapitalize="none"
+                    placeholderTextColor="#94a3b8"
+                  />
+                  
+                  {/* Create Password with Eye Toggle */}
+                  <View style={styles.passwordContainer}>
+                    <TextInput
+                      value={invitePassword}
+                      onChangeText={setInvitePassword}
+                      placeholder="Create password"
+                      secureTextEntry={!isPasswordVisible}
+                      style={styles.passwordInput}
+                      textContentType="newPassword"
+                      placeholderTextColor="#94a3b8"
+                    />
+                    <TouchableOpacity onPress={() => setIsPasswordVisible(!isPasswordVisible)}>
+                      <Feather name={isPasswordVisible ? 'eye' : 'eye-off'} size={20} color={colors.neutralGray} />
+                    </TouchableOpacity>
+                  </View>
 
-                {__DEV__ ? (
-                  <Pressable style={styles.devRow} onPress={() => setDevMode((current) => !current)}>
-                    <View style={[styles.devToggle, devMode && styles.devToggleActive]}>
-                      <View style={[styles.devDot, devMode && styles.devDotActive]} />
-                    </View>
-                    <Text style={styles.devLabel}>Developer bypass login</Text>
-                  </Pressable>
-                ) : null}
-              </>
-            )}
-
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-
-            <Pressable style={[styles.primaryButton, isLoading && styles.buttonDisabled]} onPress={handleSubmit} disabled={isLoading}>
-              {isLoading ? (
-                <ActivityIndicator color="#fff" />
+                  {/* Confirm Password with Eye Toggle */}
+                  <View style={[styles.passwordContainer, { marginTop: 14 }]}>
+                    <TextInput
+                      value={inviteConfirmPassword}
+                      onChangeText={setInviteConfirmPassword}
+                      placeholder="Confirm password"
+                      secureTextEntry={!isPasswordVisible}
+                      style={styles.passwordInput}
+                      textContentType="newPassword"
+                      placeholderTextColor="#94a3b8"
+                    />
+                    <TouchableOpacity onPress={() => setIsPasswordVisible(!isPasswordVisible)}>
+                      <Feather name={isPasswordVisible ? 'eye' : 'eye-off'} size={20} color={colors.neutralGray} />
+                    </TouchableOpacity>
+                  </View>
+                </>
               ) : (
-                <Text style={styles.primaryButtonText}>{mode === 'invite' ? 'Create Officer Login' : 'Login to Portal'}</Text>
-              )}
-            </Pressable>
+                <>
+                  <TextInput
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder="Email"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    style={styles.input}
+                    textContentType="emailAddress"
+                    placeholderTextColor="#94a3b8"
+                  />
+                  
+                  {/* Login Password with Eye Toggle - Fixed style={styles.passwordInput} */}
+                  <View style={styles.passwordContainer}>
+                    <TextInput
+                      value={password}
+                      onChangeText={setPassword}
+                      placeholder="Password"
+                      secureTextEntry={!isPasswordVisible}
+                      style={styles.passwordInput}
+                      textContentType="password"
+                      placeholderTextColor="#94a3b8"
+                    />
+                    <TouchableOpacity onPress={() => setIsPasswordVisible(!isPasswordVisible)}>
+                      <Feather name={isPasswordVisible ? 'eye' : 'eye-off'} size={20} color={colors.neutralGray} />
+                    </TouchableOpacity>
+                  </View>
 
-            <Text style={styles.switchText}>
-              {mode === 'login' ? 'Need access?' : 'Already onboarded?'}
-              <Text style={styles.switchLink} onPress={switchMode}>
-                {mode === 'login' ? ' Get invite link from admin' : ' Login'}
-              </Text>
-            </Text>
+                  {__DEV__ ? (
+                    <Pressable style={styles.devRow} onPress={() => setDevMode((current) => !current)}>
+                      <View style={[styles.devToggle, devMode && styles.devToggleActive]}>
+                        <View style={[styles.devDot, devMode && styles.devDotActive]} />
+                      </View>
+                      <Text style={styles.devLabel}>Developer bypass login</Text>
+                    </Pressable>
+                  ) : null}
+                </>
+              )}
+
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+
+              <Pressable style={[styles.primaryButton, isLoading && styles.buttonDisabled]} onPress={handleSubmit} disabled={isLoading}>
+                {isLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>{mode === 'invite' ? 'Create Officer Login' : 'Login to Portal'}</Text>
+                )}
+              </Pressable>
+
+              <View style={styles.footerContainer}>
+                <Text style={styles.switchText}>
+                  {mode === 'login' ? 'Need access?' : 'Already onboarded?'}
+                  <Text style={styles.switchLink} onPress={switchMode}>
+                    {mode === 'login' ? ' Get invite link from admin' : ' Login'}
+                  </Text>
+                </Text>
+              </View>
+            </View>
           </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: '#f8fafc'
-  },
-  container: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: 24
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    padding: 28,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.08,
-    shadowRadius: 28,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 8
-  },
-  headerSection: {
-    alignItems: 'center',
-    marginBottom: 28
-  },
-  brandBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: '#4338ca',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 18,
-    shadowColor: '#4338ca',
-    shadowOpacity: 0.22,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 5
-  },
-  brandBadgeText: {
-    color: '#fff',
-    fontWeight: '900',
-    fontSize: 24,
-    letterSpacing: 0.5
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: '800',
-    color: '#0f172a',
-    marginBottom: 8,
-    textAlign: 'center'
-  },
-  titleAccent: {
-    color: '#4338ca'
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#475569',
-    marginBottom: 28,
-    textAlign: 'center'
-  },
-  form: {
-    gap: 14
-  },
-  input: {
-    backgroundColor: '#f8fafc',
-    borderColor: '#e2e8f0',
-    borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: '#0f172a'
-  },
-  inviteInput: {
-    minHeight: 92,
-    textAlignVertical: 'top'
-  },
-  inviteHelp: {
-    color: '#475569',
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: 'center'
-  },
-  devRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginVertical: 8
-  },
-  devToggle: {
-    width: 44,
-    height: 24,
-    borderRadius: 999,
-    backgroundColor: '#e2e8f0',
-    justifyContent: 'center',
-    padding: 3
-  },
-  devToggleActive: {
-    backgroundColor: '#4338ca'
-  },
-  devDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#ffffff',
-    alignSelf: 'flex-start'
-  },
-  devDotActive: {
-    alignSelf: 'flex-end'
-  },
-  devLabel: {
-    color: '#475569',
-    fontSize: 14
-  },
-  primaryButton: {
-    backgroundColor: '#4338ca',
-    borderRadius: 16,
-    height: 56,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  buttonDisabled: {
-    opacity: 0.7
-  },
-  primaryButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '700'
-  },
-  switchText: {
-    marginTop: 14,
-    textAlign: 'center',
-    color: '#64748b',
-    fontSize: 14
-  },
-  switchLink: {
-    color: '#4338ca',
-    fontWeight: '700'
-  },
-  error: {
-    color: '#b91c1c',
-    textAlign: 'center'
-  }
-});
