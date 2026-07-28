@@ -107,6 +107,13 @@ export function OfficerReportsScreen({ navigation }: Props) {
     }
   };
 
+  const handleLogout = async () => {
+    navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+    signOut().catch((error) => {
+      console.warn('Sign out warning:', error);
+    });
+  };
+
   const renderTest = ({ item }: { item: LocalTestRecord }) => {
     const syncInfo = syncStatusLabel(item.syncStatus);
     const isFailed = item.result === 'fail';
@@ -120,7 +127,7 @@ export function OfficerReportsScreen({ navigation }: Props) {
           </View>
           <View style={[styles.resultBadge, isFailed ? styles.resultFail : styles.resultPass]}>
             <Text style={[styles.resultText, isFailed ? styles.resultTextFail : styles.resultTextPass]}>
-              {isFailed ? 'FAILED' : 'PASSED'}
+              {isFailed ? 'BAC FAIL' : 'BAC PASS'}
             </Text>
           </View>
         </View>
@@ -144,7 +151,7 @@ export function OfficerReportsScreen({ navigation }: Props) {
 
         <View style={styles.syncRow}>
           <Feather name={syncInfo.icon as any} size={14} color={syncInfo.color} />
-          <Text style={[styles.syncText, { color: syncInfo.color }]}>{syncInfo.label}</Text>
+          <Text style={[styles.syncText, { color: syncInfo.color }]}>{`Sync: ${syncInfo.label}`}</Text>
           {item.syncedAt && (
             <Text style={styles.syncedAt}>· {formatTimestamp(item.syncedAt)}</Text>
           )}
@@ -177,10 +184,7 @@ export function OfficerReportsScreen({ navigation }: Props) {
         </View>
         <Pressable
           style={styles.signOutButton}
-          onPress={async () => {
-            await signOut();
-            navigation.replace('Login');
-          }}
+          onPress={() => { void handleLogout(); }}
         >
           <Feather name="log-out" size={20} color="#475569" />
         </Pressable>

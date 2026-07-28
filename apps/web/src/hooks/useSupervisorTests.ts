@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { getTests } from '../services/api';
 import type { TestRecord } from '../types';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+
 function isToday(iso: string): boolean {
   const date = new Date(iso);
   const now = new Date();
@@ -16,6 +18,8 @@ export function useSupervisorTests() {
   const [tests, setTests] = useState<TestRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [streamConnected, setStreamConnected] = useState(false);
+  const [lastEventAt, setLastEventAt] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,9 +43,37 @@ export function useSupervisorTests() {
     void loadTests();
     const interval = setInterval(() => void loadTests(), 10000);
 
+    const stream = new EventSource(`${API_BASE}/api/tests/stream`);
+    stream.onopen = () => {
+      if (!cancelled) {
+        setStreamConnected(true);
+      }
+    };
+    stream.onmessage = (event) => {
+      if (!cancelled) {
+        setStreamConnected(true);
+        try {
+          const payload = JSON.parse(event.data) as { at?: string; type?: string };
+          if (payload.type === 'test-inserted' && payload.at) {
+            setLastEventAt(payload.at);
+          }
+        } catch {
+          // keep silent if heartbeat or non-JSON payload is received
+        }
+      }
+      void loadTests();
+    };
+    stream.onerror = () => {
+      if (!cancelled) {
+        setStreamConnected(false);
+      }
+      // keep polling fallback active when EventSource is unavailable
+    };
+
     return () => {
       cancelled = true;
       clearInterval(interval);
+      stream.close();
     };
   }, []);
 
@@ -61,5 +93,5 @@ export function useSupervisorTests() {
     return { totalTests, totalFailures, activeOfficers, invalidTests };
   }, [tests, todayTests]);
 
-  return { tests, todayTests, loading, error, metrics };
+  return { tests, todayTests, loading, error, metrics, streamConnected, lastEventAt };
 }

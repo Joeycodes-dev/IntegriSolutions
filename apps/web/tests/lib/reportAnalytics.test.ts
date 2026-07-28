@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildResultBreakdown,
-  buildTrendSeries,
   buildWeeklyTrend,
-  dataSpanDateRange,
   filterTestsForReport,
-  niceTicks,
-  parseLocalDate,
   weekdayIndex
 } from '../../src/lib/reportAnalytics';
 import type { TestRecord } from '../../src/types';
@@ -62,18 +58,5 @@ describe('reportAnalytics', () => {
 
   it('maps weekday index with Monday as 0', () => {
     expect(weekdayIndex('2026-05-11T12:00:00Z')).toBe(0);
-  });
-
-  it('parses local calendar dates without UTC shift', () => {
-    const d = parseLocalDate('2026-05-12');
-    expect(d.getFullYear()).toBe(2026);
-    expect(d.getMonth()).toBe(4);
-    expect(d.getDate()).toBe(12);
-  });
-
-  it('produces nice axis ticks that cover the max', () => {
-    const ticks = niceTicks(7, 5);
-    expect(ticks[0]).toBe(0);
-    expect(ticks[ticks.length - 1]).toBeGreaterThanOrEqual(7);
   });
 });

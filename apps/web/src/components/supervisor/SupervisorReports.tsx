@@ -1,15 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Calendar, ChevronDown } from 'lucide-react';
 import { generateWeeklyEvidencePdf } from '../../lib/generateEvidencePdf';
 import type { TestRecord } from '../../types';
 import {
   buildResultBreakdown,
-  buildTrendSeries,
+  buildWeeklyTrend,
   collectRoadblocks,
-  dataSpanDateRange,
   defaultReportDateRange,
   filterTestsForReport,
-  parseLocalDate,
   type ReportFilters,
   type ReportResultFilter
 } from '../../lib/reportAnalytics';
@@ -19,7 +17,6 @@ import { BORDER, NAVY, PAGE_BG, pageShell } from './supervisorStyles';
 interface SupervisorReportsProps {
   tests: TestRecord[];
   loading: boolean;
-  error?: string | null;
 }
 
 const fieldClassName =
@@ -90,7 +87,7 @@ function DateField({
   );
 }
 
-export function SupervisorReports({ tests, loading, error = null }: SupervisorReportsProps) {
+export function SupervisorReports({ tests, loading }: SupervisorReportsProps) {
   const defaults = defaultReportDateRange();
   const [filters, setFilters] = useState<ReportFilters>({
     from: defaults.from,
@@ -98,16 +95,6 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
     result: 'all',
     roadblock: 'ALL'
   });
-  const [rangeInitialized, setRangeInitialized] = useState(false);
-
-  // Once tests load, expand the date range to cover real data so charts aren't empty.
-  useEffect(() => {
-    if (rangeInitialized || loading || tests.length === 0) return;
-    const span = dataSpanDateRange(tests);
-    if (!span) return;
-    setFilters((prev) => ({ ...prev, from: span.from, to: span.to }));
-    setRangeInitialized(true);
-  }, [tests, loading, rangeInitialized]);
 
   const roadblocks = useMemo(() => collectRoadblocks(tests), [tests]);
 
@@ -116,20 +103,8 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
     [tests, filters]
   );
 
-  const trend = useMemo(
-    () => buildTrendSeries(filtered, filters.from, filters.to),
-    [filtered, filters.from, filters.to]
-  );
+  const trendSeries = useMemo(() => buildWeeklyTrend(filtered), [filtered]);
   const breakdown = useMemo(() => buildResultBreakdown(filtered), [filtered]);
-
-  const daySpan = useMemo(() => {
-    const from = parseLocalDate(filters.from).getTime();
-    const to = parseLocalDate(filters.to).getTime();
-    if (Number.isNaN(from) || Number.isNaN(to) || to < from) return 0;
-    return Math.round((to - from) / (24 * 60 * 60 * 1000)) + 1;
-  }, [filters.from, filters.to]);
-
-  const trendTitle = daySpan > 14 ? 'DUI Trends (weekly)' : 'DUI Trends (daily)';
 
   const updateFilter = <K extends keyof ReportFilters>(key: K, value: ReportFilters[K]) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -154,13 +129,6 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
       setGeneratingPdf(false);
     }
   };
-
-  const statusMessage = (() => {
-    if (loading) return 'Loading records…';
-    if (error) return error;
-    if (tests.length === 0) return 'No test records available yet.';
-    return `Showing ${filtered.length} of ${tests.length} record${tests.length === 1 ? '' : 's'} for selected filters.`;
-  })();
 
   return (
     <div className={`${pageShell} min-w-0`} style={{ backgroundColor: PAGE_BG }}>
@@ -188,11 +156,6 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
         {pdfError && (
           <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-[0.75rem] text-rose-700">
             {pdfError}
-          </div>
-        )}
-        {error && !loading && (
-          <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-[0.75rem] text-rose-700">
-            {error}
           </div>
         )}
         <div className="rounded-xl border bg-white px-4 py-3.5" style={{ borderColor: BORDER }}>
@@ -224,30 +187,32 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
               ))}
             </SelectField>
           </div>
-          <p className={`mt-2.5 text-[0.75rem] ${error ? 'text-rose-600' : 'text-slate-500'}`}>
-            {statusMessage}
+          <p className="mt-2.5 text-[0.75rem] text-slate-500">
+            {loading
+              ? 'Loading records…'
+              : `Showing ${filtered.length} record${filtered.length === 1 ? '' : 's'} for selected filters.`}
           </p>
         </div>
 
         <div className="grid min-w-0 grid-cols-2 gap-3">
           <div
-            className="flex min-h-[280px] min-w-0 flex-col rounded-xl border bg-white px-4 py-3"
+            className="flex min-h-[240px] min-w-0 flex-col rounded-xl border bg-white px-4 py-3"
             style={{ borderColor: BORDER }}
           >
             <h2 className="mb-2 shrink-0 text-[0.8125rem] font-bold" style={{ color: NAVY }}>
-              {trendTitle}
+              DUI Trends weekly
             </h2>
             <div className="flex min-h-0 flex-1 items-center">
               {loading ? (
                 <p className="w-full py-8 text-center text-[0.75rem] text-slate-500">Loading chart…</p>
               ) : (
-                <DuiTrendChart series={trend.series} labels={trend.labels} />
+                <DuiTrendChart series={trendSeries} />
               )}
             </div>
           </div>
 
           <div
-            className="flex min-h-[280px] min-w-0 flex-col rounded-xl border bg-white px-4 py-3"
+            className="flex min-h-[240px] min-w-0 flex-col rounded-xl border bg-white px-4 py-3"
             style={{ borderColor: BORDER }}
           >
             <h2 className="mb-2 shrink-0 text-[0.8125rem] font-bold" style={{ color: NAVY }}>

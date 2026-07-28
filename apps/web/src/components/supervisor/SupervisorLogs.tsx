@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, Filter, Search, ShieldAlert, X } from 'lucide-react';
 import type { TestRecord } from '../../types';
 import { getTests, type TestFilters } from '../../services/api';
+import { parseTestLocation } from '../../lib/testEvidence';
 import { BORDER, NAVY, PAGE_BG, pageContent, pageShell } from './supervisorStyles';
 
 interface SupervisorLogsProps {
@@ -28,6 +29,14 @@ function formatOfficerName(name: string): string {
     .join(' ');
   const surname = parts[parts.length - 1];
   return `${initials} ${surname}`;
+}
+
+function formatGps(location?: string): string {
+  const parsed = parseTestLocation(location);
+  if (typeof parsed.lat === 'number' && typeof parsed.lng === 'number') {
+    return `${parsed.lat.toFixed(4)}, ${parsed.lng.toFixed(4)}`;
+  }
+  return '—';
 }
 
 const RESULT_OPTIONS = [
@@ -203,7 +212,7 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
               <table className="min-w-full text-left">
                 <thead>
                   <tr className="border-b" style={{ borderColor: BORDER }}>
-                    {['TIMESTAMP', 'OFFICER', 'DRIVER LICENCE', 'RESULT', 'READING', 'INTEGRITY'].map((col) => (
+                    {['TIMESTAMP', 'OFFICER', 'DRIVER LICENCE', 'RESULT', 'READING', 'GPS', 'INTEGRITY'].map((col) => (
                       <th
                         key={col}
                         className="px-4 py-2.5 text-[10px] font-bold tracking-[0.1em] text-slate-500"
@@ -216,7 +225,7 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
                 <tbody>
                   {filteredTests.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-10 text-center text-[0.75rem] text-slate-500">
+                      <td colSpan={7} className="px-4 py-10 text-center text-[0.75rem] text-slate-500">
                         {search.trim() || hasActiveFilters ? 'No logs match your filters.' : 'No test records found.'}
                       </td>
                     </tr>
@@ -260,6 +269,9 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
                           </td>
                           <td className="whitespace-nowrap px-4 py-2.5 text-[0.8125rem] text-slate-800">
                             {test.bacReading.toFixed(2)} g/100ml
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-2.5 font-mono text-[0.75rem] text-slate-700">
+                            {formatGps(test.location)}
                           </td>
                           <td className="px-4 py-2.5">
                             {test.hashValid === true ? (

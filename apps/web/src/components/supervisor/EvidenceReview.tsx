@@ -174,6 +174,7 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
       )}
 
       <div className="grid flex-1 grid-cols-1 gap-3 p-4 lg:grid-cols-2 lg:p-5">
+        {/* Left column */}
         <div className="flex flex-col gap-3">
           <section className="rounded-xl border bg-white p-3.5" style={{ borderColor: BORDER }}>
             <h2 className="mb-2.5 text-[0.8125rem] font-bold" style={{ color: NAVY }}>
@@ -259,6 +260,7 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
           </section>
         </div>
 
+        {/* Right column */}
         <div className="flex flex-col gap-3">
           <section className="rounded-xl border bg-white p-3.5" style={{ borderColor: BORDER }}>
             <h2 className="mb-2.5 text-[0.8125rem] font-bold" style={{ color: NAVY }}>

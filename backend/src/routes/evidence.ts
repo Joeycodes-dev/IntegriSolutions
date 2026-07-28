@@ -1,6 +1,6 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { createClient } from '@supabase/supabase-js';
-import multer from 'multer';
+import multer, { type FileFilterCallback } from 'multer';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { writeAuditLog } from '../utilities/auditLog';
 import { asyncHandler } from '../asyncHandler';
@@ -21,7 +21,7 @@ const serviceSupabase = createClient(
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
+  fileFilter: (_req: Request, file: Express.Multer.File, cb: FileFilterCallback) => {
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
@@ -58,7 +58,10 @@ router.post('/:testId', requireAuth, upload.single('photo'), asyncHandler(async 
   const testId = String(req.params.testId);
   const notes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
 
-  if (!req.file) {
+  const reqWithFile = req as typeof req & { file?: Express.Multer.File };
+  const file = reqWithFile.file;
+
+  if (!file) {
     return res.status(400).json({ error: 'Photo file is required' });
   }
 
@@ -72,13 +75,13 @@ router.post('/:testId', requireAuth, upload.single('photo'), asyncHandler(async 
     return res.status(404).json({ error: 'Test record not found' });
   }
 
-  const ext = req.file.originalname.split('.').pop() || 'jpg';
+  const ext = file.originalname.split('.').pop() || 'jpg';
   const filePath = `${testId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
   const { error: uploadError } = await serviceSupabase.storage
     .from(BUCKET)
-    .upload(filePath, req.file.buffer, {
-      contentType: req.file.mimetype,
+    .upload(filePath, file.buffer, {
+      contentType: file.mimetype,
       upsert: false
     });
 

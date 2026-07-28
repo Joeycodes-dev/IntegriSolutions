@@ -73,7 +73,7 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
         rank,
         station: serializeOfficerLocation({
           address: address.trim(),
-          phone: phone.trim() || undefined,
+          phone: phone.trim() || undefined
         }),
         phone: phone.trim(),
         idNumber

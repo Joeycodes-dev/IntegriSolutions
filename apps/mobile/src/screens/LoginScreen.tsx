@@ -124,7 +124,6 @@ export function LoginScreen({ navigation }: Props) {
           badgeNumber: '0000',
           idNumber: '0000000000000',
           employmentStatus: 'Active',
-          dutyStatus: 'Off Duty',
           province: 'Gauteng',
           region: 'Johannesburg',
           officerTypeId: 1,

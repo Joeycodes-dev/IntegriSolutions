@@ -32,7 +32,13 @@
     },
     "plugins": [
       "expo-sqlite",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow IntegriScan to access your location while testing so GPS evidence can be attached to each record."
+        }
+      ]
     ],
     "extra": {
       "eas": {

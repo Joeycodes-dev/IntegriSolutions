@@ -151,6 +151,21 @@ export async function getFailedSync(officerId?: number | null): Promise<LocalTes
   );
 }
 
+export async function resetFailedToPending(officerId?: number | null): Promise<void> {
+  const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    await db.runAsync(
+      `UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND officerId = ?`,
+      [officerId]
+    );
+    return;
+  }
+
+  await db.runAsync(
+    `UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND officerId IS NULL`
+  );
+}
+
 export async function getSyncedCount(officerId?: number | null): Promise<number> {
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
@@ -219,9 +234,17 @@ export async function getTestCountBetween(
 export async function getAllTests(officerId?: number | null): Promise<LocalTestRecord[]> {
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
-    return db.getAllAsync<LocalTestRecord>(
+    const scoped = await db.getAllAsync<LocalTestRecord>(
       `SELECT * FROM tests WHERE officerId = ? ORDER BY createdAt DESC`,
       [officerId]
+    );
+    if (scoped.length > 0) {
+      return scoped;
+    }
+
+    // Backward compatibility for rows created before officer scoping was available.
+    return db.getAllAsync<LocalTestRecord>(
+      `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC`
     );
   }
   return db.getAllAsync<LocalTestRecord>(
@@ -231,15 +254,23 @@ export async function getAllTests(officerId?: number | null): Promise<LocalTestR
 
 export async function getRecentTests(limit = 3, officerId?: number | null): Promise<LocalTestRecord[]> {
   const db = await getDB();
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 3;
   if (officerId !== undefined && officerId !== null) {
+    const scoped = await db.getAllAsync<LocalTestRecord>(
+      `SELECT * FROM tests WHERE officerId = ? ORDER BY createdAt DESC LIMIT ${safeLimit}`,
+      [officerId]
+    );
+    if (scoped.length > 0) {
+      return scoped;
+    }
+
+    // Backward compatibility for rows created before officer scoping was available.
     return db.getAllAsync<LocalTestRecord>(
-      `SELECT * FROM tests WHERE officerId = ? ORDER BY createdAt DESC LIMIT ?`,
-      [officerId, limit]
+      `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC LIMIT ${safeLimit}`
     );
   }
   return db.getAllAsync<LocalTestRecord>(
-    `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC LIMIT ?`,
-    [limit]
+    `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC LIMIT ${safeLimit}`
   );
 }
 

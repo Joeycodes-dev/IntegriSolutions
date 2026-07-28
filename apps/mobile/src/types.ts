@@ -1,9 +1,5 @@
 export type UserRole = 'officer' | 'supervisor';
 
-export type DutyStatus = 'On Patrol' | 'Checkpoint' | 'Break' | 'Off Duty';
-
-export const DUTY_STATUSES: DutyStatus[] = ['On Patrol', 'Checkpoint', 'Break', 'Off Duty'];
-
 export interface UserProfile {
   uid: string;
   officerId?: number;
@@ -13,7 +9,6 @@ export interface UserProfile {
   badgeNumber: string;
   idNumber: string;
   employmentStatus: string;
-  dutyStatus?: DutyStatus;
   province: string;
   region: string;
   officerTypeId: number;
@@ -30,4 +25,11 @@ export interface DriverLicenseData {
   dob: string;
   expiryDate: string;
   licenseCodes: string;
+  _ocr?: {
+    overallConfidence: number;
+    fieldConfidence: Record<string, number>;
+    passes: Array<{ name: string; confidence: number; preview: string }>;
+    usedPaidFallback: boolean;
+    fallbackReason: string | null;
+  };
 }

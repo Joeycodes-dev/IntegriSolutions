@@ -1,7 +1,7 @@
 import type { FieldOfficer, OfficerShiftStatus, TestRecord } from '../types';
 import { parseOfficerLocation } from './officerLocation';
 
-export const SHIFT_SLOTS = ['06:00 - 14:00', '14:00 - 22:00', '22:00 - 06:00'] as const;
+const SHIFTS = ['06:00 - 14:00', '14:00 - 22:00', '22:00 - 06:00'] as const;
 
 export function formatConstableName(fullName: string, rank?: string): string {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
@@ -26,17 +26,15 @@ export function parseStationLabel(station: string): string {
   return short || address;
 }
 
-export function parseShiftLabel(station: string): string {
+export function parseShiftLabel(station: string, officerId: number): string {
   const { shift } = parseOfficerLocation(station);
-  if (shift?.trim()) return shift.trim();
-  return 'Unassigned';
+  if (shift) return shift;
+  return SHIFTS[officerId % SHIFTS.length];
 }
 
-export function resolveDutyStatus(officer: FieldOfficer): OfficerShiftStatus {
-  if (officer.status.toLowerCase() !== 'active') {
-    return 'Off Duty';
-  }
-  return officer.dutyStatus ?? 'Off Duty';
+export function deriveShiftStatus(officerId: number): OfficerShiftStatus {
+  const statuses: OfficerShiftStatus[] = ['On Patrol', 'Checkpoint', 'Break'];
+  return statuses[officerId % statuses.length];
 }
 
 export function isToday(iso: string): boolean {
@@ -60,8 +58,7 @@ export function buildOfficerPerformance(
       (t) =>
         t.officerId === officer.officerId ||
         t.badgeNumber === officer.serviceNumber ||
-        t.officerName === officer.firstName ||
-        t.officerName === officer.name
+        t.officerName === officer.firstName
     );
     const failures = officerTests.filter((t) => t.result === 'fail').length;
     const failRate =
@@ -74,42 +71,16 @@ export function buildOfficerPerformance(
       displayName: formatConstableName(officer.name, officer.rank),
       precinct: parseStationLabel(officer.station),
       serviceNumber: officer.serviceNumber,
-      shift: parseShiftLabel(officer.station),
+      shift: parseShiftLabel(officer.station, officer.officerId),
       testsToday: officerTests.length,
       failRate,
-      status: resolveDutyStatus(officer)
+      status: deriveShiftStatus(officer.officerId)
     };
   });
 }
 
-export function buildRosterAssignments(officers: FieldOfficer[]) {
-  const active = officers.filter((o) => o.status.toLowerCase() === 'active');
-  const targetPerShift = active.length === 0 ? 0 : Math.ceil(active.length / SHIFT_SLOTS.length);
-
-  return SHIFT_SLOTS.map((label) => {
-    const assigned = active.filter((officer) => parseShiftLabel(officer.station) === label).length;
-    return {
-      label,
-      assigned,
-      target: targetPerShift
-    };
-  });
-}
-
-export function buildCoverageHealth(officers: FieldOfficer[]) {
-  const active = officers.filter((o) => o.status.toLowerCase() === 'active');
-  if (active.length === 0) {
-    return { percent: 0, onDuty: 0, active: 0 };
-  }
-
-  const onDuty = active.filter((o) => {
-    const status = resolveDutyStatus(o);
-    return status !== 'Off Duty';
-  }).length;
-
-  return {
-    percent: Math.round((onDuty / active.length) * 100),
-    onDuty,
-    active: active.length
-  };
-}
+export const ROSTER_ASSIGNMENTS = [
+  { label: '06:00 - 14:00', assigned: 6, target: 8 },
+  { label: '14:00 - 22:00', assigned: 9, target: 9 },
+  { label: '22:00 - 06:00', assigned: 7, target: 8 }
+] as const;

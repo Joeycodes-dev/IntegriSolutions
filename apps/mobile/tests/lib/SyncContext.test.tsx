@@ -17,7 +17,8 @@ jest.mock('../../src/db/repository', () => ({
   getFailedCount: jest.fn(),
   getSyncedCount: jest.fn(),
   getTestCountBetween: jest.fn(),
-  getRecentTests: jest.fn()
+  getRecentTests: jest.fn(),
+  resetFailedToPending: jest.fn()
 }));
 
 jest.mock('../../src/services/sync', () => ({
@@ -60,6 +61,7 @@ describe('SyncContext', () => {
         originalTestId: null
       }
     ]);
+    (repository.resetFailedToPending as jest.Mock).mockResolvedValue(undefined);
     (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true });
     (sync.syncPendingRecords as jest.Mock).mockResolvedValue({ synced: [], failed: [] });
   });

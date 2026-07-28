@@ -4,6 +4,18 @@ import { supabase } from '../supabase';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { hashData } from '../utilities/hash';
 import type { TestRecord } from '../types';
+import { publishTestInserted, subscribeTestInserted } from '../utilities/testEvents';
+
+const serviceSupabase = createClient(
+  process.env.SUPABASE_URL ?? '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+  {
+    auth: {
+      persistSession: false,
+      detectSessionInUrl: false
+    }
+  }
+);
 
 const serviceSupabase = createClient(
   process.env.SUPABASE_URL ?? '',
@@ -36,6 +48,33 @@ async function softAuth(req: Request, _res: Response, next: NextFunction) {
 }
 
 router.use(softAuth);
+
+router.get('/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const send = (event: unknown) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  send({ type: 'connected', at: new Date().toISOString() });
+
+  const unsubscribe = subscribeTestInserted((payload) => {
+    send({ type: 'test-inserted', ...payload });
+  });
+
+  const heartbeat = setInterval(() => {
+    res.write(': keepalive\n\n');
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+    res.end();
+  });
+});
 
 function toCamelCase(row: any): TestRecord {
   const reconstructed = {
@@ -159,6 +198,8 @@ router.post('/', requireAuth, async (req, res) => {
   if (error || !inserted.length) {
     return res.status(500).json({ error: error?.message ?? 'Failed to save test record' });
   }
+
+  publishTestInserted('web-create', 1);
 
   return res.status(201).json(toCamelCase(inserted[0]));
 });

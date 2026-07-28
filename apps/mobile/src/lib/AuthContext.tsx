@@ -25,7 +25,6 @@ type AuthContextType = {
   isRestoring: boolean;
   signIn: (profile: UserProfile, token: string | null) => Promise<void>;
   signInLocal: (profile: UserProfile) => Promise<void>;
-  updateProfile: (profile: UserProfile) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -95,31 +94,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const updateProfile = useCallback(async (profileData: UserProfile) => {
-    setProfile(profileData);
-    await saveProfile(profileData as any);
-  }, []);
-
   const signOut = useCallback(async () => {
     const current = profile;
+    // Clear in-memory auth state first so login screen does not auto-redirect back during logout.
     setProfile(null);
     setToken(null);
-    await clearAccessToken();
-    await clearStoredProfile();
-    if (current) {
-      await logAuditEvent({
-        action: 'auth.logout',
-        outcome: 'success',
-        message: `Officer ${current.name} ${current.surname} signed out`,
-        officerId: current.officerId ?? null,
-        officerName: `${current.name} ${current.surname}`.trim(),
-        badgeNumber: current.badgeNumber
-      });
+
+    try {
+      const cleanup = await Promise.allSettled([
+        clearAccessToken(),
+        clearStoredProfile()
+      ]);
+      if (__DEV__) {
+        cleanup
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .forEach((result) => {
+            console.warn('Sign out cleanup warning:', result.reason);
+          });
+      }
+      if (current) {
+        await logAuditEvent({
+          action: 'auth.logout',
+          outcome: 'success',
+          message: `Officer ${current.name} ${current.surname} signed out`,
+          officerId: current.officerId ?? null,
+          officerName: `${current.name} ${current.surname}`.trim(),
+          badgeNumber: current.badgeNumber
+        });
+      }
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('Sign out warning:', error);
+      }
     }
   }, [profile]);
 
   return (
-    <AuthContext.Provider value={{ profile, token, isRestoring, signIn, signInLocal, updateProfile, signOut }}>
+    <AuthContext.Provider value={{ profile, token, isRestoring, signIn, signInLocal, signOut }}>
       {children}
     </AuthContext.Provider>
   );
