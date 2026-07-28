@@ -43,37 +43,41 @@ export function useSupervisorTests() {
     void loadTests();
     const interval = setInterval(() => void loadTests(), 10000);
 
-    const stream = new EventSource(`${API_BASE}/api/tests/stream`);
-    stream.onopen = () => {
-      if (!cancelled) {
-        setStreamConnected(true);
-      }
-    };
-    stream.onmessage = (event) => {
-      if (!cancelled) {
-        setStreamConnected(true);
-        try {
-          const payload = JSON.parse(event.data) as { at?: string; type?: string };
-          if (payload.type === 'test-inserted' && payload.at) {
-            setLastEventAt(payload.at);
-          }
-        } catch {
-          // keep silent if heartbeat or non-JSON payload is received
+    const stream = typeof EventSource !== 'undefined'
+      ? new EventSource(`${API_BASE}/api/tests/stream`)
+      : null;
+    if (stream) {
+      stream.onopen = () => {
+        if (!cancelled) {
+          setStreamConnected(true);
         }
-      }
-      void loadTests();
-    };
-    stream.onerror = () => {
-      if (!cancelled) {
-        setStreamConnected(false);
-      }
-      // keep polling fallback active when EventSource is unavailable
-    };
+      };
+      stream.onmessage = (event) => {
+        if (!cancelled) {
+          setStreamConnected(true);
+          try {
+            const payload = JSON.parse(event.data) as { at?: string; type?: string };
+            if (payload.type === 'test-inserted' && payload.at) {
+              setLastEventAt(payload.at);
+            }
+          } catch {
+            // keep silent if heartbeat or non-JSON payload is received
+          }
+        }
+        void loadTests();
+      };
+      stream.onerror = () => {
+        if (!cancelled) {
+          setStreamConnected(false);
+        }
+        // keep polling fallback active when EventSource is unavailable
+      };
+    }
 
     return () => {
       cancelled = true;
       clearInterval(interval);
-      stream.close();
+      stream?.close();
     };
   }, []);
 

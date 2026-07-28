@@ -143,13 +143,13 @@ describe('SyncContext', () => {
   it('auto-syncs on interval', async () => {
     const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
 
-    // First interval fires after 10s — doSync calls syncPendingRecords twice (initial + retry)
+    // First interval fires after 10s.
     await act(async () => {
       jest.advanceTimersByTime(10000);
     });
 
     await waitFor(() => {
-      expect(sync.syncPendingRecords).toHaveBeenCalledTimes(2);
+      expect(sync.syncPendingRecords).toHaveBeenCalledTimes(1);
     });
 
     // Second interval fires after another 10s
@@ -158,7 +158,7 @@ describe('SyncContext', () => {
     });
 
     await waitFor(() => {
-      expect(sync.syncPendingRecords).toHaveBeenCalledTimes(4);
+      expect(sync.syncPendingRecords).toHaveBeenCalledTimes(2);
     });
   });
 

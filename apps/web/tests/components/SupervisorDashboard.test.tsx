@@ -43,7 +43,7 @@ describe('SupervisorDashboard', () => {
 
     expect(screen.getByText('Overview Dashboard')).toBeInTheDocument();
     expect(screen.getByText(/Today's enforcement activity/i)).toBeInTheDocument();
-    expect(screen.getByText('Live sync active')).toBeInTheDocument();
+    expect(screen.getByText('Live sync disconnected')).toBeInTheDocument();
     expect(screen.getByText('Hotspot Map')).toBeInTheDocument();
   });
 

@@ -256,14 +256,6 @@ router.post('/register', async (req, res) => {
     await serviceSupabase.auth.admin.deleteUser(orphanAuth.id);
   }
 
-  const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  const orphanAuth = authList?.users?.find(
-    (u) => u.email?.toLowerCase() === email.toLowerCase()
-  );
-  if (orphanAuth) {
-    await serviceSupabase.auth.admin.deleteUser(orphanAuth.id);
-  }
-
   const { data: authData, error: authError } = await serviceSupabase.auth.admin.createUser({
     email,
     password,
