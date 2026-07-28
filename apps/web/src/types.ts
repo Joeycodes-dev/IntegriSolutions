@@ -79,6 +79,7 @@ export interface TestRecord {
   createdAt: string;
   location?: string;
   hash?: string;
+  hashValid?: boolean | null;
   evidence?: TestEvidenceFields;
 }
 
@@ -95,6 +96,8 @@ export interface FieldOfficer {
   status: string;
   dutyStatus: OfficerShiftStatus;
   createdAt: string;
+  invitationExpiresAt?: string;
+  inviteEmailSent?: boolean;
 }
 
 export interface TestEvidence {

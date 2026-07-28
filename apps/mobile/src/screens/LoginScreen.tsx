@@ -1,20 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
-  View
+  View,
+  TouchableOpacity,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { login, register } from '../services/auth';
+import { Feather, Ionicons } from '@expo/vector-icons';
+
+import { completeOfficerInvite, login } from '../services/auth';
 import { useAuth } from '../lib/AuthContext';
+import { canAccessMobileApp } from '../lib/roles';
 import type { UserProfile } from '../types';
+
+// importing external styles
+import { styles } from './LoginScreen.styles';
+import { colors } from '../styles/colors';
 
 type RootStackParamList = {
   Login: undefined;
@@ -23,70 +30,99 @@ type RootStackParamList = {
 };
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
+type AuthMode = 'login' | 'invite';
 
-const PROVINCES = ['Gauteng', 'Western Cape', 'KwaZulu-Natal', 'Eastern Cape', 'Free State', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape'];
-const REGIONS = ['Johannesburg', 'Pretoria', 'Cape Town', 'Durban', 'Port Elizabeth', 'Bloemfontein', 'Polokwane', 'Nelspruit', 'Rustenburg', 'Kimberley'];
-const EMPLOYMENT_STATUS = ['Active'];
-const OFFICER_TYPES = [
-  { id: 1, name: 'Traffic Officer' },
-  { id: 2, name: 'Road Safety Officer' },
-  { id: 3, name: 'Highway Patrol' }
-];
-const ROLES = [
-  { id: 1, name: 'Officer' }
-];
+const MOBILE_ACCESS_ERROR = 'This mobile app is for officer accounts. Supervisors and administrators must use the web portal.';
+
+function ensureMobileAccess(profile: UserProfile): void {
+  if (!canAccessMobileApp(profile.roleId)) {
+    throw new Error(MOBILE_ACCESS_ERROR);
+  }
+}
 
 export function LoginScreen({ navigation }: Props) {
-  const [isLogin, setIsLogin] = useState(true);
+  const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [surname, setSurname] = useState('');
-  const [badgeNumber, setBadgeNumber] = useState('');
-  const [idNumber, setIdNumber] = useState('');
-  const [employmentStatus, setEmploymentStatus] = useState('Active');
-  const [province, setProvince] = useState('Gauteng');
-  const [region, setRegion] = useState('Johannesburg');
-  const [officerTypeId, setOfficerTypeId] = useState(1);
-  const [roleId, setRoleId] = useState(1);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [inviteLink, setInviteLink] = useState('');
+  const [invitePassword, setInvitePassword] = useState('');
+  const [inviteConfirmPassword, setInviteConfirmPassword] = useState('');
   const [devMode, setDevMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { signIn, signInLocal, isRestoring, profile } = useAuth();
+  const { signIn, signInLocal, signOut, isRestoring, profile } = useAuth();
 
   useEffect(() => {
     if (!isRestoring && profile) {
+      if (!canAccessMobileApp(profile.roleId)) {
+        setError(MOBILE_ACCESS_ERROR);
+        void signOut();
+        return;
+      }
       navigation.replace('OfficerDashboard');
     }
-  }, [isRestoring, profile, navigation]);
+  }, [isRestoring, profile, signOut, navigation]);
+
+  const switchMode = () => {
+    setError(null);
+    setMode((current) => current === 'login' ? 'invite' : 'login');
+  };
 
   const handleSubmit = async () => {
     setError(null);
     setIsLoading(true);
 
-    if (!email || !password) {
+    if (mode === 'invite') {
+      if (!inviteLink.trim() || !invitePassword) {
+        setError('Invite link and password are required.');
+        setIsLoading(false);
+        return;
+      }
+
+      if (invitePassword !== inviteConfirmPassword) {
+        setError('Passwords do not match.');
+        setIsLoading(false);
+        return;
+      }
+
+      if (invitePassword.length < 6) {
+        setError('Password must be at least 6 characters.');
+        setIsLoading(false);
+        return;
+      }
+    } else if (!email || !password) {
       setError('Email and password are required.');
       setIsLoading(false);
       return;
     }
 
-    if (!isLogin) {
-      if (!name || !surname || !badgeNumber || !idNumber) {
-        setError('Please complete all required fields.');
-        setIsLoading(false);
-        return;
-      }
-    }
-
     try {
+      if (mode === 'invite') {
+        const response = await completeOfficerInvite({
+          invite: inviteLink.trim(),
+          password: invitePassword
+        });
+
+        if (response.session?.access_token && response.profile) {
+          const profile = response.profile as UserProfile;
+          ensureMobileAccess(profile);
+          await signIn(profile, response.session.access_token);
+          navigation.replace('OfficerDashboard');
+          return;
+        }
+
+        throw new Error('Invite setup failed.');
+      }
+
       if (devMode) {
         const profile: UserProfile = {
           uid: `local-${Date.now()}`,
           email,
-          name: isLogin ? email.split('@')[0] : name,
-          surname: isLogin ? '' : surname,
-          badgeNumber: isLogin ? '0000' : badgeNumber,
-          idNumber: isLogin ? '0000000000000' : idNumber,
+          name: email.split('@')[0],
+          surname: '',
+          badgeNumber: '0000',
+          idNumber: '0000000000000',
           employmentStatus: 'Active',
           dutyStatus: 'Off Duty',
           province: 'Gauteng',
@@ -96,44 +132,22 @@ export function LoginScreen({ navigation }: Props) {
           createdAt: new Date().toISOString()
         };
 
+        ensureMobileAccess(profile);
         await signInLocal(profile);
         navigation.replace('OfficerDashboard');
         return;
       }
 
-      if (isLogin) {
-        const response = await login(email.trim(), password);
-        if (response.session?.access_token && response.profile) {
-          await signIn(response.profile as UserProfile, response.session.access_token);
-          navigation.replace('OfficerDashboard');
-          return;
-        }
-
-        throw new Error('Login failed.');
-      }
-
-      const response = await register({
-        email: email.trim(),
-        password,
-        name: name.trim(),
-        surname: surname.trim(),
-        badgeNumber: badgeNumber.trim(),
-        idNumber: idNumber.trim(),
-        employmentStatus,
-        province,
-        region,
-        officerTypeId,
-        roleId
-      });
-
+      const response = await login(email.trim(), password);
       if (response.session?.access_token && response.profile) {
-        await signIn(response.profile as UserProfile, response.session.access_token);
+        const profile = response.profile as UserProfile;
+        ensureMobileAccess(profile);
+        await signIn(profile, response.session.access_token);
         navigation.replace('OfficerDashboard');
         return;
       }
 
-      Alert.alert('Registration complete', 'Please sign in with your new credentials.');
-      setIsLogin(true);
+      throw new Error('Login failed.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Auth failed');
     } finally {
@@ -141,299 +155,135 @@ export function LoginScreen({ navigation }: Props) {
     }
   };
 
-  const renderDropdown = <T extends string | number>(
-    label: string,
-    value: T,
-    options: { label: string; value: T }[],
-    onChange: (val: T) => void
-  ) => (
-    <View style={styles.dropdownContainer}>
-      <Text style={styles.dropdownLabel}>{label}</Text>
-      <View style={styles.dropdownRow}>
-        {options.map((opt) => (
-          <Pressable
-            key={opt.value}
-            style={[styles.dropdownButton, value === opt.value && styles.dropdownButtonActive]}
-            onPress={() => onChange(opt.value)}
-          >
-            <Text style={[styles.dropdownButtonText, value === opt.value && styles.dropdownButtonTextActive]}>
-              {opt.label}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-    </View>
-  );
-
   return (
-    <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <View style={styles.card}>
-          <View style={styles.headerSection}>
-            <View style={styles.brandBadge}>
-              <Text style={styles.brandBadgeText}>IS</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+          
+          {/* Header sits OUTSIDE the card */}
+          <View style={styles.headerContainer}>
+            <View style={styles.logoBox}>
+              <Ionicons name="shield-checkmark" size={34} color="#fff" />
             </View>
-            <Text style={styles.title}>
+            <Text style={styles.mainTitle}>
               Integri<Text style={styles.titleAccent}>Scan</Text>
             </Text>
             <Text style={styles.subtitle}>Safer Roads, Incorruptible Records</Text>
           </View>
 
-          <View style={styles.form}>
-            {!isLogin && (
-              <>
-                <TextInput
-                  value={name}
-                  onChangeText={setName}
-                  placeholder="First Name"
-                  style={styles.input}
-                  placeholderTextColor="#94a3b8"
-                />
-                <TextInput
-                  value={surname}
-                  onChangeText={setSurname}
-                  placeholder="Surname"
-                  style={styles.input}
-                  placeholderTextColor="#94a3b8"
-                />
-                <TextInput
-                  value={badgeNumber}
-                  onChangeText={setBadgeNumber}
-                  placeholder="Badge / ID Number"
-                  style={styles.input}
-                  placeholderTextColor="#94a3b8"
-                />
-                <TextInput
-                  value={idNumber}
-                  onChangeText={setIdNumber}
-                  placeholder="SA ID Number (13 digits)"
-                  keyboardType="number-pad"
-                  maxLength={13}
-                  style={styles.input}
-                  placeholderTextColor="#94a3b8"
-                />
-                {renderDropdown('Employment Status', employmentStatus, EMPLOYMENT_STATUS.map(s => ({ label: s, value: s })), setEmploymentStatus)}
-                {renderDropdown('Province', province, PROVINCES.map(p => ({ label: p, value: p })), setProvince)}
-                {renderDropdown('Region', region, REGIONS.map(r => ({ label: r, value: r })), setRegion)}
-                {renderDropdown('Officer Type', officerTypeId, OFFICER_TYPES.map(t => ({ label: t.name, value: t.id })), setOfficerTypeId)}
-                {renderDropdown('Role', roleId, ROLES.map(r => ({ label: r.name, value: r.id })), setRoleId)}
-              </>
-            )}
+          {/* Main Card Wrapper */}
+          <View style={styles.card}>
+            <View style={styles.form}>
+              {mode === 'invite' ? (
+                <>
+                  <Text style={styles.inviteHelp}>
+                    Paste the invite link from your email, then create your password. Your email address is already tied to the invite.
+                  </Text>
+                  
+                  <TextInput
+                    value={inviteLink}
+                    onChangeText={setInviteLink}
+                    placeholder="Paste invite link"
+                    style={[styles.input, styles.inviteInput]}
+                    multiline
+                    autoCapitalize="none"
+                    placeholderTextColor="#94a3b8"
+                  />
+                  
+                  {/* Create Password with Eye Toggle */}
+                  <View style={styles.passwordContainer}>
+                    <TextInput
+                      value={invitePassword}
+                      onChangeText={setInvitePassword}
+                      placeholder="Create password"
+                      secureTextEntry={!isPasswordVisible}
+                      style={styles.passwordInput}
+                      textContentType="newPassword"
+                      placeholderTextColor="#94a3b8"
+                    />
+                    <TouchableOpacity onPress={() => setIsPasswordVisible(!isPasswordVisible)}>
+                      <Feather name={isPasswordVisible ? 'eye' : 'eye-off'} size={20} color={colors.neutralGray} />
+                    </TouchableOpacity>
+                  </View>
 
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              placeholder="Email"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              style={styles.input}
-              textContentType="emailAddress"
-              placeholderTextColor="#94a3b8"
-            />
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Password"
-              secureTextEntry
-              style={styles.input}
-              textContentType="password"
-              placeholderTextColor="#94a3b8"
-            />
+                  {/* Confirm Password with Eye Toggle */}
+                  <View style={[styles.passwordContainer, { marginTop: 14 }]}>
+                    <TextInput
+                      value={inviteConfirmPassword}
+                      onChangeText={setInviteConfirmPassword}
+                      placeholder="Confirm password"
+                      secureTextEntry={!isPasswordVisible}
+                      style={styles.passwordInput}
+                      textContentType="newPassword"
+                      placeholderTextColor="#94a3b8"
+                    />
+                    <TouchableOpacity onPress={() => setIsPasswordVisible(!isPasswordVisible)}>
+                      <Feather name={isPasswordVisible ? 'eye' : 'eye-off'} size={20} color={colors.neutralGray} />
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <TextInput
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder="Email"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    style={styles.input}
+                    textContentType="emailAddress"
+                    placeholderTextColor="#94a3b8"
+                  />
+                  
+                  {/* Login Password with Eye Toggle - Fixed style={styles.passwordInput} */}
+                  <View style={styles.passwordContainer}>
+                    <TextInput
+                      value={password}
+                      onChangeText={setPassword}
+                      placeholder="Password"
+                      secureTextEntry={!isPasswordVisible}
+                      style={styles.passwordInput}
+                      textContentType="password"
+                      placeholderTextColor="#94a3b8"
+                    />
+                    <TouchableOpacity onPress={() => setIsPasswordVisible(!isPasswordVisible)}>
+                      <Feather name={isPasswordVisible ? 'eye' : 'eye-off'} size={20} color={colors.neutralGray} />
+                    </TouchableOpacity>
+                  </View>
 
-            {__DEV__ ? (
-              <Pressable style={styles.devRow} onPress={() => setDevMode((current) => !current)}>
-                <View style={[styles.devToggle, devMode && styles.devToggleActive]}>
-                  <View style={[styles.devDot, devMode && styles.devDotActive]} />
-                </View>
-                <Text style={styles.devLabel}>Developer bypass login</Text>
+                  {__DEV__ ? (
+                    <Pressable style={styles.devRow} onPress={() => setDevMode((current) => !current)}>
+                      <View style={[styles.devToggle, devMode && styles.devToggleActive]}>
+                        <View style={[styles.devDot, devMode && styles.devDotActive]} />
+                      </View>
+                      <Text style={styles.devLabel}>Developer bypass login</Text>
+                    </Pressable>
+                  ) : null}
+                </>
+              )}
+
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+
+              <Pressable style={[styles.primaryButton, isLoading && styles.buttonDisabled]} onPress={handleSubmit} disabled={isLoading}>
+                {isLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>{mode === 'invite' ? 'Create Officer Login' : 'Login to Portal'}</Text>
+                )}
               </Pressable>
-            ) : null}
 
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-
-            <Pressable style={[styles.primaryButton, isLoading && styles.buttonDisabled]} onPress={handleSubmit} disabled={isLoading}>
-              {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>{isLogin ? 'Login to Portal' : 'Register Service Profile'}</Text>}
-            </Pressable>
-
-            <Text style={styles.switchText}>
-              {isLogin ? "Don't have an account?" : 'Already have an account?'}
-              <Text style={styles.switchLink} onPress={() => setIsLogin(!isLogin)}>
-                {isLogin ? ' Register' : ' Login'}
-              </Text>
-            </Text>
+              <View style={styles.footerContainer}>
+                <Text style={styles.switchText}>
+                  {mode === 'login' ? 'Need access?' : 'Already onboarded?'}
+                  <Text style={styles.switchLink} onPress={switchMode}>
+                    {mode === 'login' ? ' Get invite link from admin' : ' Login'}
+                  </Text>
+                </Text>
+              </View>
+            </View>
           </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  page: {
-    flex: 1,
-    backgroundColor: '#f8fafc'
-  },
-  container: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: 24
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    padding: 28,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.08,
-    shadowRadius: 28,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 8
-  },
-  headerSection: {
-    alignItems: 'center',
-    marginBottom: 28
-  },
-  brandBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: '#4338ca',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 18,
-    shadowColor: '#4338ca',
-    shadowOpacity: 0.22,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 5
-  },
-  brandBadgeText: {
-    color: '#fff',
-    fontWeight: '900',
-    fontSize: 24,
-    letterSpacing: 0.5
-  },
-  title: {
-    fontSize: 34,
-    fontWeight: '800',
-    color: '#0f172a',
-    marginBottom: 8,
-    textAlign: 'center'
-  },
-  titleAccent: {
-    color: '#4338ca'
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#475569',
-    marginBottom: 28,
-    textAlign: 'center'
-  },
-  form: {
-    gap: 14
-  },
-  input: {
-    backgroundColor: '#f8fafc',
-    borderColor: '#e2e8f0',
-    borderWidth: 1,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: '#0f172a'
-  },
-  dropdownContainer: {
-    gap: 6
-  },
-  dropdownLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748b',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase'
-  },
-  dropdownRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8
-  },
-  dropdownButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0'
-  },
-  dropdownButtonActive: {
-    backgroundColor: '#eef2ff',
-    borderColor: '#4338ca'
-  },
-  dropdownButtonText: {
-    fontSize: 12,
-    color: '#475569',
-    fontWeight: '600'
-  },
-  dropdownButtonTextActive: {
-    color: '#4338ca'
-  },
-  devRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginVertical: 8
-  },
-  devToggle: {
-    width: 44,
-    height: 24,
-    borderRadius: 999,
-    backgroundColor: '#e2e8f0',
-    justifyContent: 'center',
-    padding: 3
-  },
-  devToggleActive: {
-    backgroundColor: '#4338ca'
-  },
-  devDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#ffffff',
-    alignSelf: 'flex-start'
-  },
-  devDotActive: {
-    alignSelf: 'flex-end'
-  },
-  devLabel: {
-    color: '#475569',
-    fontSize: 14
-  },
-  primaryButton: {
-    backgroundColor: '#4338ca',
-    borderRadius: 16,
-    height: 56,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  buttonDisabled: {
-    opacity: 0.7
-  },
-  primaryButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '700'
-  },
-  switchText: {
-    marginTop: 14,
-    textAlign: 'center',
-    color: '#64748b',
-    fontSize: 14
-  },
-  switchLink: {
-    color: '#4338ca',
-    fontWeight: '700'
-  },
-  error: {
-    color: '#b91c1c',
-    textAlign: 'center'
-  }
-});

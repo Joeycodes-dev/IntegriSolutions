@@ -5,6 +5,6 @@ import annotationsRoutes from './annotations';
 const router = Router();
 
 router.use('/officers', officersRoutes);
-router.use('/tests/:testId/annotations', annotationsRoutes);
+router.use('/tests', annotationsRoutes);
 
 export default router;

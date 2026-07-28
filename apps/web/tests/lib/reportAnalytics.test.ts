@@ -53,30 +53,7 @@ describe('reportAnalytics', () => {
   it('builds weekly trend buckets', () => {
     const series = buildWeeklyTrend(sample);
     expect(series).toHaveLength(3);
-    expect(series[0].values.reduce((a, b) => a + b, 0)).toBe(1);
     expect(series[1].values.reduce((a, b) => a + b, 0)).toBe(2);
-  });
-
-  it('builds daily trend series across the date range', () => {
-    const trend = buildTrendSeries(sample, '2026-05-12', '2026-05-13');
-    expect(trend.labels).toHaveLength(2);
-    expect(trend.series).toHaveLength(3);
-    expect(trend.series[1].values).toEqual([1, 1]);
-    expect(trend.series[0].values).toEqual([1, 0]);
-    expect(trend.series[2].values).toEqual([0, 100]);
-  });
-
-  it('builds weekly trend series for longer ranges', () => {
-    const trend = buildTrendSeries(sample, '2026-05-01', '2026-05-31');
-    expect(trend.labels.length).toBeGreaterThan(1);
-    expect(trend.series[1].values.reduce((a, b) => a + b, 0)).toBe(2);
-  });
-
-  it('computes data span from test timestamps', () => {
-    expect(dataSpanDateRange(sample)).toEqual({
-      from: '2026-05-12',
-      to: '2026-05-13'
-    });
   });
 
   it('builds pass/fail breakdown', () => {

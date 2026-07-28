@@ -95,7 +95,6 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
         onBack={() => setView('list')}
         onCreated={(created) => {
           setOfficers((prev) => [created, ...prev]);
-          setView('list');
         }}
       />
     );

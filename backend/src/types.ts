@@ -30,6 +30,8 @@ export interface TestRecord {
   bacReading: number;
   result: 'pass' | 'fail';
   hash?: string;
+  hashValid?: boolean | null;
   createdAt: string;
   location?: string;
+  originalTestId?: string | null;
 }
