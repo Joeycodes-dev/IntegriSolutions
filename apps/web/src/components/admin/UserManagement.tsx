@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { getPortalUsers, removePortalUser } from '../../services/api';
+import { getPortalUsers, removePortalUser, updatePortalUser } from '../../services/api';
 import type { PortalUser } from '../../types';
 import { AddSupervisor } from './AddSupervisor';
 
@@ -12,7 +12,7 @@ export function UserManagement() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'list' | 'add'>('list');
-  const [removingId, setRemovingId] = useState<number | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -31,17 +31,39 @@ export function UserManagement() {
     void loadUsers();
   }, [loadUsers]);
 
+  const handleToggleStatus = async (user: PortalUser) => {
+    const nextStatus = user.status.toLowerCase() === 'active' ? 'Inactive' : 'Active';
+    if (!window.confirm(`Set ${user.name} to ${nextStatus}?`)) return;
+
+    setBusyId(user.userId);
+    try {
+      const updated = await updatePortalUser(
+        user.officerId,
+        { status: nextStatus },
+        { source: user.source, roleId: user.roleId }
+      );
+      setUsers((prev) => prev.map((u) => (u.userId === user.userId ? { ...u, ...updated } : u)));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to update user');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleRemove = async (user: PortalUser) => {
     if (!window.confirm(`Remove ${user.name} from the portal?`)) return;
 
-    setRemovingId(user.officerId);
+    setBusyId(user.userId);
     try {
-      await removePortalUser(user.officerId);
-      setUsers((prev) => prev.filter((u) => u.officerId !== user.officerId));
+      await removePortalUser(user.officerId, {
+        source: user.source,
+        roleId: user.roleId
+      });
+      setUsers((prev) => prev.filter((u) => u.userId !== user.userId));
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to remove user');
     } finally {
-      setRemovingId(null);
+      setBusyId(null);
     }
   };
 
@@ -65,7 +87,8 @@ export function UserManagement() {
             User Management
           </h1>
           <p className="mt-1 text-[0.8125rem] text-slate-500">
-            Create, activate, and manage Supervisor/Admin portal users.
+            Admins add supervisors here. Supervisors add field officers from the Officers screen.
+            Test records are immutable — only account status can be updated.
           </p>
         </div>
         <button
@@ -74,7 +97,7 @@ export function UserManagement() {
           className="shrink-0 rounded-full px-5 py-2 text-[0.8125rem] font-bold text-white transition hover:brightness-110"
           style={{ backgroundColor: NAVY }}
         >
-          Add New User
+          Add Supervisor
         </button>
       </header>
 
@@ -118,41 +141,58 @@ export function UserManagement() {
                     </td>
                   </tr>
                 ) : (
-                  users.map((user) => (
-                    <tr
-                      key={user.officerId}
-                      className="border-b last:border-b-0"
-                      style={{ borderColor: BORDER }}
-                    >
-                      <td className="px-5 py-3.5 font-mono text-[0.75rem] text-slate-600">
-                        {user.userId}
-                      </td>
-                      <td className="px-5 py-3.5 text-[0.8125rem] font-medium text-slate-800">
-                        {user.name}
-                      </td>
-                      <td className="px-5 py-3.5 text-[0.8125rem] text-slate-700">{user.role}</td>
-                      <td className="px-5 py-3.5 text-[0.8125rem] text-slate-700">{user.station}</td>
-                      <td className="px-5 py-3.5 text-[0.8125rem] text-slate-700">{user.status}</td>
-                      <td className="px-5 py-3.5">
-                        <button
-                          type="button"
-                          onClick={() => void handleRemove(user)}
-                          disabled={removingId === user.officerId}
-                          className="text-[0.8125rem] font-bold disabled:opacity-50"
-                          style={{ color: NAVY }}
-                        >
-                          {removingId === user.officerId ? 'Removing…' : 'Remove'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                  users.map((user) => {
+                    const isActive = user.status.toLowerCase() === 'active';
+                    return (
+                      <tr
+                        key={user.userId}
+                        className="border-b last:border-b-0"
+                        style={{ borderColor: BORDER }}
+                      >
+                        <td className="px-5 py-3.5 font-mono text-[0.75rem] text-slate-600">
+                          {user.userId}
+                        </td>
+                        <td className="px-5 py-3.5 text-[0.8125rem] font-medium text-slate-800">
+                          {user.name}
+                        </td>
+                        <td className="px-5 py-3.5 text-[0.8125rem] text-slate-700">{user.role}</td>
+                        <td className="px-5 py-3.5 text-[0.8125rem] text-slate-700">{user.station}</td>
+                        <td className="px-5 py-3.5 text-[0.8125rem] text-slate-700">{user.status}</td>
+                        <td className="px-5 py-3.5">
+                          <div className="flex flex-wrap gap-3">
+                            <button
+                              type="button"
+                              onClick={() => void handleToggleStatus(user)}
+                              disabled={busyId === user.userId}
+                              className="text-[0.8125rem] font-bold disabled:opacity-50"
+                              style={{ color: isActive ? '#b45309' : '#15803d' }}
+                            >
+                              {busyId === user.userId
+                                ? 'Updating…'
+                                : isActive
+                                  ? 'Deactivate'
+                                  : 'Activate'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleRemove(user)}
+                              disabled={busyId === user.userId}
+                              className="text-[0.8125rem] font-bold disabled:opacity-50"
+                              style={{ color: NAVY }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
         </div>
       </div>
-
     </div>
   );
 }

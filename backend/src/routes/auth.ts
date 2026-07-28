@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
-import { ROLE_OFFICER, ROLE_SUPERVISOR } from '../constants/roles';
+import { ROLE_ADMIN, ROLE_OFFICER, ROLE_SUPERVISOR } from '../constants/roles';
 import { portalUserId, roleLabel } from '../constants/roles';
 import { writeAuditLog } from '../utilities/auditLog';
 import { resolveProfileByEmail } from '../utilities/resolveProfile';
@@ -227,10 +227,37 @@ router.post('/register', async (req, res) => {
 
   const resolvedRoleId = Number(roleId ?? 1);
   if (resolvedRoleId === ROLE_OFFICER) {
-    return res.status(403).json({ error: 'Officer accounts must be created with an invite from the web portal.' });
+    return res.status(403).json({
+      error: 'Officer accounts must be created with an invite from a supervisor.'
+    });
   }
 
-  const isSupervisor = resolvedRoleId === ROLE_SUPERVISOR;
+  if (resolvedRoleId === ROLE_SUPERVISOR) {
+    return res.status(403).json({
+      error: 'Supervisor accounts must be created by an administrator in User Management.'
+    });
+  }
+
+  if (resolvedRoleId !== ROLE_ADMIN) {
+    return res.status(400).json({ error: 'Invalid role for registration' });
+  }
+
+  // First-admin bootstrap only — after that, admins create other portal users.
+  const { data: existingAdmins, error: adminCountError } = await serviceSupabase
+    .from('officer_users')
+    .select('officer_id')
+    .eq('role_id', ROLE_ADMIN)
+    .limit(1);
+
+  if (adminCountError) {
+    return res.status(500).json({ error: adminCountError.message });
+  }
+
+  if (existingAdmins?.length) {
+    return res.status(403).json({
+      error: 'Admin accounts must be created by an existing administrator.'
+    });
+  }
 
   const { data: existingOfficers } = await serviceSupabase
     .from('officer_users')
@@ -266,42 +293,22 @@ router.post('/register', async (req, res) => {
     return res.status(400).json({ error: authError?.message ?? 'Registration failed' });
   }
 
-  if (isSupervisor) {
-    const { error: insertError } = await serviceSupabase.from('supervisor_users').insert([{
-      supervisor_email_address: email,
-      supervisor_name: name,
-      supervisor_surname: surname,
-      supervisor_id_number: Number(idNumber),
-      badge_number: badgeNumber,
-      employment_status: employmentStatus ?? 'Active',
-      province: province ?? '',
-      region: region ?? '',
-      officer_type_id: Number(officerTypeId ?? 1),
-      role_id: resolvedRoleId
-    }]);
+  const { error: insertError } = await serviceSupabase.from('officer_users').insert([{
+    officer_email_address: email,
+    officer_name: name,
+    officer_surname: surname,
+    officer_id_number: Number(idNumber),
+    badge_number: badgeNumber,
+    officer_employment_status: employmentStatus ?? 'Active',
+    province: province ?? '',
+    region: region ?? '',
+    officer_type_id: Number(officerTypeId ?? 1),
+    role_id: ROLE_ADMIN
+  }]);
 
-    if (insertError) {
-      await serviceSupabase.auth.admin.deleteUser(authData.user.id);
-      return res.status(500).json({ error: insertError.message });
-    }
-  } else {
-    const { error: insertError } = await serviceSupabase.from('officer_users').insert([{
-      officer_email_address: email,
-      officer_name: name,
-      officer_surname: surname,
-      officer_id_number: Number(idNumber),
-      badge_number: badgeNumber,
-      officer_employment_status: employmentStatus ?? 'Active',
-      province: province ?? '',
-      region: region ?? '',
-      officer_type_id: Number(officerTypeId ?? 1),
-      role_id: resolvedRoleId
-    }]);
-
-    if (insertError) {
-      await serviceSupabase.auth.admin.deleteUser(authData.user.id);
-      return res.status(500).json({ error: insertError.message });
-    }
+  if (insertError) {
+    await serviceSupabase.auth.admin.deleteUser(authData.user.id);
+    return res.status(500).json({ error: insertError.message });
   }
 
   const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({

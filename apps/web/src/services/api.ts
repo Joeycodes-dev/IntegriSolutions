@@ -173,8 +173,39 @@ export async function createPortalUser(payload: {
   });
 }
 
-export async function removePortalUser(officerId: number) {
-  return request<{ removed: number }>(`/api/admin/users/${officerId}`, {
+export async function updatePortalUser(
+  officerId: number,
+  payload: { status?: string; station?: string },
+  options?: { source?: 'officer_users' | 'supervisor_users'; roleId?: number }
+) {
+  const params = new URLSearchParams();
+  if (options?.source) params.set('source', options.source);
+  if (options?.roleId != null) params.set('roleId', String(options.roleId));
+  const query = params.toString();
+  const path = query
+    ? `/api/admin/users/${officerId}?${query}`
+    : `/api/admin/users/${officerId}`;
+
+  return request<import('../types').PortalUser>(path, {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function removePortalUser(
+  officerId: number,
+  options?: { source?: 'officer_users' | 'supervisor_users'; roleId?: number }
+) {
+  const params = new URLSearchParams();
+  if (options?.source) params.set('source', options.source);
+  if (options?.roleId != null) params.set('roleId', String(options.roleId));
+  const query = params.toString();
+  const path = query
+    ? `/api/admin/users/${officerId}?${query}`
+    : `/api/admin/users/${officerId}`;
+
+  return request<{ removed: number }>(path, {
     method: 'DELETE',
     headers: authHeaders()
   });
@@ -198,6 +229,17 @@ export async function createFieldOfficer(payload: {
 }) {
   return request<import('../types').FieldOfficer>('/api/supervisor/officers', {
     method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateFieldOfficer(
+  officerId: number,
+  payload: { status?: string; rank?: string; station?: string }
+) {
+  return request<import('../types').FieldOfficer>(`/api/supervisor/officers/${officerId}`, {
+    method: 'PATCH',
     headers: authHeaders(),
     body: JSON.stringify(payload)
   });

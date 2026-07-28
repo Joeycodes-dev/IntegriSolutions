@@ -29,6 +29,8 @@ export interface PortalUser {
   station: string;
   status: string;
   createdAt: string;
+  /** Which profile table this portal user lives in. */
+  source?: 'officer_users' | 'supervisor_users';
 }
 
 export interface UserProfile {
@@ -94,9 +96,15 @@ export interface FieldOfficer {
   createdAt: string;
   invitationExpiresAt?: string;
   inviteEmailSent?: boolean;
+  inviteLink?: string;
+  emailWarning?: string;
 }
 
-export type OfficerShiftStatus = 'On Patrol' | 'Checkpoint' | 'Break';
+/** Live duty/employment badge shown on the Officers roster. */
+export type OfficerDutyStatus = 'Invited' | 'On Patrol' | 'Standby' | 'Inactive';
+
+/** @deprecated Prefer OfficerDutyStatus */
+export type OfficerShiftStatus = OfficerDutyStatus;
 
 export interface TestEvidence {
   referenceId: string;
