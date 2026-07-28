@@ -48,6 +48,21 @@ const mockTests = [
   }
 ];
 
+const makeLog = (index: number) => ({
+  id: `test-${index}`,
+  officerId: index,
+  officerName: `Officer ${index}`,
+  badgeNumber: `B${String(index).padStart(3, '0')}`,
+  driverName: `Driver ${index}`,
+  driverId: `DL${String(index).padStart(3, '0')}`,
+  bacReading: index % 2 === 0 ? 0 : 0.08,
+  result: index % 2 === 0 ? 'pass' as const : 'fail' as const,
+  createdAt: `2026-05-${String(10 + index).padStart(2, '0')}T10:00:00Z`,
+  location: 'JHB',
+  hash: `hash-${index}`,
+  hashValid: true
+});
+
 vi.mock('../../src/services/api', () => ({
   getTests: vi.fn()
 }));
@@ -143,8 +158,36 @@ describe('SupervisorLogs', () => {
 
     await waitFor(() => {
       expect(screen.getByText('RESULT')).toBeInTheDocument();
+      expect(screen.getByText('OFFICER')).toBeInTheDocument();
+      expect(screen.getByText('DRIVER LICENCE')).toBeInTheDocument();
       expect(screen.getByText('FROM')).toBeInTheDocument();
       expect(screen.getByText('TO')).toBeInTheDocument();
+    });
+  });
+
+  it('calls getTests with officer and driver licence filters', async () => {
+    render(
+      <SupervisorLogs
+        tests={mockTests}
+        loading={false}
+        error={null}
+        onSelectTest={mockOnSelectTest}
+      />
+    );
+
+    vi.advanceTimersByTime(400);
+
+    fireEvent.click(screen.getByRole('button', { name: /Filters/i }));
+    fireEvent.change(screen.getByLabelText('Officer filter'), { target: { value: 'John Doe' } });
+    fireEvent.change(screen.getByLabelText('Driver licence filter'), { target: { value: '987654' } });
+
+    vi.advanceTimersByTime(400);
+
+    await waitFor(() => {
+      expect(api.getTests).toHaveBeenCalledWith(expect.objectContaining({
+        officer: 'John Doe',
+        driverLicense: '987654'
+      }));
     });
   });
 
@@ -168,6 +211,39 @@ describe('SupervisorLogs', () => {
     fireEvent.click(row!);
 
     expect(mockOnSelectTest).toHaveBeenCalledWith(mockTests[0]);
+  });
+
+  it('paginates logs and navigates between pages', async () => {
+    const manyLogs = Array.from({ length: 12 }, (_, index) => makeLog(index + 1));
+    (api.getTests as any).mockResolvedValue(manyLogs);
+
+    render(
+      <SupervisorLogs
+        tests={manyLogs}
+        loading={false}
+        error={null}
+        onSelectTest={mockOnSelectTest}
+      />
+    );
+
+    vi.advanceTimersByTime(400);
+
+    await waitFor(() => {
+      expect(screen.getByText('Showing 1-10 of 12 logs')).toBeInTheDocument();
+      expect(screen.getByText('DL001')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('DL011')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Next logs page/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Showing 11-12 of 12 logs')).toBeInTheDocument();
+      expect(screen.getByText('Page 2 of 2')).toBeInTheDocument();
+      expect(screen.getByText('DL011')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('DL001')).not.toBeInTheDocument();
   });
 
   it('shows loading state initially', () => {

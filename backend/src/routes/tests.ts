@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { hashData } from '../utilities/hash';
+import { getTestHashValidity } from '../utilities/testIntegrity';
 import type { TestRecord } from '../types';
 import { publishTestInserted, subscribeTestInserted } from '../utilities/testEvents';
 
@@ -79,8 +80,7 @@ function toCamelCase(row: any): TestRecord {
     createdAt: row.created_at,
     originalTestId: row.original_test_id
   };
-  const computedHash = hashData(reconstructed);
-  const hashValid = row.hash ? computedHash === row.hash : null;
+  const hashValid = getTestHashValidity(row);
 
   return {
     id: row.id,
@@ -97,7 +97,7 @@ router.get('/', async (req, res) => {
     .select('*')
     .order('created_at', { ascending: false });
 
-  const { search, result, officer, dateFrom, dateTo, bacMin, bacMax } = req.query;
+  const { search, result, officer, driverLicense, dateFrom, dateTo, bacMin, bacMax } = req.query;
 
   if (typeof search === 'string' && search.trim()) {
     const term = `%${search.trim()}%`;
@@ -110,6 +110,10 @@ router.get('/', async (req, res) => {
 
   if (typeof officer === 'string' && officer.trim()) {
     query = query.ilike('officer_name', `%${officer.trim()}%`);
+  }
+
+  if (typeof driverLicense === 'string' && driverLicense.trim()) {
+    query = query.ilike('driver_id', `%${driverLicense.trim()}%`);
   }
 
   if (typeof dateFrom === 'string' && dateFrom.trim()) {
@@ -154,7 +158,7 @@ router.post('/', requireAuth, async (req, res) => {
 
   const { data: officer, error: officerError } = await serviceSupabase
     .from('officer_users')
-    .select('officer_name, badge_number')
+    .select('officer_id, officer_name, badge_number')
     .eq('officer_email_address', authReq.userEmail)
     .single();
 
@@ -162,8 +166,13 @@ router.post('/', requireAuth, async (req, res) => {
     return res.status(404).json({ error: officerError?.message ?? 'Officer profile not found' });
   }
 
+  const officerId = Number(officer.officer_id);
+  if (!Number.isFinite(officerId)) {
+    return res.status(500).json({ error: 'Officer profile has an invalid officer id' });
+  }
+
   const record = {
-    officer_id: authReq.userId,
+    officer_id: officerId,
     officer_name: officer.officer_name,
     badge_number: officer.badge_number,
     driver_name: driverName,

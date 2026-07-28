@@ -1,15 +1,15 @@
 export const colors = {
-  primaryDark: '#0D253F',
-  accentBlue: '#4096FE',
-  neutralGray: '#9BA5B7',
-  inputBorder: '#102A43',
-  background: '#FFFFFF',
-  textPrimary: '#0D253F',
-  textSecondary: '#334E68',
+  primaryDark: '#0D253F',       // dark blue
+  accentBlue: '#4096FE',        // light blue
+  neutralGray: '#9BA5B7',       // grey
+  inputBorder: '#102A43',       // blue
+  background: '#FFFFFF',        // white
+  textPrimary: '#0D253F',       // blue
+  textSecondary: '#334E68',     // blue
 
-  pageBackground: '#F8FAFC',
-  surfaceHighlight: '#F0F4F8',
-  black: '#000000',
+  pageBackground: '#F8FAFC',    // white 
+  surfaceHighlight: '#F0F4F8',  // light blue
+  black: '#000000',             // black
 
   borderLight: '#E2E8F0',
   borderHighlight: '#C7D2FE',
@@ -25,7 +25,7 @@ export const colors = {
   errorBorder: '#FECACA',
   errorText: '#B91C1C',
 
-  successBackground: '#F0FDF4',
-  successBorder: '#BBF7D0',
-  successText: '#15803D'
+  successBackground: '#F0FDF4', // light green
+  successBorder: '#BBF7D0',     // green
+  successText: '#15803D',       // green
 };

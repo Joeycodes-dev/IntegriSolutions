@@ -31,7 +31,7 @@ app.use('/api/sync', syncRoutes);
 
 const validRecord = {
   id: 'test-123',
-  officerId: 1,
+  officerId: 23,
   officerName: 'John Doe',
   badgeNumber: '12345',
   driverName: 'Jane Smith',
@@ -181,6 +181,36 @@ describe('Sync Routes', () => {
       expect(response.status).toBe(200);
       expect(response.body.failed).toHaveLength(1);
       expect(response.body.failed[0].error).toBe('Missing or invalid fields');
+    });
+
+    it('should sync offline dev records without an auth token when required fields are present', async () => {
+      const insert = jest.fn().mockResolvedValue({ error: null });
+      mockServiceSupabase.from
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              single: jest.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({ insert });
+
+      const response = await request(app)
+        .post('/api/sync')
+        .send({ records: [validRecord] });
+
+      expect(response.status).toBe(200);
+      expect(response.body.synced).toContain('test-123');
+      expect(response.body.failed).toHaveLength(0);
+      expect(insert).toHaveBeenCalledWith([
+        expect.objectContaining({
+          officer_id: 23,
+          officer_name: 'John Doe',
+          badge_number: '12345',
+          driver_id: '9876543210123',
+          driver_dob: '1990-01-01',
+        }),
+      ]);
     });
 
     it('should handle database insert errors', async () => {
