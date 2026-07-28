@@ -9,6 +9,7 @@ export interface UserProfile {
   badgeNumber: string;
   idNumber: string;
   employmentStatus: string;
+  dutyStatus: string;
   province: string;
   region: string;
   officerTypeId: number;

@@ -17,17 +17,6 @@ const serviceSupabase = createClient(
   }
 );
 
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
-
 const router = Router();
 
 // Soft auth for GET: validates token if present, but doesn't block anonymous requests
