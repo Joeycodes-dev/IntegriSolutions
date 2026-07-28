@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,14 +14,16 @@ import {
 } from 'react-native';
 import { Camera, CameraView, type BarcodeScanningResult } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { Feather, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../lib/AuthContext';
 import { generateId } from '../lib/id';
 import { saveLocally, syncPendingRecords } from '../services/sync';
 import { useSync } from '../lib/SyncContext';
 import { decryptLicensePayload, parseDecryptedLicensePayload, type DecryptedLicenseData } from '../lib/licenseDecryptor';
-import type { DriverLicenseData } from '../services/scanService';
+import { scanDriverLicense, type DriverLicenseData } from '../services/scanService';
 import type { LocalTestRecord } from '../db/repository';
 import { OfficerBottomNav } from '../components/OfficerBottomNav';
 import { OfficerHome } from '../components/OfficerHome';
@@ -38,8 +40,35 @@ type Props = NativeStackScreenProps<RootStackParamList, 'OfficerDashboard'>;
 
 type OfficerStep = 'idle' | 'scan' | 'reading' | 'saved';
 
-const FALLBACK_SCAN_TIMEOUT_MS = 3000;
-const AUTO_BAC_TIMEOUT_MS = 2000;
+function formatSyncTimestamp(value: Date | null): string {
+  const target = value ?? new Date();
+  return target.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+async function getDeviceLocation(): Promise<{ lat: number; lng: number }> {
+  const permission = await Location.requestForegroundPermissionsAsync();
+  if (permission.status !== 'granted') {
+    throw new Error('Location permission is required to save test GPS coordinates.');
+  }
+
+  const current = await Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.Balanced
+  });
+
+  const lat = current.coords.latitude;
+  const lng = current.coords.longitude;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new Error('Could not read valid GPS coordinates from this device.');
+  }
+
+  return { lat, lng };
+}
 
 function randomBacReading(): string {
   const value = Math.random() * 0.12;
@@ -54,29 +83,6 @@ function bacStatus(bac: string): { label: string; color: string } {
   if (reading === 0) return { label: 'PASS', color: '#16a34a' };
   return { label: 'PASS', color: '#16a34a' };
 }
-
-const FALLBACK_LICENSE_DATA: DriverLicenseData = {
-  name: 'Thabang',
-  surname: 'Kutumela',
-  initials: 'TJ',
-  idNumber: '9504125553083',
-  licenseNumber: 'DL123456789',
-  dob: '1995-04-12',
-  expiryDate: '2028-08-01',
-  licenseCodes: 'B EB',
-};
-
-const FALLBACK_DECRYPTED_LICENSE: DecryptedLicenseData = {
-  vehicleCodes: ['B', 'EB'],
-  surname: 'Kutumela',
-  initials: 'TJ',
-  prdpCode: 'P',
-  idCountryOfIssue: 'ZAF',
-  licenseCountryOfIssue: 'ZAF',
-  vehicleRestrictions: ['None'],
-  printableStrings: ['Kutumela TJ', 'B EB', 'ZAF', '9504125553083', 'DL123456789'],
-  rawHex: '00'.repeat(128),
-};
 
 function normalizeDate(value: string): string | undefined {
   const normalized = value.replace(/\//g, '-').replace(/\s+/g, ' ').trim();
@@ -337,19 +343,6 @@ function parsePdf417BarcodeData(rawPayload: string): DriverLicenseData {
   return parseAamvaBarcodeData(rawPayload);
 }
 
-function getFallbackLicenseData(): DriverLicenseData {
-  return { ...FALLBACK_LICENSE_DATA };
-}
-
-function getFallbackDecryptedLicense(): DecryptedLicenseData {
-  return {
-    ...FALLBACK_DECRYPTED_LICENSE,
-    vehicleCodes: [...FALLBACK_DECRYPTED_LICENSE.vehicleCodes],
-    vehicleRestrictions: [...FALLBACK_DECRYPTED_LICENSE.vehicleRestrictions],
-    printableStrings: [...FALLBACK_DECRYPTED_LICENSE.printableStrings]
-  };
-}
-
 function hasUsableLicenseData(data: DriverLicenseData): boolean {
   const name = `${data.name ?? ''} ${data.surname ?? ''}`.trim().toLowerCase();
   const identifier = `${data.licenseNumber || data.idNumber || ''}`.trim();
@@ -392,6 +385,22 @@ function formatRecentStop(record: LocalTestRecord) {
   };
 }
 
+function getCaptureQualityIssue(image: ImagePicker.ImagePickerAsset): string | null {
+  const width = image.width ?? 0;
+  const height = image.height ?? 0;
+  const base64Length = image.base64?.length ?? 0;
+
+  if (!image.base64 || base64Length < 120_000) {
+    return 'Image quality is too low. Hold steady, fill the frame with the licence, and retake.';
+  }
+
+  if (width < 1000 || height < 700) {
+    return 'Photo resolution is too low. Move closer to the licence and retake.';
+  }
+
+  return null;
+}
+
 export function OfficerDashboardScreen({ navigation }: Props) {
   const { profile, signOut } = useAuth();
   const { pendingCount, failedCount, syncedCount, todayCount, weekCount, recentTests, isSyncing, lastSyncedAt, forceSync, refreshCounts } = useSync();
@@ -409,59 +418,32 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [lastSavedTestId, setLastSavedTestId] = useState<string | null>(null);
   const [lastSavedDriver, setLastSavedDriver] = useState<DriverLicenseData | null>(null);
   const [isRetest, setIsRetest] = useState(false);
-  const fallbackScanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const bacTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [autoWorkflow, setAutoWorkflow] = useState(false);
+  const [ocrDebug, setOcrDebug] = useState<DriverLicenseData['_ocr'] | null>(null);
 
-  useEffect(() => {
-    if (step !== 'scan') {
-      if (fallbackScanTimerRef.current) {
-        clearTimeout(fallbackScanTimerRef.current);
-        fallbackScanTimerRef.current = null;
-      }
-      return;
-    }
-
-    fallbackScanTimerRef.current = setTimeout(() => {
-      if (barcodeScanned) return;
-      setScannedData(getFallbackLicenseData());
-      setDecryptedLicenseData(getFallbackDecryptedLicense());
-      setLicensePayload(null);
-      setDecryptError(null);
-      setStep('reading');
-    }, FALLBACK_SCAN_TIMEOUT_MS);
-
-    return () => {
-      if (fallbackScanTimerRef.current) {
-        clearTimeout(fallbackScanTimerRef.current);
-        fallbackScanTimerRef.current = null;
-      }
-    };
-  }, [step, barcodeScanned]);
-
-  useEffect(() => {
-    if (step !== 'reading' || bacReading) {
-      if (bacTimerRef.current) {
-        clearTimeout(bacTimerRef.current);
-        bacTimerRef.current = null;
-      }
-      return;
-    }
-
-    bacTimerRef.current = setTimeout(() => {
-      setBacReading(randomBacReading());
-    }, AUTO_BAC_TIMEOUT_MS);
-
-    return () => {
-      if (bacTimerRef.current) {
-        clearTimeout(bacTimerRef.current);
-        bacTimerRef.current = null;
-      }
-    };
-  }, [step, bacReading]);
+  useFocusEffect(
+    React.useCallback(() => {
+      void refreshCounts();
+      return undefined;
+    }, [refreshCounts])
+  );
 
   if (!profile) {
     return null;
   }
+
+  const resetSessionState = () => {
+    setHasPermission(null);
+    setScannedData(null);
+    setLicensePayload(null);
+    setDecryptedLicenseData(null);
+    setDecryptError(null);
+    setBarcodeScanned(false);
+    setBacReading('');
+    setPhotoUri(null);
+    setAutoWorkflow(false);
+    setOcrDebug(null);
+  };
 
   const startScan = async () => {
     const { status } = await Camera.requestCameraPermissionsAsync();
@@ -470,11 +452,8 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       return;
     }
 
+    resetSessionState();
     setHasPermission(true);
-    setBarcodeScanned(false);
-    setLicensePayload(null);
-    setDecryptedLicenseData(null);
-    setDecryptError(null);
     setStep('scan');
   };
 
@@ -500,14 +479,69 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }
 
     const data = parsePdf417BarcodeData(rawPayload);
-    const fallbackRequired = !hasUsableLicenseData(data);
-    setScannedData(fallbackRequired ? getFallbackLicenseData() : data);
-    setDecryptedLicenseData(fallbackRequired ? getFallbackDecryptedLicense() : decodedLicense);
-    if (!fallbackRequired) {
-      setDecryptError(null);
+    if (!hasUsableLicenseData(data)) {
+      Alert.alert('Scan failed', 'The licence barcode did not contain readable driver details. Try the front-photo scan.');
+      setBarcodeScanned(false);
+      return;
     }
+    setScannedData(data);
+    setDecryptedLicenseData(decodedLicense);
+    setDecryptError(decodedLicense ? null : decryptError);
+    setOcrDebug(null);
     setLicensePayload(formatRawPayloadForDisplay(rawPayload));
+    setAutoWorkflow(false);
     setStep('reading');
+  };
+
+  const captureFrontOfLicense = async (retryMode = false) => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Camera access denied', 'Please allow camera access to photograph the front of the licence.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.8,
+      base64: true,
+      allowsEditing: false
+    });
+
+    const image = result.assets?.[0];
+    if (result.canceled || !image) return;
+
+    const qualityIssue = getCaptureQualityIssue(image);
+    if (qualityIssue) {
+      Alert.alert('Retake required', qualityIssue);
+      return;
+    }
+
+    setPhotoUri(image.uri);
+    setBarcodeScanned(true);
+    setLicensePayload(null);
+    setDecryptError(null);
+    setBacReading('');
+    setAutoWorkflow(true);
+    try {
+      if (!image.base64) throw new Error('The camera did not return image data.');
+      const data = await scanDriverLicense(image.base64, { retry: retryMode });
+      setScannedData(data);
+      setOcrDebug(data._ocr ?? null);
+      setDecryptedLicenseData(null);
+      setStep('reading');
+    } catch (error) {
+      setBarcodeScanned(false);
+      setAutoWorkflow(false);
+      const message = error instanceof Error ? error.message : 'Licence OCR failed.';
+      Alert.alert('Licence scan failed', message);
+    }
+  };
+
+  const retakeFrontOfLicense = async () => {
+    setScannedData(null);
+    setBacReading('');
+    setDecryptError(null);
+    await captureFrontOfLicense(true);
   };
 
   const cancelScan = () => {
@@ -516,6 +550,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setLicensePayload(null);
     setDecryptedLicenseData(null);
     setDecryptError(null);
+    setOcrDebug(null);
+    setBacReading('');
+    setAutoWorkflow(false);
   };
 
   const takePhoto = async () => {
@@ -543,31 +580,40 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setBacReading('');
     setPhotoUri(null);
     setIsRetest(true);
+    setAutoWorkflow(false);
+    setOcrDebug(null);
     setStep('reading');
   };
 
+  const handleLogout = async () => {
+    navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+    signOut().catch((error) => {
+      console.warn('Sign out warning:', error);
+    });
+  };
+
   const handleFinishSession = () => {
+    resetSessionState();
     setStep('idle');
-    setScannedData(null);
     setLastSavedTestId(null);
     setLastSavedDriver(null);
     setIsRetest(false);
     Alert.alert('Record saved', 'Record saved locally. It will sync when network is available.');
   };
 
-  const saveRecord = async () => {
-    if (!scannedData || !bacReading || !profile) {
+  const persistRecord = async (reading: number) => {
+    if (!scannedData || !profile) {
       return;
     }
 
-    const reading = parseFloat(bacReading);
-    if (Number.isNaN(reading)) {
-      Alert.alert('Invalid BAC', 'Please enter a valid numeric BAC reading.');
+    if (!scannedData.initials.trim() || !scannedData.surname.trim() || !scannedData.expiryDate.trim()) {
+      Alert.alert('Licence details required', 'Could not read initials, surname, and expiry date. Retake the licence photo.');
       return;
     }
 
     setIsSaving(true);
     try {
+      const currentLocation = await getDeviceLocation();
       const isOver = reading >= 0.05;
       const result = reading === 0 ? 'pass' : isOver ? 'fail' : 'pass';
       const id = generateId();
@@ -577,12 +623,12 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         officerId: profile.officerId ?? null,
         officerName: profile.name,
         badgeNumber: profile.badgeNumber,
-        driverName: `${scannedData.name} ${scannedData.surname}`.trim(),
-        driverId: scannedData.licenseNumber || scannedData.idNumber,
+        driverName: `${scannedData.initials} ${scannedData.surname}`.trim(),
+        driverId: scannedData.idNumber || scannedData.licenseNumber,
         driverDob: scannedData.dob,
         bacReading: reading,
         result,
-        location: { lat: -25.7479, lng: 28.2293 },
+        location: currentLocation,
         photoUri,
         originalTestId: isRetest ? lastSavedTestId : null
       });
@@ -591,8 +637,6 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       setLastSavedDriver(scannedData);
       setIsRetest(false);
       setStep('saved');
-      setBacReading('');
-      setPhotoUri(null);
       await refreshCounts();
 
       syncPendingRecords(profile.officerId ?? null).catch(() => {
@@ -605,6 +649,37 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  useEffect(() => {
+    if (!autoWorkflow || step !== 'reading' || !scannedData || isSaving || bacReading) {
+      return;
+    }
+
+    if (!scannedData.initials.trim() || !scannedData.surname.trim() || !scannedData.expiryDate.trim()) {
+      return;
+    }
+
+    const simulated = randomBacReading();
+    setBacReading(simulated);
+    const numeric = Number.parseFloat(simulated);
+    if (!Number.isNaN(numeric)) {
+      persistRecord(numeric);
+    }
+  }, [autoWorkflow, step, scannedData, isSaving, bacReading]);
+
+  const saveRecord = async () => {
+    if (!scannedData || !bacReading || !profile) {
+      return;
+    }
+
+    const reading = parseFloat(bacReading);
+    if (Number.isNaN(reading)) {
+      Alert.alert('Invalid BAC', 'Please enter a valid numeric BAC reading.');
+      return;
+    }
+
+    await persistRecord(reading);
   };
 
   return (
@@ -637,10 +712,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
           </Pressable>
           <Pressable
             style={styles.signOutButton}
-            onPress={async () => {
-              await signOut();
-              navigation.replace('Login');
-            }}
+            onPress={() => { void handleLogout(); }}
           >
             <Feather name="log-out" size={20} color="#475569" />
           </Pressable>
@@ -682,6 +754,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               </Text>
             </View>
             <View style={styles.scanActions}>
+              <Pressable style={styles.primaryButton} onPress={() => { void captureFrontOfLicense(false); }}>
+                <Feather name="camera" size={17} color="#fff" />
+                <Text style={styles.primaryButtonText}>Photograph Front of Licence</Text>
+              </Pressable>
               <Pressable style={styles.secondaryButton} onPress={cancelScan}>
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
               </Pressable>
@@ -699,8 +775,29 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                 <Text style={styles.overline}>Subject Identified</Text>
                 <Text style={styles.subjectName}>{scannedData?.name} {scannedData?.surname}</Text>
                 <Text style={styles.subjectLicense}>ID: {scannedData?.idNumber}</Text>
-                <Text style={styles.subjectLicense}>License: {scannedData?.licenseNumber}</Text>
+                <Text style={styles.subjectLicense}>License: {scannedData?.licenseNumber || 'Not detected'}</Text>
               </View>
+            </View>
+
+            <View style={styles.confirmationCard}>
+              <Text style={styles.overline}>Captured Licence Fields</Text>
+              <Text style={styles.confirmationHint}>
+                Read-only fields populated from the front-licence image.
+              </Text>
+              {[
+                ['Initials', scannedData?.initials],
+                ['Surname', scannedData?.surname],
+                ['ID No', scannedData?.idNumber],
+                ['Licence Number', scannedData?.licenseNumber],
+                ['Expiry Date', scannedData?.expiryDate]
+              ].map(([label, value]) => (
+                <View key={label} style={styles.licenseField}>
+                  <Text style={styles.licenseFieldLabel}>{label}</Text>
+                  <View style={styles.licenseFieldInput}>
+                    <Text style={styles.licenseFieldValue}>{value || 'Not detected'}</Text>
+                  </View>
+                </View>
+              ))}
             </View>
 
             {decryptedLicenseData ? (
@@ -743,17 +840,55 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             ) : null}
 
             <View style={styles.bacSection}>
-              <Text style={styles.overline}>BAC Reading (g/100ml)</Text>
-              <TextInput
-                keyboardType="decimal-pad"
-                placeholder="0.000"
-                placeholderTextColor="#94a3b8"
-                value={bacReading}
-                onChangeText={setBacReading}
-                style={styles.bacInput}
-              />
+              <Text style={styles.overline}>BAC Reading Simulator (g/100ml)</Text>
+              {autoWorkflow ? (
+                <View style={styles.bacInput}>
+                  <Text style={styles.bacValueText}>{bacReading || 'Simulating...'}</Text>
+                </View>
+              ) : (
+                <TextInput
+                  keyboardType="decimal-pad"
+                  placeholder="0.000"
+                  placeholderTextColor="#94a3b8"
+                  value={bacReading}
+                  onChangeText={setBacReading}
+                  style={styles.bacInput}
+                />
+              )}
               <Text style={styles.bacSuffix}>BAC</Text>
             </View>
+
+            {autoWorkflow && (
+              <View style={styles.autoBanner}>
+                {isSaving ? <ActivityIndicator size="small" color="#4338ca" /> : <Feather name="check-circle" size={16} color="#16a34a" />}
+                <Text style={styles.autoBannerText}>
+                  {isSaving ? 'Auto-saving and syncing record...' : 'BAC simulated and record queued for sync automatically.'}
+                </Text>
+              </View>
+            )}
+
+            {autoWorkflow && ocrDebug && (
+              <View style={styles.ocrDebugCard}>
+                <Text style={styles.overline}>OCR Debug</Text>
+                <Text style={styles.ocrDebugText}>Overall confidence: {(ocrDebug.overallConfidence * 100).toFixed(0)}%</Text>
+                <Text style={styles.ocrDebugText}>Fallback used: {ocrDebug.usedPaidFallback ? 'Yes' : 'No'}</Text>
+                {ocrDebug.fallbackReason ? (
+                  <Text style={styles.ocrDebugText}>Reason: {ocrDebug.fallbackReason}</Text>
+                ) : null}
+              </View>
+            )}
+
+            {autoWorkflow && !isSaving && (!scannedData?.initials?.trim() || !scannedData?.surname?.trim() || !scannedData?.expiryDate?.trim()) && (
+              <View style={styles.actionRow}>
+                <Pressable style={styles.primaryButton} onPress={retakeFrontOfLicense}>
+                  <Feather name="camera" size={18} color="#fff" />
+                  <Text style={styles.primaryButtonText}>Retake Front Licence Photo</Text>
+                </Pressable>
+                <Pressable onPress={() => setStep('scan')}>
+                  <Text style={styles.abortText}>Back To Scanner</Text>
+                </Pressable>
+              </View>
+            )}
 
             <View style={styles.statusRow}>
               <View style={styles.statusCard}> 
@@ -783,12 +918,56 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               )}
             </View>
 
+            {!autoWorkflow && (
+              <View style={styles.actionRow}>
+                <Pressable style={[styles.primaryButton, (!bacReading || isSaving) && styles.buttonDisabled]} onPress={saveRecord} disabled={!bacReading || isSaving}>
+                  {isSaving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}><Feather name="shield" size={18} color="#fff" />  COMMIT TO LEDGER</Text>}
+                </Pressable>
+                <Pressable onPress={() => setStep('idle')}>
+                  <Text style={styles.abortText}>Abort Session</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {isRetest && (
+              <View style={styles.actionRow}>
+                <Pressable onPress={handleFinishSession}>
+                  <Text style={styles.abortText}>Back to Main Menu</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        )}
+
+        {step === 'saved' && (
+          <View style={styles.card}>
+            <View style={styles.savedIcon}>
+              <Feather name="check-circle" size={48} color="#16a34a" />
+            </View>
+            <Text style={styles.savedTitle}>Record Saved</Text>
+            <Text style={styles.savedSubtitle}>
+              Test record has been committed to the ledger and will sync when network is available.
+            </Text>
+
+            {lastSavedDriver && (
+              <View style={styles.savedDriverCard}>
+                <Text style={styles.overline}>Driver</Text>
+                <Text style={styles.savedDriverName}>
+                  {lastSavedDriver.name} {lastSavedDriver.surname}
+                </Text>
+                <Text style={styles.savedDriverId}>
+                  ID: {lastSavedDriver.idNumber || lastSavedDriver.licenseNumber}
+                </Text>
+              </View>
+            )}
+
             <View style={styles.actionRow}>
-              <Pressable style={[styles.primaryButton, (!bacReading || isSaving) && styles.buttonDisabled]} onPress={saveRecord} disabled={!bacReading || isSaving}>
-                {isSaving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}><Feather name="shield" size={18} color="#fff" />  COMMIT TO LEDGER</Text>}
+              <Pressable style={styles.secondaryActionButton} onPress={handleRetest}>
+                <Feather name="refresh-cw" size={18} color="#4338ca" />
+                <Text style={styles.secondaryActionText}>Retest Driver</Text>
               </Pressable>
-              <Pressable onPress={() => setStep('idle')}>
-                <Text style={styles.abortText}>Abort Session</Text>
+              <Pressable style={styles.primaryButton} onPress={handleFinishSession}>
+                <Text style={styles.primaryButtonText}>Finish Session</Text>
               </Pressable>
             </View>
           </View>
@@ -866,14 +1045,12 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               </View>
             </View>
 
-            {lastSyncedAt && (
-              <View style={styles.modalFooter}>
-                <Feather name="clock" size={12} color="#94a3b8" />
-                <Text style={styles.modalFooterText}>
-                  Last sync: {lastSyncedAt.toLocaleTimeString()}
-                </Text>
-              </View>
-            )}
+            <View style={styles.modalFooter}>
+              <Feather name="clock" size={12} color="#94a3b8" />
+              <Text style={styles.modalFooterText}>
+                Last sync: {formatSyncTimestamp(lastSyncedAt)}
+              </Text>
+            </View>
 
             <Pressable
               style={[styles.modalSyncButton, isSyncing && styles.buttonDisabled]}
@@ -1152,6 +1329,45 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
     borderRadius: 20
   },
+  confirmationCard: {
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e2e8f0'
+  },
+  confirmationHint: {
+    marginBottom: 14,
+    color: '#64748b',
+    fontSize: 13,
+    lineHeight: 19
+  },
+  licenseField: {
+    marginBottom: 12
+  },
+  licenseFieldLabel: {
+    marginBottom: 5,
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  licenseFieldInput: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
+    color: '#0f172a',
+    fontSize: 15
+  },
+  licenseFieldValue: {
+    color: '#0f172a',
+    fontSize: 15,
+    fontWeight: '700'
+  },
   profileIcon: {
     width: 56,
     height: 56,
@@ -1191,6 +1407,12 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingVertical: 22,
     paddingHorizontal: 18,
+    fontSize: 32,
+    fontWeight: '700',
+    color: '#0f172a',
+    textAlign: 'center'
+  },
+  bacValueText: {
     fontSize: 32,
     fontWeight: '700',
     color: '#0f172a',
@@ -1252,6 +1474,38 @@ const styles = StyleSheet.create({
   },
   evidenceSection: {
     marginBottom: 20
+  },
+  autoBanner: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 16,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe'
+  },
+  autoBannerText: {
+    flex: 1,
+    color: '#334155',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600'
+  },
+  ocrDebugCard: {
+    marginBottom: 16,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#d1fae5',
+    backgroundColor: '#ecfeff'
+  },
+  ocrDebugText: {
+    marginTop: 4,
+    color: '#0f172a',
+    fontSize: 12,
+    lineHeight: 16
   },
   photoButton: {
     marginTop: 12,

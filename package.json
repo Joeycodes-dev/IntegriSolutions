@@ -1,0 +1,16 @@
+{
+  "name": "integrisolutions-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "mobile": "npm --prefix apps/mobile run start",
+    "mobile:lan": "npm --prefix apps/mobile run start -- --lan",
+    "mobile:tunnel": "npm --prefix apps/mobile run start -- --tunnel",
+    "mobile:web": "npm --prefix apps/mobile run web",
+    "mobile:apk": "npm --prefix apps/mobile run apk",
+    "mobile:apk:local": "npm --prefix apps/mobile run apk:local",
+    "mobile:apk:list": "npm --prefix apps/mobile run apk:list",
+    "web": "npm --prefix apps/web run dev",
+    "backend": "npm --prefix backend run dev"
+  }
+}

@@ -7,6 +7,7 @@ import {
   getSyncedCount,
   getTestCountBetween,
   getRecentTests,
+  resetFailedToPending,
   type LocalTestRecord
 } from '../db/repository';
 import { syncPendingRecords } from '../services/sync';
@@ -106,14 +107,17 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       if (result.synced.length > 0) {
         setLastSyncedAt(new Date());
       }
+      const hasAuthFailure = result.failed.some((f) => /invalid or expired access token/i.test(f.error));
       if (result.failed.length > 0) {
         console.warn('Sync: some records failed to sync');
         for (const f of result.failed) {
           console.warn(`  ${f.id}: ${f.error}`);
         }
       }
-      // Retry failed records that haven't hit the cap
-      await syncPendingRecords(officerId);
+      // Retry failed records that haven't hit the cap, unless auth has failed.
+      if (result.failed.length > 0 && !hasAuthFailure) {
+        await syncPendingRecords(officerId);
+      }
     } catch (error) {
       console.error('Sync error:', error);
       // Sync will be retried on next interval
@@ -125,8 +129,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   }, [refreshCounts, profile?.officerId]);
 
   const forceSync = useCallback(async () => {
+    const officerId = profile?.officerId ?? null;
+    await resetFailedToPending(officerId);
     await doSync();
-  }, [doSync]);
+  }, [doSync, profile?.officerId]);
 
   useEffect(() => {
     refreshCounts();

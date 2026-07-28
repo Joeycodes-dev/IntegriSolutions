@@ -47,12 +47,21 @@ function greeting(): string {
 }
 
 function formatLastSync(d: Date | null): string {
-  if (!d) return 'Never synced';
-  const minutes = Math.floor((Date.now() - d.getTime()) / 60000);
-  if (minutes < 1) return 'Just now';
-  if (minutes === 1) return '1 min ago';
-  if (minutes < 60) return `${minutes} min ago`;
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (!d) return new Date().toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
+  return d.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 export function OfficerHome({
@@ -197,6 +206,18 @@ export function OfficerHome({
         </View>
       </Pressable>
 
+      <View style={styles.tipCard}>
+        <View style={styles.tipIconWrap}>
+          <Feather name="info" size={16} color="#4338ca" />
+        </View>
+        <View style={styles.tipTextBlock}>
+          <Text style={styles.tipTitle}>Tip</Text>
+          <Text style={styles.tipBody}>
+            Hold the phone 15-20 cm from the license barcode and tilt slightly to avoid glare. PDF417 is read best in daylight.
+          </Text>
+        </View>
+      </View>
+
       <View style={styles.recentHeader}>
         <Text style={styles.sectionLabel}>RECENT STOPS</Text>
         <Pressable onPress={onOpenReports}>
@@ -232,7 +253,7 @@ export function OfficerHome({
                         stop.result === 'FAIL' ? styles.recentResultTextFail : styles.recentResultTextPass
                       ]}
                     >
-                      {stop.result}
+                      {stop.result === 'FAIL' ? 'BAC FAIL' : 'BAC PASS'}
                     </Text>
                   </View>
                 </View>
@@ -243,18 +264,6 @@ export function OfficerHome({
             </View>
           ))
         )}
-      </View>
-
-      <View style={styles.tipCard}>
-        <View style={styles.tipIconWrap}>
-          <Feather name="info" size={16} color="#4338ca" />
-        </View>
-        <View style={styles.tipTextBlock}>
-          <Text style={styles.tipTitle}>Tip</Text>
-          <Text style={styles.tipBody}>
-            Hold the phone 15–20 cm from the license barcode and tilt slightly to avoid glare. PDF417 is read best in daylight.
-          </Text>
-        </View>
       </View>
 
       <View style={styles.footerRow}>

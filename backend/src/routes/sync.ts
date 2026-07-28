@@ -4,6 +4,7 @@ import { supabase } from '../supabase';
 import type { AuthRequest } from '../middleware/auth';
 import { hashData } from '../utilities/hash';
 import { resolveProfileByEmail } from '../utilities/resolveProfile';
+import { publishTestInserted } from '../utilities/testEvents';
 
 const serviceSupabase = createClient(
   process.env.SUPABASE_URL ?? '',
@@ -164,6 +165,10 @@ router.post('/', async (req, res) => {
     }
 
     synced.push(record.id);
+  }
+
+  if (synced.length > 0) {
+    publishTestInserted('mobile-sync', synced.length);
   }
 
   return res.json({ synced, failed, duplicates });

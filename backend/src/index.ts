@@ -17,6 +17,7 @@ import adminRoutes from './routes/admin';
 import supervisorRoutes from './routes/supervisor';
 import evidenceRoutes from './routes/evidence';
 import invalidationsRoutes from './routes/invalidations';
+import scanRoutes from './routes/scan';
 import { apiLimiter, authLimiter, syncLimiter } from './middleware/rateLimiter';
 
 const app = express();
@@ -29,10 +30,35 @@ const allowedOrigins = new Set([
   'http://localhost:5173'
 ]);
 
+function isDevLocalOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    const host = parsed.hostname;
+    const protocolOk = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    const localHost = host === 'localhost' || host === '127.0.0.1';
+    const lanHost = /^192\.168\.\d+\.\d+$/.test(host) || /^10\.\d+\.\d+\.\d+$/.test(host);
+    return protocolOk && (localHost || lanHost);
+  } catch {
+    return false;
+  }
+}
+
 app.use(helmet());
 app.use(
   cors({
-    origin: [...allowedOrigins],
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (allowedOrigins.has(origin) || isDevLocalOrigin(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true
   })
 );
@@ -56,6 +82,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/supervisor', supervisorRoutes);
 app.use('/api/evidence', evidenceRoutes);
 app.use('/api/invalidations', invalidationsRoutes);
+app.use('/api/scan', scanRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });

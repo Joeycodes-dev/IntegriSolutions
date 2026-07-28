@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "mobile:start",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "mobile"],
+      "isBackground": true,
+      "group": "build"
+    },
+    {
+      "label": "mobile:start:tunnel",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "mobile:tunnel"],
+      "isBackground": true,
+      "group": "build"
+    },
+    {
+      "label": "web:start",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "web"],
+      "isBackground": true,
+      "group": "build"
+    }
+  ]
+}
