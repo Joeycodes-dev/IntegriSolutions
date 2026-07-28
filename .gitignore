@@ -1,5 +1,6 @@
 # Dependency directories
 node_modules/
+.venv/
 
 # Build output directories
 build/
@@ -11,5 +12,12 @@ backend/sql
 # dotenv environment variable files
 .env
 .env.local
+Project Plan/
+backend/sql
+
+
+# dotenv environment variable files
+.env
+.env.local
 .gga
-AGENTS.md
+AGENTS.md.git.disabled-*/

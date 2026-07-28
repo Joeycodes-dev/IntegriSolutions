@@ -180,6 +180,13 @@ export function AuditScreen({ navigation }: Props) {
     );
   };
 
+  const handleLogout = async () => {
+    navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+    signOut().catch((error) => {
+      console.warn('Sign out warning:', error);
+    });
+  };
+
   return (
     <View style={styles.page}>
       <View style={styles.header}>

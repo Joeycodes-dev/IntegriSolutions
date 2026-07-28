@@ -96,19 +96,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     const current = profile;
+    // Clear in-memory auth state first so login screen does not auto-redirect back during logout.
     setProfile(null);
     setToken(null);
-    await clearAccessToken();
-    await clearStoredProfile();
-    if (current) {
-      await logAuditEvent({
-        action: 'auth.logout',
-        outcome: 'success',
-        message: `Officer ${current.name} ${current.surname} signed out`,
-        officerId: current.officerId ?? null,
-        officerName: `${current.name} ${current.surname}`.trim(),
-        badgeNumber: current.badgeNumber
-      });
+
+    try {
+      const cleanup = await Promise.allSettled([
+        clearAccessToken(),
+        clearStoredProfile()
+      ]);
+      if (__DEV__) {
+        cleanup
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .forEach((result) => {
+            console.warn('Sign out cleanup warning:', result.reason);
+          });
+      }
+      if (current) {
+        await logAuditEvent({
+          action: 'auth.logout',
+          outcome: 'success',
+          message: `Officer ${current.name} ${current.surname} signed out`,
+          officerId: current.officerId ?? null,
+          officerName: `${current.name} ${current.surname}`.trim(),
+          badgeNumber: current.badgeNumber
+        });
+      }
+    } catch (error) {
+      if (__DEV__) {
+        console.warn('Sign out warning:', error);
+      }
     }
   }, [profile]);
 

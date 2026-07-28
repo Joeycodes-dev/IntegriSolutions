@@ -256,7 +256,7 @@ router.post('/register', async (req, res) => {
     await serviceSupabase.auth.admin.deleteUser(orphanAuth.id);
   }
 
-  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+  const { data: authData, error: authError } = await serviceSupabase.auth.admin.createUser({
     email,
     password,
     email_confirm: true

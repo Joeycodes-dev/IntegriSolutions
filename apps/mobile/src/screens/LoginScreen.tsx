@@ -118,6 +118,7 @@ export function LoginScreen({ navigation }: Props) {
       if (devMode) {
         const profile: UserProfile = {
           uid: `local-${Date.now()}`,
+          officerId: 23,
           email,
           name: email.split('@')[0],
           surname: '',

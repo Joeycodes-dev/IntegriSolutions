@@ -5,6 +5,15 @@ import { logAuditEvent } from './audit';
 
 export { generateId } from '../lib/id';
 
+function safeParseLocation(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Keep legacy or malformed values as plain text so one bad row does not block the whole sync batch.
+    return raw;
+  }
+}
+
 function canonicalStringify(obj: Record<string, unknown>): string {
   const sorted: Record<string, unknown> = {};
   for (const key of Object.keys(obj).sort()) {
@@ -16,6 +25,22 @@ function canonicalStringify(obj: Record<string, unknown>): string {
 export function computeHash(payload: Record<string, unknown>): string {
   const canonical = canonicalStringify(payload);
   return sha256(canonical);
+}
+
+function normalizeIdentifier(value: string): string {
+  return value.replace(/\s+/g, '').trim();
+}
+
+function maskIdentifier(value: string): string {
+  if (value.length <= 4) return value;
+  return `${value.slice(0, 2)}${'*'.repeat(Math.max(1, value.length - 4))}${value.slice(-2)}`;
+}
+
+function protectIdentifier(value: string): string {
+  const normalized = normalizeIdentifier(value);
+  if (!normalized) return '';
+  const digest = sha256(normalized);
+  return `enc:${maskIdentifier(normalized)}:${digest.slice(0, 24)}`;
 }
 
 export async function saveLocally(params: {
@@ -32,12 +57,14 @@ export async function saveLocally(params: {
   photoUri?: string | null;
   originalTestId?: string | null;
 }): Promise<LocalTestRecord> {
+  const protectedDriverId = protectIdentifier(params.driverId);
+
   const recordPayload: Record<string, unknown> = {
     officerId: params.officerId,
     officerName: params.officerName,
     badgeNumber: params.badgeNumber,
     driverName: params.driverName,
-    driverId: params.driverId,
+    driverId: protectedDriverId,
     driverDob: params.driverDob,
     bacReading: params.bacReading,
     result: params.result,
@@ -58,7 +85,7 @@ export async function saveLocally(params: {
     officerName: params.officerName,
     badgeNumber: params.badgeNumber,
     driverName: params.driverName,
-    driverId: params.driverId,
+    driverId: protectedDriverId,
     driverDob: params.driverDob,
     bacReading: params.bacReading,
     result: params.result,
@@ -112,7 +139,7 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
     driverDob: record.driverDob,
     bacReading: record.bacReading,
     result: record.result,
-    location: JSON.parse(record.location),
+    location: safeParseLocation(record.location),
     hash: record.hash,
     createdAt: record.createdAt,
     originalTestId: record.originalTestId
@@ -136,7 +163,7 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
           }
         } catch (photoError) {
           if (__DEV__) {
-            console.error(`[sync] photo upload failed for test ${id}:`, photoError);
+            console.warn(`[sync] photo upload deferred for test ${id}:`, photoError);
           }
         }
       }

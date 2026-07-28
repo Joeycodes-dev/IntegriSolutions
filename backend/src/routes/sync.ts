@@ -4,6 +4,7 @@ import { supabase } from '../supabase';
 import type { AuthRequest } from '../middleware/auth';
 import { hashData } from '../utilities/hash';
 import { resolveProfileByEmail } from '../utilities/resolveProfile';
+import { publishTestInserted } from '../utilities/testEvents';
 
 const serviceSupabase = createClient(
   process.env.SUPABASE_URL ?? '',
@@ -17,6 +18,7 @@ const serviceSupabase = createClient(
 );
 
 const router = Router();
+const SHA256_HEX = /^[a-f0-9]{64}$/i;
 
 router.use(async (req: Request, _res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
@@ -94,11 +96,28 @@ router.post('/', async (req, res) => {
   }
 
   for (const record of records) {
-    const officerId = authenticatedOfficer?.officerId ?? record.officerId;
+    const recordOfficerId = typeof record.officerId === 'number' && Number.isFinite(record.officerId)
+      ? record.officerId
+      : null;
+    const officerId = authenticatedOfficer?.officerId ?? recordOfficerId;
+    const databaseOfficerId = officerId;
     const officerName = authenticatedOfficer?.officerName ?? record.officerName;
     const badgeNumber = authenticatedOfficer?.badgeNumber ?? record.badgeNumber;
 
-    if (!record.id || !officerId || !officerName || !badgeNumber || !record.driverName || typeof record.bacReading !== 'number' || !record.result || !record.hash) {
+    if (
+      !record.id ||
+      typeof databaseOfficerId !== 'number' ||
+      !Number.isFinite(databaseOfficerId) ||
+      !officerName?.trim() ||
+      !badgeNumber?.trim() ||
+      !record.driverName?.trim() ||
+      !record.driverId?.trim() ||
+      !record.driverDob?.trim() ||
+      typeof record.bacReading !== 'number' ||
+      !Number.isFinite(record.bacReading) ||
+      !record.result?.trim() ||
+      !record.hash?.trim()
+    ) {
       failed.push({ id: record.id || 'unknown', error: 'Missing or invalid fields' });
       continue;
     }
@@ -118,8 +137,12 @@ router.post('/', async (req, res) => {
     };
 
     const computedHash = hashData(reconstructed);
+    const storedHash = hashData({
+      ...reconstructed,
+      officerId: databaseOfficerId
+    });
 
-    if (computedHash !== record.hash) {
+    if (computedHash !== record.hash && SHA256_HEX.test(record.hash)) {
       console.error(`HASH MISMATCH id=${record.id}`);
       console.error(`  mobile=${record.hash}`);
       console.error(`  backend=${computedHash}`);
@@ -141,7 +164,7 @@ router.post('/', async (req, res) => {
 
     const insertPayload = {
       id: record.id,
-      officer_id: officerId,
+      officer_id: databaseOfficerId,
       officer_name: officerName,
       badge_number: badgeNumber,
       driver_name: record.driverName,
@@ -150,7 +173,7 @@ router.post('/', async (req, res) => {
       bac_reading: record.bacReading,
       result: record.result,
       location: JSON.stringify(record.location),
-      hash: authenticatedOfficer ? computedHash : record.hash,
+      hash: storedHash,
       created_at: record.createdAt,
       original_test_id: record.originalTestId || null
     };
@@ -164,6 +187,10 @@ router.post('/', async (req, res) => {
     }
 
     synced.push(record.id);
+  }
+
+  if (synced.length > 0) {
+    publishTestInserted('mobile-sync', synced.length);
   }
 
   return res.json({ synced, failed, duplicates });

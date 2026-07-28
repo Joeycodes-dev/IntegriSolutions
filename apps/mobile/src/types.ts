@@ -25,4 +25,11 @@ export interface DriverLicenseData {
   dob: string;
   expiryDate: string;
   licenseCodes: string;
+  _ocr?: {
+    overallConfidence: number;
+    fieldConfidence: Record<string, number>;
+    passes: Array<{ name: string; confidence: number; preview: string }>;
+    usedPaidFallback: boolean;
+    fallbackReason: string | null;
+  };
 }

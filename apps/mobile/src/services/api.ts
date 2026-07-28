@@ -1,4 +1,4 @@
-import { getAccessToken } from './auth';
+import { clearAccessToken, getAccessToken } from './auth';
 import { API_BASE_URL } from './constants';
 import { logAuditEvent } from './audit';
 
@@ -8,28 +8,70 @@ export interface AuditActor {
   badgeNumber: string;
 }
 
-async function request<T>(path: string, options: RequestInit = {}) {
+interface RequestBehavior {
+  retryWithoutAuthOnInvalidToken?: boolean;
+}
+
+const EXPIRED_TOKEN_MESSAGE = /invalid or expired access token/i;
+
+function extractErrorMessage(payload: unknown): string {
+  const candidate = (payload as { error?: unknown })?.error;
+  return typeof candidate === 'string' && candidate.trim() ? candidate : 'API request failed';
+}
+
+async function request<T>(path: string, options: RequestInit = {}, behavior: RequestBehavior = {}) {
   const token = await getAccessToken();
   const url = `${API_BASE_URL}${path}`;
   console.log(`[api] fetch ${url}`);
-  let response: Response;
-  try {
-    response = await fetch(url, {
+  const baseHeaders = {
+    'Content-Type': 'application/json',
+    ...(options.headers ?? {})
+  };
+
+  const doFetch = async (bearerToken: string | null): Promise<Response> => {
+    return fetch(url, {
       headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(options.headers ?? {})
+        ...baseHeaders,
+        ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {})
       },
       ...options
     });
+  };
+
+  let response: Response;
+  try {
+    response = await doFetch(token);
   } catch (error) {
     throw new Error(`Network error requesting ${API_BASE_URL}${path}: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  const payload = await response.json().catch(() => ({}));
+  let payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error((payload as any)?.error ?? 'API request failed');
+    const errorMessage = extractErrorMessage(payload);
+    const shouldRetryWithoutAuth =
+      response.status === 401
+      && !!token
+      && behavior.retryWithoutAuthOnInvalidToken
+      && EXPIRED_TOKEN_MESSAGE.test(errorMessage);
+
+    if (shouldRetryWithoutAuth) {
+      await clearAccessToken();
+      try {
+        response = await doFetch(null);
+      } catch (error) {
+        throw new Error(`Network error requesting ${API_BASE_URL}${path}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(extractErrorMessage(payload));
+      }
+
+      return payload as T;
+    }
+
+    throw new Error(errorMessage);
   }
 
   return payload as T;
@@ -46,6 +88,9 @@ export async function syncRecords(records: Record<string, unknown>[]) {
   return request<{ synced: string[]; failed: { id: string; error: string }[]; duplicates: string[] }>('/sync', {
     method: 'POST',
     body: JSON.stringify({ records })
+  }, {
+    // /sync accepts validated record payloads without auth; this fallback recovers when a cached token has expired.
+    retryWithoutAuthOnInvalidToken: true
   });
 }
 
@@ -71,7 +116,12 @@ export async function uploadEvidencePhoto(testId: string, photoUri: string) {
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error((payload as any)?.error ?? 'Photo upload failed');
+    const errorMessage = extractErrorMessage(payload);
+    if (response.status === 401 && EXPIRED_TOKEN_MESSAGE.test(errorMessage)) {
+      await clearAccessToken();
+      throw new Error('Evidence upload deferred: session expired. Sign in again to upload photos.');
+    }
+    throw new Error(errorMessage || 'Photo upload failed');
   }
 
   return payload;
