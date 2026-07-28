@@ -3,7 +3,6 @@ import { ArrowLeft, CheckCircle2, ChevronDown, Mail } from 'lucide-react';
 import { createFieldOfficer, getAccessToken } from '../../services/api';
 import type { FieldOfficer } from '../../types';
 import { serializeOfficerLocation } from '../../lib/officerLocation';
-import { SHIFT_SLOTS } from '../../lib/officerDisplay';
 import { BORDER, NAVY, PAGE_BG, pageShell } from './supervisorStyles';
 
 const RANKS = ['Constable', 'Sergeant', 'Warrant Officer', 'Captain'] as const;
@@ -75,7 +74,6 @@ export function AddOfficer({ onBack, onCreated }: AddOfficerProps) {
         station: serializeOfficerLocation({
           address: address.trim(),
           phone: phone.trim() || undefined,
-          shift
         }),
         phone: phone.trim(),
         idNumber

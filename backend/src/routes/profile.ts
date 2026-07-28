@@ -4,30 +4,6 @@ import { resolveProfileByEmail } from '../utilities/resolveProfile';
 
 const router = Router();
 
-function toProfile(
-  uid: string,
-  officerData: Record<string, any>,
-  dutyStatusOverride?: unknown
-): UserProfile {
-  return {
-    uid,
-    officerId: officerData.officer_id,
-    email: officerData.officer_email_address,
-    name: officerData.officer_name,
-    surname: officerData.officer_surname,
-    badgeNumber: officerData.badge_number,
-    idNumber: String(officerData.officer_id_number),
-    employmentStatus: officerData.officer_employment_status,
-    // Hardcoded default until duty_status column is added to officer_users
-    dutyStatus: normalizeDutyStatus(dutyStatusOverride),
-    province: officerData.province,
-    region: officerData.region,
-    officerTypeId: officerData.officer_type_id,
-    roleId: officerData.role_id,
-    createdAt: officerData.created_at
-  };
-}
-
 router.get('/', requireAuth, async (req, res) => {
   const authReq = req as AuthRequest;
 

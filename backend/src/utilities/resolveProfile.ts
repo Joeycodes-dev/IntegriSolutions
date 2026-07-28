@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { UserProfile } from '../types';
+import { normalizeDutyStatus } from '../constants/dutyStatus';
 
 const serviceSupabase = createClient(
   process.env.SUPABASE_URL ?? '',
@@ -63,6 +64,8 @@ function fromOfficerRow(row: OfficerRow, uid: string): ResolvedProfile {
       badgeNumber: row.badge_number,
       idNumber: String(row.officer_id_number),
       employmentStatus: row.officer_employment_status,
+      // duty_status column may not exist in some DB setups yet
+      dutyStatus: normalizeDutyStatus(undefined),
       province: row.province,
       region: row.region,
       officerTypeId: row.officer_type_id,
@@ -85,6 +88,8 @@ function fromSupervisorRow(row: SupervisorRow, uid: string): ResolvedProfile {
       badgeNumber: row.badge_number,
       idNumber: String(row.supervisor_id_number),
       employmentStatus: row.employment_status,
+      // duty_status isn't stored on supervisor_users; keep default
+      dutyStatus: normalizeDutyStatus(undefined),
       province: row.province,
       region: row.region,
       officerTypeId: row.officer_type_id,
