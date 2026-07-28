@@ -555,11 +555,11 @@ async function runOcrPasses(variants: Array<{ name: string; buffer: Buffer }>): 
   const worker = await getWorker();
   const passes: OcrPassResult[] = [];
   for (const variant of variants) {
-    const result = await worker.recognize(variant.buffer);
+    const result = (await worker.recognize(variant.buffer)) as any;
     passes.push({
       name: variant.name,
-      text: result.data.text ?? '',
-      confidence: Number(result.data.confidence ?? 0)
+      text: result?.data?.text ?? '',
+      confidence: Number(result?.data?.confidence ?? 0)
     });
   }
   return passes;
@@ -588,8 +588,8 @@ async function runHighlightedOnlyPass(base64Image: string): Promise<OcrPassResul
 
   return [{
     name: 'highlight_only_pass',
-    text: result.data.text ?? '',
-    confidence: Number(result.data.confidence ?? 0)
+    text: (result as any)?.data?.text ?? '',
+    confidence: Number((result as any)?.data?.confidence ?? 0)
   }];
 }
 
@@ -611,8 +611,8 @@ async function runEmergencyNightPass(base64Image: string): Promise<OcrPassResult
 
   return [{
     name: 'emergency_night_pass',
-    text: result.data.text ?? '',
-    confidence: Number(result.data.confidence ?? 0)
+    text: (result as any)?.data?.text ?? '',
+    confidence: Number((result as any)?.data?.confidence ?? 0)
   }];
 }
 
