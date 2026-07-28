@@ -102,6 +102,7 @@ export interface TestFilters {
   search?: string;
   result?: 'pass' | 'fail' | '';
   officer?: string;
+  driverLicense?: string;
   dateFrom?: string;
   dateTo?: string;
   bacMin?: string;

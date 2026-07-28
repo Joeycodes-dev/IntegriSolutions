@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, ChevronDown, Filter, Search, ShieldAlert, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filter, Search, ShieldAlert, X } from 'lucide-react';
 import type { TestRecord } from '../../types';
 import { getTests, type TestFilters } from '../../services/api';
 import { parseTestLocation } from '../../lib/testEvidence';
@@ -45,15 +45,20 @@ const RESULT_OPTIONS = [
   { label: 'Failed', value: 'fail' }
 ] as const;
 
-export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _error, onSelectTest }: SupervisorLogsProps) {
+const PAGE_SIZE = 10;
+
+export function SupervisorLogs({ tests, loading: _loading, error: _error, onSelectTest }: SupervisorLogsProps) {
   const [search, setSearch] = useState('');
   const [resultFilter, setResultFilter] = useState<'' | 'pass' | 'fail'>('');
+  const [officerFilter, setOfficerFilter] = useState('');
+  const [driverLicenseFilter, setDriverLicenseFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [filteredTests, setFilteredTests] = useState<TestRecord[]>([]);
   const [filteredLoading, setFilteredLoading] = useState(true);
   const [filteredError, setFilteredError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchFiltered = useCallback(async (filters: TestFilters) => {
@@ -75,6 +80,8 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
       const filters: TestFilters = {};
       if (search.trim()) filters.search = search.trim();
       if (resultFilter) filters.result = resultFilter;
+      if (officerFilter) filters.officer = officerFilter;
+      if (driverLicenseFilter.trim()) filters.driverLicense = driverLicenseFilter.trim();
       if (dateFrom) filters.dateFrom = dateFrom;
       if (dateTo) filters.dateTo = dateTo;
       void fetchFiltered(filters);
@@ -82,12 +89,44 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [search, resultFilter, dateFrom, dateTo, fetchFiltered]);
+  }, [search, resultFilter, officerFilter, driverLicenseFilter, dateFrom, dateTo, fetchFiltered]);
 
-  const hasActiveFilters = resultFilter !== '' || dateFrom !== '' || dateTo !== '';
+  const officerOptions = useMemo(() => {
+    const source = tests.length > 0 ? tests : filteredTests;
+    const officers = new Map<string, string>();
+
+    for (const test of source) {
+      const name = test.officerName?.trim();
+      if (!name || officers.has(name)) continue;
+      officers.set(name, test.badgeNumber ? `${name} (${test.badgeNumber})` : name);
+    }
+
+    return Array.from(officers, ([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [tests, filteredTests]);
+
+  const hasActiveFilters = resultFilter !== '' || officerFilter !== '' || driverLicenseFilter.trim() !== '' || dateFrom !== '' || dateTo !== '';
+
+  const totalPages = Math.max(1, Math.ceil(filteredTests.length / PAGE_SIZE));
+  const paginatedTests = useMemo(
+    () => filteredTests.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [filteredTests, currentPage]
+  );
+  const firstVisible = filteredTests.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const lastVisible = Math.min(currentPage * PAGE_SIZE, filteredTests.length);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, resultFilter, officerFilter, driverLicenseFilter, dateFrom, dateTo]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   const clearFilters = () => {
     setResultFilter('');
+    setOfficerFilter('');
+    setDriverLicenseFilter('');
     setDateFrom('');
     setDateTo('');
     setSearch('');
@@ -133,7 +172,7 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
             Filters
             {hasActiveFilters && (
               <span className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#0D2137] text-[9px] font-bold text-white">
-                {[resultFilter, dateFrom, dateTo].filter(Boolean).length}
+                {[resultFilter, officerFilter, driverLicenseFilter.trim(), dateFrom, dateTo].filter(Boolean).length}
               </span>
             )}
           </button>
@@ -158,6 +197,38 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
                 </select>
                 <ChevronDown size={13} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" />
               </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold tracking-[0.1em] text-slate-500">OFFICER</span>
+              <div className="relative">
+                <select
+                  aria-label="Officer filter"
+                  value={officerFilter}
+                  onChange={(e) => setOfficerFilter(e.target.value)}
+                  className="h-[30px] min-w-[180px] appearance-none rounded-md border bg-white pl-2.5 pr-7 text-[0.75rem] text-slate-800 outline-none transition focus:border-[#0D2137]/35 focus:ring-1 focus:ring-[#0D2137]/10"
+                  style={{ borderColor: BORDER }}
+                >
+                  <option value="">All Officers</option>
+                  {officerOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <ChevronDown size={13} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold tracking-[0.1em] text-slate-500">DRIVER LICENCE</span>
+              <input
+                aria-label="Driver licence filter"
+                type="search"
+                value={driverLicenseFilter}
+                onChange={(e) => setDriverLicenseFilter(e.target.value)}
+                placeholder="Licence number"
+                className="h-[30px] w-[160px] rounded-md border bg-white px-2.5 font-mono text-[0.75rem] text-slate-800 placeholder:font-sans placeholder:text-slate-400 outline-none transition focus:border-[#0D2137]/35 focus:ring-1 focus:ring-[#0D2137]/10"
+                style={{ borderColor: BORDER }}
+              />
             </div>
 
             <div className="flex flex-col gap-1">
@@ -230,7 +301,7 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
                       </td>
                     </tr>
                   ) : (
-                    filteredTests.map((test) => {
+                    paginatedTests.map((test) => {
                       const failed = test.result === 'fail';
                       return (
                         <tr
@@ -296,6 +367,41 @@ export function SupervisorLogs({ tests: _allTests, loading: _loading, error: _er
               </table>
             )}
           </div>
+
+          {!filteredLoading && filteredTests.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3" style={{ borderColor: BORDER }}>
+              <span className="text-[0.75rem] text-slate-500">
+                Showing {firstVisible}-{lastVisible} of {filteredTests.length} logs
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                  disabled={currentPage === 1}
+                  aria-label="Previous logs page"
+                  className="inline-flex h-[30px] items-center gap-1 rounded-md border px-2.5 text-[0.6875rem] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45"
+                  style={{ borderColor: BORDER }}
+                >
+                  <ChevronLeft size={13} strokeWidth={2} />
+                  Previous
+                </button>
+                <span className="min-w-[76px] text-center text-[0.75rem] font-semibold text-slate-600">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                  disabled={currentPage === totalPages}
+                  aria-label="Next logs page"
+                  className="inline-flex h-[30px] items-center gap-1 rounded-md border px-2.5 text-[0.6875rem] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45"
+                  style={{ borderColor: BORDER }}
+                >
+                  Next
+                  <ChevronRight size={13} strokeWidth={2} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

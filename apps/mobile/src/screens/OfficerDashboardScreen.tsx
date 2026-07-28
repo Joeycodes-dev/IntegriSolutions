@@ -9,7 +9,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View
 } from 'react-native';
 import { Camera, CameraView, type BarcodeScanningResult } from 'expo-camera';
@@ -39,6 +38,25 @@ type RootStackParamList = {
 type Props = NativeStackScreenProps<RootStackParamList, 'OfficerDashboard'>;
 
 type OfficerStep = 'idle' | 'scan' | 'reading' | 'saved';
+
+const DEV_BYPASS_UID_PREFIX = 'local-';
+const DEV_LICENSE_PAYLOAD = 'Developer bypass licence payload - camera scan skipped for local testing.';
+const DEV_BAC_READING = '0.062';
+
+const DEV_DRIVER_LICENSE: DriverLicenseData = {
+  name: 'Thabo',
+  surname: 'Mokoena',
+  initials: 'T',
+  idNumber: '9001015800087',
+  licenseNumber: 'GP1234567890',
+  dob: '1990-01-01',
+  expiryDate: '2031-08-31',
+  licenseCodes: 'B'
+};
+
+function isDevBypassProfile(profile: { uid: string } | null): boolean {
+  return __DEV__ && !!profile?.uid?.startsWith(DEV_BYPASS_UID_PREFIX);
+}
 
 function formatSyncTimestamp(value: Date | null): string {
   const target = value ?? new Date();
@@ -446,6 +464,16 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   };
 
   const startScan = async () => {
+    if (isDevBypassProfile(profile)) {
+      resetSessionState();
+      setHasPermission(true);
+      setScannedData(DEV_DRIVER_LICENSE);
+      setLicensePayload(DEV_LICENSE_PAYLOAD);
+      setBacReading(DEV_BAC_READING);
+      setStep('reading');
+      return;
+    }
+
     const { status } = await Camera.requestCameraPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Camera access denied');
@@ -841,21 +869,11 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
             <View style={styles.bacSection}>
               <Text style={styles.overline}>BAC Reading Simulator (g/100ml)</Text>
-              {autoWorkflow ? (
-                <View style={styles.bacInput}>
-                  <Text style={styles.bacValueText}>{bacReading || 'Simulating...'}</Text>
-                </View>
-              ) : (
-                <TextInput
-                  keyboardType="decimal-pad"
-                  placeholder="0.000"
-                  placeholderTextColor="#94a3b8"
-                  value={bacReading}
-                  onChangeText={setBacReading}
-                  style={styles.bacInput}
-                />
-              )}
+              <View style={styles.bacInput}>
+                <Text style={styles.bacValueText}>{bacReading || 'Awaiting reading'}</Text>
+              </View>
               <Text style={styles.bacSuffix}>BAC</Text>
+              <Text style={styles.readOnlyHint}>Reading is captured from the configured testing flow and cannot be edited manually.</Text>
             </View>
 
             {autoWorkflow && (
@@ -1416,6 +1434,13 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: '700',
     color: '#0f172a',
+    textAlign: 'center'
+  },
+  readOnlyHint: {
+    marginTop: 8,
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 18,
     textAlign: 'center'
   },
   bacSuffix: {
