@@ -14,6 +14,12 @@ function isToday(iso: string): boolean {
   );
 }
 
+function hasTestLocation(location: TestRecord['location']): boolean {
+  if (location == null) return false;
+  if (typeof location === 'string') return location.trim().length > 0;
+  return Object.keys(location).length > 0;
+}
+
 export function useSupervisorTests() {
   const [tests, setTests] = useState<TestRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -97,7 +103,7 @@ export function useSupervisorTests() {
       source.map((t) => t.officerId).filter((id): id is number => id != null)
     ).size;
     const invalidTests = source.filter(
-      (t) => !t.location?.trim() || !t.hash?.trim() || !t.driverId?.trim()
+      (t) => !hasTestLocation(t.location) || !t.hash?.trim() || !t.driverId?.trim()
     ).length;
 
     return { totalTests, totalFailures, activeOfficers, invalidTests };

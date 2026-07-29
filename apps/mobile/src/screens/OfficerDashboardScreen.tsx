@@ -8,6 +8,7 @@ import {
   Pressable,
   ScrollView,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { Camera, CameraView, type BarcodeScanningResult } from "expo-camera";
@@ -652,6 +653,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
   const startScan = async () => {
     if (isDevBypassProfile(profile)) {
+      if (!profile) return;
       resetSessionState();
       setHasPermission(true);
       setScannedData(DEV_DRIVER_LICENSE);

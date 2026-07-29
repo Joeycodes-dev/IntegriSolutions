@@ -503,38 +503,6 @@ export const styles = StyleSheet.create({
   evidenceSection: {
     marginBottom: 20
   },
-  autoBanner: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-    marginBottom: 16,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: colors.surfaceHighlight,
-    borderWidth: 1,
-    borderColor: colors.borderHighlight
-  },
-  autoBannerText: {
-    flex: 1,
-    color: colors.textPrimary,
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '600'
-  },
-  ocrDebugCard: {
-    marginBottom: 16,
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#d1fae5', // Kept specific debug green
-    backgroundColor: '#ecfeff' // Kept specific debug teal
-  },
-  ocrDebugText: {
-    marginTop: 4,
-    color: colors.textPrimary,
-    fontSize: 12,
-    lineHeight: 16
-  },
   photoButton: {
     marginTop: 12,
     flexDirection: 'row',

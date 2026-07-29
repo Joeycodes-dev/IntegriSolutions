@@ -55,7 +55,7 @@ export function parseTestLocation(location?: string | Record<string, unknown> | 
       try {
         parsed = JSON.parse(parsed);
       } catch {
-        return { label: parsed };
+        return { label: typeof parsed === 'string' ? parsed : trimmed };
       }
     }
 
