@@ -177,6 +177,11 @@ router.post('/', asyncHandler(async (req, res) => {
   const created = toFieldOfficer(inserted[0] as Record<string, unknown>);
   const token = generateOfficerInviteToken();
   const expiresAt = officerInviteExpiresAt();
+
+  let inviteLink: string | undefined;
+  let inviteEmailSent = false;
+  let emailWarning: string | undefined;
+
   const { error: inviteError } = await serviceSupabase.from('officer_invitations').insert([{
     officer_id: created.officerId,
     token_hash: hashOfficerInviteToken(token),
@@ -185,38 +190,118 @@ router.post('/', asyncHandler(async (req, res) => {
   }]);
 
   if (inviteError) {
-    await safeDeleteOfficer(created.officerId);
-    return res.status(500).json({ error: formatDbError(inviteError as DbError | null) });
-  }
+    console.warn('[supervisor/officers] invite table insert failed (table may not exist yet):', inviteError.message);
+    emailWarning = 'Invite link unavailable — officer_invitations table not set up yet. Officer was still created.';
+  } else {
+    inviteLink = buildOfficerInviteLink(token);
 
-  const inviteLink = buildOfficerInviteLink(token);
-
-  try {
-    await sendOfficerInviteEmail({
-      to: email,
-      officerName: `${name} ${surname}`.trim(),
-      inviteLink,
-      expiresAt
-    });
-  } catch (error) {
-    await safeDeleteOfficer(created.officerId);
-    const message = error instanceof Error ? error.message : 'Failed to send officer invite email';
-    return res.status(502).json({ error: message });
+    try {
+      await sendOfficerInviteEmail({
+        to: email,
+        officerName: `${name} ${surname}`.trim(),
+        inviteLink,
+        expiresAt
+      });
+      inviteEmailSent = true;
+    } catch (error) {
+      emailWarning =
+        error instanceof Error ? error.message : 'Failed to send officer invite email';
+      console.warn('[supervisor/officers] invite email failed, returning link:', emailWarning);
+    }
   }
 
   const createdWithInvite = {
     ...created,
     invitationExpiresAt: expiresAt,
-    inviteEmailSent: true
+    inviteEmailSent,
+    ...(inviteLink ? { inviteLink } : {}),
+    ...(emailWarning ? { emailWarning } : {})
   };
 
   await writeAuditLog(
     authReq.userEmail ?? 'unknown',
-    'Created field officer invite',
+    inviteEmailSent
+      ? 'Created field officer invite'
+      : 'Created field officer invite (email not sent)',
     created.userId
   );
 
   return res.status(201).json(createdWithInvite);
+}));
+
+const OFFICER_STATUSES = ['Active', 'Inactive', 'Invited', 'Suspended'] as const;
+
+router.patch('/:officerId', asyncHandler(async (req, res) => {
+  const authReq = req as unknown as SupervisorRequest;
+  const officerId = Number(req.params.officerId);
+  const body = (req.body ?? {}) as {
+    status?: string;
+    rank?: string;
+    station?: string;
+  };
+
+  if (!Number.isFinite(officerId)) {
+    return res.status(400).json({ error: 'Invalid officer id' });
+  }
+
+  const status = body.status?.trim();
+  const rank = body.rank?.trim();
+  const station = body.station?.trim();
+
+  if (!status && rank === undefined && station === undefined) {
+    return res.status(400).json({ error: 'Provide status, rank, and/or station to update' });
+  }
+
+  if (status && !(OFFICER_STATUSES as readonly string[]).includes(status)) {
+    return res.status(400).json({
+      error: `Status must be one of: ${OFFICER_STATUSES.join(', ')}`
+    });
+  }
+
+  const { data: existingRows, error: fetchError } = await serviceSupabase
+    .from('officer_users')
+    .select('*')
+    .eq('officer_id', officerId)
+    .eq('role_id', ROLE_OFFICER)
+    .limit(1);
+
+  if (fetchError) {
+    return res.status(500).json({ error: fetchError.message });
+  }
+
+  const existing = Array.isArray(existingRows) ? existingRows[0] : null;
+  if (!existing) {
+    return res.status(404).json({ error: 'Field officer not found' });
+  }
+
+  const patch: Record<string, unknown> = {};
+  if (status) patch.officer_employment_status = status;
+  if (rank !== undefined) patch.province = rank;
+  if (station !== undefined) patch.region = station;
+
+  const { data: updatedRows, error: updateError } = await serviceSupabase
+    .from('officer_users')
+    .update(patch)
+    .eq('officer_id', officerId)
+    .eq('role_id', ROLE_OFFICER)
+    .select('*')
+    .limit(1);
+
+  if (updateError || !updatedRows?.length) {
+    return res.status(500).json({
+      error: formatDbError(updateError as DbError | null)
+    });
+  }
+
+  const updated = toFieldOfficer(updatedRows[0] as Record<string, unknown>);
+
+  await writeAuditLog(
+    authReq.userEmail ?? 'unknown',
+    `Updated field officer (${Object.keys(patch).join(', ')})`,
+    updated.userId
+  );
+
+  return res.json(updated);
 }));
 
 export default router;

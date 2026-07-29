@@ -101,7 +101,6 @@ async function renderEvidencePage(doc: jsPDF, test: TestRecord, pageIndex: numbe
   const refId = formatCourtReferenceId(test.id, test.createdAt);
   const resultLabel = test.result === 'fail' ? 'FAILED' : 'PASSED';
   const resultColor = test.result === 'fail' ? RED : GREEN;
-  const photos = resolveEvidencePhotoUrls(evidence.photoUrls);
 
   let annotations: Annotation[] = [];
   let evidencePhotos: EvidencePhoto[] = [];
@@ -192,34 +191,37 @@ async function renderEvidencePage(doc: jsPDF, test: TestRecord, pageIndex: numbe
   y += 9;
 
   y = sectionTitle(doc, y, 'Evidence');
-  const allPhotos = evidencePhotos.length > 0
-    ? evidencePhotos.map((p) => p.photo_url)
-    : photos;
+  const uploadedPhotoUrls = evidencePhotos.map((p) => p.photo_url);
+  const embeddedPhotoUrls = resolveEvidencePhotoUrls(evidence.photoUrls);
+  const allPhotos = uploadedPhotoUrls.length > 0 ? uploadedPhotoUrls : embeddedPhotoUrls;
   const imgW = (CONTENT_W - 4) / 2;
   const imgH = 44;
-  const loaded = await Promise.all(allPhotos.slice(0, 4).map((url) => loadImageDataUrl(url)));
 
-  for (let i = 0; i < Math.min(loaded.length, 4); i++) {
-    const col = i % 2;
-    const row = Math.floor(i / 2);
-    const x = MARGIN + col * (imgW + 4);
-    const imgY = y + row * (imgH + 4);
-    const img = loaded[i];
-    if (img) {
-      try {
-        doc.addImage(img.data, img.format, x, imgY, imgW, imgH, undefined, 'FAST');
-      } catch {
+  if (allPhotos.length === 0) {
+    drawPlaceholderImage(doc, MARGIN, y, imgW, imgH);
+    drawPlaceholderImage(doc, MARGIN + imgW + 4, y, imgW, imgH);
+    y += imgH + 11;
+  } else {
+    const loaded = await Promise.all(allPhotos.slice(0, 4).map((url) => loadImageDataUrl(url)));
+
+    for (let i = 0; i < Math.min(loaded.length, 4); i++) {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const x = MARGIN + col * (imgW + 4);
+      const imgY = y + row * (imgH + 4);
+      const img = loaded[i];
+      if (img) {
+        try {
+          doc.addImage(img.data, img.format, x, imgY, imgW, imgH, undefined, 'FAST');
+        } catch {
+          drawPlaceholderImage(doc, x, imgY, imgW, imgH);
+        }
+      } else {
         drawPlaceholderImage(doc, x, imgY, imgW, imgH);
       }
-    } else {
-      drawPlaceholderImage(doc, x, imgY, imgW, imgH);
     }
+    y += Math.ceil(Math.max(loaded.length, 1) / 2) * (imgH + 4) + 7;
   }
-  y += Math.ceil(loaded.length / 2) * (imgH + 4);
-  if (loaded.length === 0) {
-    y += 10;
-  }
-  y += 7;
   drawHr(doc, y);
   y += 9;
 

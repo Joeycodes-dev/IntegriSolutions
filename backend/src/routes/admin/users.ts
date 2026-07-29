@@ -1,13 +1,20 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { requireAdmin, type AdminRequest } from '../../middleware/requireAdmin';
-import { PORTAL_ROLES, ROLE_ADMIN, ROLE_SUPERVISOR, portalUserId, roleLabel } from '../../constants/roles';
+import {
+  PORTAL_ROLES,
+  ROLE_ADMIN,
+  ROLE_SUPERVISOR,
+  portalUserId,
+  roleLabel
+} from '../../constants/roles';
 import { writeAuditLog } from '../../utilities/auditLog';
 import { asyncHandler } from '../../asyncHandler';
 
 const router = Router();
 
 type DbError = { message?: string; code?: string; details?: string; hint?: string };
+type PortalSource = 'officer_users' | 'supervisor_users';
 
 const serviceSupabase = createClient(
   process.env.SUPABASE_URL ?? '',
@@ -24,8 +31,9 @@ function digitsOnly(value?: string): string {
   return value?.replace(/\D/g, '') ?? '';
 }
 
-/** Picks a numeric ID that is unlikely to collide with existing officer_users rows. */
-async function allocateOfficerIdNumber(
+async function allocateIdNumber(
+  table: 'officer_users' | 'supervisor_users',
+  idColumn: 'officer_id_number' | 'supervisor_id_number',
   phone?: string,
   serviceNumber?: string,
   idNumber?: string
@@ -41,23 +49,13 @@ async function allocateOfficerIdNumber(
   }
 
   for (const candidate of candidates) {
-    const { data } = await serviceSupabase
-      .from('officer_users')
-      .select('officer_id')
-      .eq('officer_id_number', candidate)
-      .limit(1);
-
+    const { data } = await serviceSupabase.from(table).select(idColumn).eq(idColumn, candidate).limit(1);
     if (!data?.length) return candidate;
   }
 
   for (let attempt = 0; attempt < 8; attempt++) {
     const fallback = 100_000_000 + Math.floor(Math.random() * 900_000_000);
-    const { data } = await serviceSupabase
-      .from('officer_users')
-      .select('officer_id')
-      .eq('officer_id_number', fallback)
-      .limit(1);
-
+    const { data } = await serviceSupabase.from(table).select(idColumn).eq(idColumn, fallback).limit(1);
     if (!data?.length) return fallback;
   }
 
@@ -70,20 +68,29 @@ function formatDbError(error: DbError | null): string {
   return parts.join(' — ') || 'Database operation failed';
 }
 
-async function removeOrphanAuthUser(email: string): Promise<boolean> {
-  try {
-    const { data: officers } = await serviceSupabase
+async function emailTaken(email: string): Promise<boolean> {
+  const normalized = email.trim().toLowerCase();
+  const [{ data: officers }, { data: supervisors }] = await Promise.all([
+    serviceSupabase
       .from('officer_users')
       .select('officer_id')
-      .eq('officer_email_address', email)
-      .limit(1);
+      .eq('officer_email_address', normalized)
+      .limit(1),
+    serviceSupabase
+      .from('supervisor_users')
+      .select('supervisor_id')
+      .eq('supervisor_email_address', normalized)
+      .limit(1)
+  ]);
+  return Boolean(officers?.length || supervisors?.length);
+}
 
-    if (officers?.length) return false;
+async function removeOrphanAuthUser(email: string): Promise<boolean> {
+  try {
+    if (await emailTaken(email)) return false;
 
     const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    const authUser = authList?.users?.find(
-      (u) => u.email?.toLowerCase() === email.toLowerCase()
-    );
+    const authUser = authList?.users?.find((u) => u.email?.toLowerCase() === email.toLowerCase());
     if (!authUser) return false;
 
     const { error } = await serviceSupabase.auth.admin.deleteUser(authUser.id);
@@ -101,7 +108,7 @@ async function safeDeleteAuthUser(userId: string): Promise<void> {
   }
 }
 
-function toPortalUser(row: Record<string, unknown>) {
+function toPortalUserFromOfficer(row: Record<string, unknown>) {
   const officerId = Number(row.officer_id);
   const roleId = Number(row.role_id);
   return {
@@ -113,24 +120,71 @@ function toPortalUser(row: Record<string, unknown>) {
     roleId,
     station: String(row.region || row.province || '—'),
     status: String(row.officer_employment_status || 'Active'),
-    createdAt: String(row.created_at ?? '')
+    createdAt: String(row.created_at ?? ''),
+    source: 'officer_users' as const
+  };
+}
+
+function toPortalUserFromSupervisor(row: Record<string, unknown>) {
+  const supervisorId = Number(row.supervisor_id);
+  const roleId = Number(row.role_id) || ROLE_SUPERVISOR;
+  return {
+    officerId: supervisorId,
+    userId: portalUserId(supervisorId, roleId),
+    name: `${row.supervisor_name} ${row.supervisor_surname}`.trim(),
+    email: String(row.supervisor_email_address),
+    role: roleLabel(roleId),
+    roleId,
+    station: String(row.region || row.province || '—'),
+    status: String(row.employment_status || 'Active'),
+    createdAt: String(row.created_at ?? ''),
+    source: 'supervisor_users' as const
   };
 }
 
 router.use(requireAdmin);
 
 router.get('/', async (_req, res) => {
-  const { data, error } = await serviceSupabase
-    .from('officer_users')
-    .select('*')
-    .in('role_id', PORTAL_ROLES)
-    .order('created_at', { ascending: false });
+  const [adminsResult, supervisorsResult] = await Promise.all([
+    serviceSupabase
+      .from('officer_users')
+      .select('*')
+      .eq('role_id', ROLE_ADMIN)
+      .order('created_at', { ascending: false }),
+    serviceSupabase
+      .from('supervisor_users')
+      .select('*')
+      .eq('role_id', ROLE_SUPERVISOR)
+      .order('created_at', { ascending: false })
+  ]);
 
-  if (error) {
-    return res.status(500).json({ error: error.message });
+  if (adminsResult.error) {
+    return res.status(500).json({ error: adminsResult.error.message });
+  }
+  if (supervisorsResult.error) {
+    return res.status(500).json({ error: supervisorsResult.error.message });
   }
 
-  return res.json((data ?? []).map((row) => toPortalUser(row as Record<string, unknown>)));
+  // Also surface legacy supervisors that were incorrectly stored in officer_users.
+  const { data: legacySupervisors, error: legacyError } = await serviceSupabase
+    .from('officer_users')
+    .select('*')
+    .eq('role_id', ROLE_SUPERVISOR)
+    .order('created_at', { ascending: false });
+
+  if (legacyError) {
+    return res.status(500).json({ error: legacyError.message });
+  }
+
+  const users = [
+    ...(adminsResult.data ?? []).map((row) => toPortalUserFromOfficer(row as Record<string, unknown>)),
+    ...(supervisorsResult.data ?? []).map((row) =>
+      toPortalUserFromSupervisor(row as Record<string, unknown>)
+    ),
+    ...(legacySupervisors ?? []).map((row) => toPortalUserFromOfficer(row as Record<string, unknown>))
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  return res.json(users);
 });
 
 router.post('/', asyncHandler(async (req, res) => {
@@ -176,29 +230,25 @@ router.post('/', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Role must be Supervisor or Admin' });
   }
 
-  const { data: existing } = await serviceSupabase
-    .from('officer_users')
-    .select('officer_id')
-    .eq('officer_email_address', email)
-    .limit(1);
+  const normalizedEmail = email.trim().toLowerCase();
 
-  if (existing?.length) {
+  if (await emailTaken(normalizedEmail)) {
     return res.status(409).json({ error: 'A user with this email already exists' });
   }
 
-  await removeOrphanAuthUser(email);
+  await removeOrphanAuthUser(normalizedEmail);
 
   let authData = await serviceSupabase.auth.admin.createUser({
-    email,
+    email: normalizedEmail,
     password,
     email_confirm: true
   });
 
   if (authData.error?.message?.toLowerCase().includes('already')) {
-    const cleaned = await removeOrphanAuthUser(email);
+    const cleaned = await removeOrphanAuthUser(normalizedEmail);
     if (cleaned) {
       authData = await serviceSupabase.auth.admin.createUser({
-        email,
+        email: normalizedEmail,
         password,
         email_confirm: true
       });
@@ -209,41 +259,89 @@ router.post('/', asyncHandler(async (req, res) => {
 
   if (authError || !authUserData.user) {
     const msg = authError?.message ?? 'Failed to create auth account';
-    const status = msg.toLowerCase().includes('already') ? 409 : 400;
-    return res.status(status).json({ error: msg });
+    const statusCode = msg.toLowerCase().includes('already') ? 409 : 400;
+    return res.status(statusCode).json({ error: msg });
   }
 
-  const officerIdNumber = await allocateOfficerIdNumber(phone, serviceNumber, idNumber);
+  let created:
+    | ReturnType<typeof toPortalUserFromOfficer>
+    | ReturnType<typeof toPortalUserFromSupervisor>;
 
-  const { data: inserted, error: insertError } = await serviceSupabase
-    .from('officer_users')
-    .insert([{
-      officer_email_address: email,
-      officer_name: name,
-      officer_surname: surname,
-      officer_id_number: officerIdNumber,
-      badge_number:
-        serviceNumber?.trim() ||
-        (resolvedRoleId === ROLE_ADMIN ? 'ADM' : 'SUP'),
-      officer_employment_status: status ?? 'Active',
-      province: rank?.trim() || '',
-      region: station ?? '',
-      officer_type_id: 1,
-      role_id: resolvedRoleId
-    }])
-    .select('*');
+  if (resolvedRoleId === ROLE_SUPERVISOR) {
+    const supervisorIdNumber = await allocateIdNumber(
+      'supervisor_users',
+      'supervisor_id_number',
+      phone,
+      serviceNumber,
+      idNumber
+    );
 
-  if (insertError || !inserted?.length) {
-    await safeDeleteAuthUser(authUserData.user.id);
-    console.error('[admin/users] profile insert failed:', insertError);
-    return res.status(500).json({
-      error: formatDbError(insertError as DbError | null),
-      code: (insertError as DbError | null)?.code
-    });
+    const { data: inserted, error: insertError } = await serviceSupabase
+      .from('supervisor_users')
+      .insert([
+        {
+          supervisor_email_address: normalizedEmail,
+          supervisor_name: name,
+          supervisor_surname: surname,
+          supervisor_id_number: supervisorIdNumber,
+          badge_number: serviceNumber?.trim() || 'SUP',
+          employment_status: status ?? 'Active',
+          province: rank?.trim() || '',
+          region: station ?? '',
+          officer_type_id: 1,
+          role_id: ROLE_SUPERVISOR
+        }
+      ])
+      .select('*');
+
+    if (insertError || !inserted?.length) {
+      await safeDeleteAuthUser(authUserData.user.id);
+      console.error('[admin/users] supervisor insert failed:', insertError);
+      return res.status(500).json({
+        error: formatDbError(insertError as DbError | null),
+        code: (insertError as DbError | null)?.code
+      });
+    }
+
+    created = toPortalUserFromSupervisor(inserted[0] as Record<string, unknown>);
+  } else {
+    const officerIdNumber = await allocateIdNumber(
+      'officer_users',
+      'officer_id_number',
+      phone,
+      serviceNumber,
+      idNumber
+    );
+
+    const { data: inserted, error: insertError } = await serviceSupabase
+      .from('officer_users')
+      .insert([
+        {
+          officer_email_address: normalizedEmail,
+          officer_name: name,
+          officer_surname: surname,
+          officer_id_number: officerIdNumber,
+          badge_number: serviceNumber?.trim() || 'ADM',
+          officer_employment_status: status ?? 'Active',
+          province: rank?.trim() || '',
+          region: station ?? '',
+          officer_type_id: 1,
+          role_id: ROLE_ADMIN
+        }
+      ])
+      .select('*');
+
+    if (insertError || !inserted?.length) {
+      await safeDeleteAuthUser(authUserData.user.id);
+      console.error('[admin/users] admin insert failed:', insertError);
+      return res.status(500).json({
+        error: formatDbError(insertError as DbError | null),
+        code: (insertError as DbError | null)?.code
+      });
+    }
+
+    created = toPortalUserFromOfficer(inserted[0] as Record<string, unknown>);
   }
-
-  const row = inserted[0] as Record<string, unknown>;
-  const created = toPortalUser(row);
 
   await writeAuditLog(
     authReq.userEmail ?? 'unknown',
@@ -254,45 +352,182 @@ router.post('/', asyncHandler(async (req, res) => {
   return res.status(201).json(created);
 }));
 
-router.delete('/:officerId', async (req, res) => {
+const PORTAL_STATUSES = ['Active', 'Inactive'] as const;
+
+router.patch('/:officerId', asyncHandler(async (req, res) => {
   const authReq = req as unknown as AdminRequest;
   const officerId = Number(req.params.officerId);
+  const sourceParam = String(req.query.source ?? '').trim() as PortalSource | '';
+  const roleIdParam = Number(req.query.roleId);
+  const body = (req.body ?? {}) as { status?: string; station?: string };
 
   if (!Number.isFinite(officerId)) {
     return res.status(400).json({ error: 'Invalid user id' });
   }
 
-  if (officerId === authReq.adminOfficerId) {
-    return res.status(400).json({ error: 'You cannot remove your own account' });
+  const status = body.status?.trim();
+  const station = body.station?.trim();
+
+  if (!status && station === undefined) {
+    return res.status(400).json({ error: 'Provide status and/or station to update' });
   }
 
-  const { data: targetRows, error: fetchError } = await serviceSupabase
-    .from('officer_users')
-    .select('*')
-    .eq('officer_id', officerId)
-    .in('role_id', PORTAL_ROLES)
-    .limit(1);
-
-  if (fetchError) {
-    return res.status(500).json({ error: fetchError.message });
+  if (status && !(PORTAL_STATUSES as readonly string[]).includes(status)) {
+    return res.status(400).json({
+      error: `Status must be one of: ${PORTAL_STATUSES.join(', ')}`
+    });
   }
 
-  const target = Array.isArray(targetRows) ? targetRows[0] : null;
-  if (!target) {
+  if (
+    status === 'Inactive' &&
+    officerId === authReq.adminOfficerId &&
+    (!sourceParam || sourceParam === 'officer_users')
+  ) {
+    return res.status(400).json({ error: 'You cannot deactivate your own account' });
+  }
+
+  const preferSupervisor =
+    sourceParam === 'supervisor_users' ||
+    (!sourceParam && roleIdParam === ROLE_SUPERVISOR);
+
+  const updateSupervisor = async () => {
+    const patch: Record<string, unknown> = {};
+    if (status) patch.employment_status = status;
+    if (station !== undefined) patch.region = station;
+
+    const { data, error } = await serviceSupabase
+      .from('supervisor_users')
+      .update(patch)
+      .eq('supervisor_id', officerId)
+      .select('*')
+      .limit(1);
+
+    if (error) return { error: error.message };
+    const row = Array.isArray(data) ? data[0] : null;
+    if (!row) return { missing: true as const };
+    return { user: toPortalUserFromSupervisor(row as Record<string, unknown>) };
+  };
+
+  const updateOfficerPortal = async () => {
+    const patch: Record<string, unknown> = {};
+    if (status) patch.officer_employment_status = status;
+    if (station !== undefined) patch.region = station;
+
+    const { data, error } = await serviceSupabase
+      .from('officer_users')
+      .update(patch)
+      .eq('officer_id', officerId)
+      .in('role_id', PORTAL_ROLES)
+      .select('*')
+      .limit(1);
+
+    if (error) return { error: error.message };
+    const row = Array.isArray(data) ? data[0] : null;
+    if (!row) return { missing: true as const };
+    return { user: toPortalUserFromOfficer(row as Record<string, unknown>) };
+  };
+
+  let result = preferSupervisor ? await updateSupervisor() : await updateOfficerPortal();
+  if ('missing' in result && result.missing) {
+    result = preferSupervisor ? await updateOfficerPortal() : await updateSupervisor();
+  }
+
+  if ('error' in result && result.error) {
+    return res.status(500).json({ error: result.error });
+  }
+  if ('missing' in result && result.missing) {
     return res.status(404).json({ error: 'User not found' });
   }
 
-  const email = String(target.officer_email_address);
-  const removedUserId = portalUserId(officerId, Number(target.role_id));
+  const updated = (result as { user: ReturnType<typeof toPortalUserFromOfficer> }).user;
 
-  const { error: deleteError } = await serviceSupabase
-    .from('officer_users')
-    .delete()
-    .eq('officer_id', officerId);
+  await writeAuditLog(
+    authReq.userEmail ?? 'unknown',
+    `Updated portal user status to ${updated.status}`,
+    updated.userId
+  );
 
-  if (deleteError) {
-    return res.status(500).json({ error: deleteError.message });
+  return res.json(updated);
+}));
+
+router.delete('/:officerId', async (req, res) => {
+  const authReq = req as unknown as AdminRequest;
+  const officerId = Number(req.params.officerId);
+  const sourceParam = String(req.query.source ?? '').trim() as PortalSource | '';
+  const roleIdParam = Number(req.query.roleId);
+
+  if (!Number.isFinite(officerId)) {
+    return res.status(400).json({ error: 'Invalid user id' });
   }
+
+  if (officerId === authReq.adminOfficerId && (!sourceParam || sourceParam === 'officer_users')) {
+    return res.status(400).json({ error: 'You cannot remove your own account' });
+  }
+
+  const preferSupervisor =
+    sourceParam === 'supervisor_users' ||
+    (!sourceParam && roleIdParam === ROLE_SUPERVISOR);
+
+  const tryDeleteOfficer = async () => {
+    const { data: targetRows, error: fetchError } = await serviceSupabase
+      .from('officer_users')
+      .select('*')
+      .eq('officer_id', officerId)
+      .in('role_id', PORTAL_ROLES)
+      .limit(1);
+
+    if (fetchError) return { error: fetchError.message as string };
+    const target = Array.isArray(targetRows) ? targetRows[0] : null;
+    if (!target) return { missing: true as const };
+
+    const email = String(target.officer_email_address);
+    const removedUserId = portalUserId(officerId, Number(target.role_id));
+
+    const { error: deleteError } = await serviceSupabase
+      .from('officer_users')
+      .delete()
+      .eq('officer_id', officerId);
+
+    if (deleteError) return { error: deleteError.message };
+    return { email, removedUserId };
+  };
+
+  const tryDeleteSupervisor = async () => {
+    const { data: targetRows, error: fetchError } = await serviceSupabase
+      .from('supervisor_users')
+      .select('*')
+      .eq('supervisor_id', officerId)
+      .limit(1);
+
+    if (fetchError) return { error: fetchError.message as string };
+    const target = Array.isArray(targetRows) ? targetRows[0] : null;
+    if (!target) return { missing: true as const };
+
+    const email = String(target.supervisor_email_address);
+    const removedUserId = portalUserId(officerId, ROLE_SUPERVISOR);
+
+    const { error: deleteError } = await serviceSupabase
+      .from('supervisor_users')
+      .delete()
+      .eq('supervisor_id', officerId);
+
+    if (deleteError) return { error: deleteError.message };
+    return { email, removedUserId };
+  };
+
+  let result = preferSupervisor ? await tryDeleteSupervisor() : await tryDeleteOfficer();
+  if ('missing' in result && result.missing) {
+    result = preferSupervisor ? await tryDeleteOfficer() : await tryDeleteSupervisor();
+  }
+
+  if ('error' in result && result.error) {
+    return res.status(500).json({ error: result.error });
+  }
+  if ('missing' in result && result.missing) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  const { email, removedUserId } = result as { email: string; removedUserId: string };
 
   try {
     const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
@@ -304,11 +539,7 @@ router.delete('/:officerId', async (req, res) => {
     // Profile removed; auth cleanup is best-effort
   }
 
-  await writeAuditLog(
-    authReq.userEmail ?? 'unknown',
-    'Removed portal user',
-    removedUserId
-  );
+  await writeAuditLog(authReq.userEmail ?? 'unknown', 'Removed portal user', removedUserId);
 
   return res.json({ removed: officerId });
 });

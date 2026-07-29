@@ -47,7 +47,17 @@ interface SyncRecord {
   driverDob: string;
   bacReading: number;
   result: string;
-  location: { lat: number; lng: number };
+  location: {
+    lat: number;
+    lng: number;
+    roadblock?: string;
+    station?: string;
+    officerRank?: string;
+    serviceNumber?: string;
+    officerNotes?: string;
+    label?: string;
+    driverCategory?: string;
+  };
   hash: string;
   createdAt: string;
   originalTestId?: string | null;
@@ -70,39 +80,38 @@ router.post('/', async (req, res) => {
   const duplicates: string[] = [];
   const authReq = req as Partial<AuthRequest>;
 
-  let authenticatedOfficer: { officerId: number; officerName: string; badgeNumber: string } | null = null;
-  if (authReq.userEmail && authReq.userId) {
-    let resolved;
-    try {
-      resolved = await resolveProfileByEmail(authReq.userEmail, authReq.userId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Officer profile lookup failed';
-      return res.status(500).json({ error: message });
-    }
-
-    if (!resolved) {
-      return res.status(404).json({ error: 'Officer profile not found' });
-    }
-
-    if (resolved.source !== 'officer_users' || typeof resolved.profile.officerId !== 'number') {
-      return res.status(403).json({ error: 'Only officer accounts can sync test records' });
-    }
-
-    authenticatedOfficer = {
-      officerId: resolved.profile.officerId,
-      officerName: resolved.profile.name,
-      badgeNumber: resolved.profile.badgeNumber
-    };
+  if (!authReq.userEmail || !authReq.userId) {
+    return res.status(401).json({ error: 'Officer authentication required' });
   }
 
+  let authenticatedOfficer: { officerId: number; officerName: string; badgeNumber: string };
+  let resolved;
+  try {
+    resolved = await resolveProfileByEmail(authReq.userEmail, authReq.userId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Officer profile lookup failed';
+    return res.status(500).json({ error: message });
+  }
+
+  if (!resolved) {
+    return res.status(404).json({ error: 'Officer profile not found' });
+  }
+
+  if (resolved.source !== 'officer_users' || typeof resolved.profile.officerId !== 'number') {
+    return res.status(403).json({ error: 'Only officer accounts can sync test records' });
+  }
+
+  authenticatedOfficer = {
+    officerId: resolved.profile.officerId,
+    officerName: resolved.profile.name,
+    badgeNumber: resolved.profile.badgeNumber
+  };
+
   for (const record of records) {
-    const recordOfficerId = typeof record.officerId === 'number' && Number.isFinite(record.officerId)
-      ? record.officerId
-      : null;
-    const officerId = authenticatedOfficer?.officerId ?? recordOfficerId;
+    const officerId = authenticatedOfficer.officerId;
     const databaseOfficerId = officerId;
-    const officerName = authenticatedOfficer?.officerName ?? record.officerName;
-    const badgeNumber = authenticatedOfficer?.badgeNumber ?? record.badgeNumber;
+    const officerName = authenticatedOfficer.officerName;
+    const badgeNumber = authenticatedOfficer.badgeNumber;
 
     if (
       !record.id ||
@@ -142,13 +151,17 @@ router.post('/', async (req, res) => {
       officerId: databaseOfficerId
     });
 
-    if (computedHash !== record.hash && SHA256_HEX.test(record.hash)) {
+    if (!SHA256_HEX.test(record.hash)) {
+      failed.push({ id: record.id, error: 'Invalid record hash format' });
+      continue;
+    }
+
+    if (computedHash !== record.hash) {
       console.error(`HASH MISMATCH id=${record.id}`);
       console.error(`  mobile=${record.hash}`);
       console.error(`  backend=${computedHash}`);
-      // Temporary: allow through for debugging
-      // failed.push({ id: record.id, error: 'Hash verification failed — record may have been tampered with' });
-      // continue;
+      failed.push({ id: record.id, error: 'Hash verification failed — record may have been tampered with' });
+      continue;
     }
 
     const { data: existing } = await serviceSupabase

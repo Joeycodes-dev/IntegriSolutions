@@ -13,33 +13,60 @@ export interface ParsedLocation {
   driverCategory?: string;
 }
 
-export function parseTestLocation(location?: string): ParsedLocation {
-  if (!location?.trim()) return {};
-
-  try {
-    const parsed = JSON.parse(location) as Record<string, unknown>;
-    if (parsed && typeof parsed === 'object') {
-      return {
-        lat: typeof parsed.lat === 'number' ? parsed.lat : undefined,
-        lng: typeof parsed.lng === 'number' ? parsed.lng : undefined,
-        label: typeof parsed.label === 'string' ? parsed.label : typeof parsed.address === 'string' ? parsed.address : undefined,
-        roadblock: typeof parsed.roadblock === 'string' ? parsed.roadblock : undefined,
-        officerNotes: typeof parsed.officerNotes === 'string' ? parsed.officerNotes : undefined,
-        photoUrls: Array.isArray(parsed.photoUrls)
-          ? parsed.photoUrls.filter((u): u is string => typeof u === 'string')
+function extractParsedLocation(parsed: Record<string, unknown>): ParsedLocation {
+  return {
+    lat: typeof parsed.lat === 'number' ? parsed.lat : undefined,
+    lng: typeof parsed.lng === 'number' ? parsed.lng : undefined,
+    label:
+      typeof parsed.label === 'string'
+        ? parsed.label
+        : typeof parsed.address === 'string'
+          ? parsed.address
           : undefined,
-        officerRank: typeof parsed.officerRank === 'string' ? parsed.officerRank : undefined,
-        serviceNumber: typeof parsed.serviceNumber === 'string' ? parsed.serviceNumber : undefined,
-        station: typeof parsed.station === 'string' ? parsed.station : undefined,
-        driverCategory:
-          typeof parsed.driverCategory === 'string' ? parsed.driverCategory : undefined
-      };
-    }
-  } catch {
-    return { label: location };
+    roadblock: typeof parsed.roadblock === 'string' ? parsed.roadblock : undefined,
+    officerNotes: typeof parsed.officerNotes === 'string' ? parsed.officerNotes : undefined,
+    photoUrls: Array.isArray(parsed.photoUrls)
+      ? parsed.photoUrls.filter((u): u is string => typeof u === 'string')
+      : undefined,
+    officerRank: typeof parsed.officerRank === 'string' ? parsed.officerRank : undefined,
+    serviceNumber: typeof parsed.serviceNumber === 'string' ? parsed.serviceNumber : undefined,
+    station: typeof parsed.station === 'string' ? parsed.station : undefined,
+    driverCategory:
+      typeof parsed.driverCategory === 'string' ? parsed.driverCategory : undefined
+  };
+}
+
+/** Accepts JSON string, parsed object, or legacy plain-text location from mobile sync. */
+export function parseTestLocation(location?: string | Record<string, unknown> | null): ParsedLocation {
+  if (location == null) return {};
+
+  if (typeof location === 'object' && !Array.isArray(location)) {
+    return extractParsedLocation(location);
   }
 
-  return { label: location };
+  if (typeof location !== 'string') return {};
+
+  const trimmed = location.trim();
+  if (!trimmed) return {};
+
+  try {
+    let parsed: unknown = JSON.parse(trimmed);
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed);
+      } catch {
+        return { label: typeof parsed === 'string' ? parsed : trimmed };
+      }
+    }
+
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return extractParsedLocation(parsed as Record<string, unknown>);
+    }
+  } catch {
+    return { label: trimmed };
+  }
+
+  return { label: trimmed };
 }
 
 export function formatReferenceId(testId: string): string {
@@ -61,15 +88,9 @@ export function formatCourtReferenceId(testId: string, createdAt: string): strin
   return `IS-${ymd}-${tail}`;
 }
 
-export const PLACEHOLDER_EVIDENCE_PHOTOS = [
-  'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b8?auto=format&fit=crop&w=640&q=80',
-  'https://images.unsplash.com/photo-1521791136064-7986c2920216?auto=format&fit=crop&w=640&q=80'
-] as const;
-
+/** Returns only real uploaded photo URLs — no stock placeholders. */
 export function resolveEvidencePhotoUrls(urls: string[]): string[] {
-  if (urls.length >= 2) return urls.slice(0, 2);
-  if (urls.length === 1) return [urls[0], PLACEHOLDER_EVIDENCE_PHOTOS[1]];
-  return [...PLACEHOLDER_EVIDENCE_PHOTOS];
+  return urls.filter((url) => typeof url === 'string' && url.trim().length > 0);
 }
 
 export function formatDriverCategoryForReport(category: string): string {
@@ -106,8 +127,8 @@ export function buildTestEvidence(test: TestRecord): TestEvidence {
   const parsed = parseTestLocation(test.location);
   const merged = { ...parsed, ...test.evidence };
 
-  const station = merged.station ?? merged.roadblock ?? '—';
-  const roadblock = merged.roadblock ?? station;
+  const station = merged.station?.trim() || merged.roadblock?.trim() || '—';
+  const roadblock = merged.roadblock?.trim() || merged.station?.trim() || '—';
   const limit = merged.driverCategory?.includes('0.02') ? 0.02 : 0.05;
 
   return {
@@ -124,13 +145,17 @@ export function buildTestEvidence(test: TestRecord): TestEvidence {
     station,
     timestamp: formatEvidenceTimestamp(test.createdAt),
     roadblock,
-    locationLabel: merged.label ?? 'Location pending sync from mobile',
+    locationLabel:
+      merged.label?.trim() ||
+      merged.roadblock?.trim() ||
+      merged.station?.trim() ||
+      'Location pending sync from mobile',
     gps:
       merged.lat != null && merged.lng != null
         ? `${merged.lat.toFixed(4)}, ${merged.lng.toFixed(4)}`
         : '—',
     officerNotes:
-      merged.officerNotes ??
+      merged.officerNotes?.trim() ||
       (test.result === 'fail'
         ? 'Awaiting officer notes from mobile submission.'
         : 'No additional notes recorded.'),

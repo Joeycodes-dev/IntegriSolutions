@@ -31,7 +31,7 @@ function formatOfficerName(name: string): string {
   return `${initials} ${surname}`;
 }
 
-function formatGps(location?: string): string {
+function formatGps(location?: string | Record<string, unknown>): string {
   const parsed = parseTestLocation(location);
   if (typeof parsed.lat === 'number' && typeof parsed.lng === 'number') {
     return `${parsed.lat.toFixed(4)}, ${parsed.lng.toFixed(4)}`;

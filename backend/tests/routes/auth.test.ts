@@ -132,7 +132,28 @@ describe('Auth Routes', () => {
         });
 
       expect(response.status).toBe(403);
-      expect(response.body.error).toBe('Officer accounts must be created with an invite from the web portal.');
+      expect(response.body.error).toBe(
+        'Officer accounts must be created with an invite from a supervisor.'
+      );
+    });
+
+    it('should reject supervisor self-registration', async () => {
+      const response = await request(app)
+        .post('/api/auth/register')
+        .send({
+          email: 'supervisor@example.com',
+          password: 'password123',
+          name: 'Test',
+          surname: 'Supervisor',
+          badgeNumber: 'SUP-1',
+          idNumber: '9001015009088',
+          roleId: 2,
+        });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error).toBe(
+        'Supervisor accounts must be created by an administrator in User Management.'
+      );
     });
   });
 });

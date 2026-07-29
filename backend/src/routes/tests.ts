@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { requireSupervisor } from '../middleware/requireSupervisor';
 import { hashData } from '../utilities/hash';
 import { getTestHashValidity } from '../utilities/testIntegrity';
 import type { TestRecord } from '../types';
@@ -20,26 +21,7 @@ const serviceSupabase = createClient(
 
 const router = Router();
 
-// Soft auth for GET: validates token if present, but doesn't block anonymous requests
-async function softAuth(req: Request, _res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-  if (token) {
-    const { data, error } = await supabase.auth.getUser(token);
-    if (!error && data.user) {
-      const authReq = req as AuthRequest;
-      authReq.userId = data.user.id;
-      authReq.userEmail = data.user.email ?? null;
-    }
-  }
-
-  return next();
-}
-
-router.use(softAuth);
-
-router.get('/stream', (req, res) => {
+router.get('/stream', requireSupervisor, (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -66,6 +48,19 @@ router.get('/stream', (req, res) => {
   });
 });
 
+function normalizeLocationField(location: unknown): string {
+  if (location == null) return '';
+  if (typeof location === 'string') return location;
+  if (typeof location === 'object') {
+    try {
+      return JSON.stringify(location);
+    } catch {
+      return '';
+    }
+  }
+  return String(location);
+}
+
 function toCamelCase(row: any): TestRecord {
   const reconstructed = {
     officerId: row.officer_id,
@@ -85,13 +80,14 @@ function toCamelCase(row: any): TestRecord {
   return {
     id: row.id,
     ...reconstructed,
+    location: normalizeLocationField(row.location),
     hash: row.hash,
     hashValid,
     createdAt: row.created_at
   };
 }
 
-router.get('/', async (req, res) => {
+router.get('/', requireSupervisor, async (req, res) => {
   let query = serviceSupabase
     .from('tests')
     .select('*')

@@ -11,19 +11,19 @@ export const colors = {
   surfaceHighlight: '#F0F4F8',  // light blue
   black: '#000000',             // black
 
-  borderLight: '#0D253F',       // grey
-  borderHighlight: '#C7D2FE',   // purple
+  borderLight: '#E2E8F0',
+  borderHighlight: '#C7D2FE',
 
-  overlay: 'rgba(13, 37, 63, 0.7)',       // dark blue
-  modalOverlay: 'rgba(13, 37, 63, 0.5)',  // blue - navy
-  whiteOverlay: 'rgba(255, 255, 255, 0.18)', // white
+  overlay: 'rgba(13, 37, 63, 0.7)',
+  modalOverlay: 'rgba(13, 37, 63, 0.5)',
+  whiteOverlay: 'rgba(255, 255, 255, 0.18)',
 
-  success: '#16A34A',           // green
-  warning: '#F59E0B',           // orange
-  error: '#DC2626',             // red
-  errorBackground: '#FEF2F2',   // light red
-  errorBorder: '#FECACA',       // light red
-  errorText: '#B91C1C',         // dark red
+  success: '#16A34A',
+  warning: '#F59E0B',
+  error: '#DC2626',
+  errorBackground: '#FEF2F2',
+  errorBorder: '#FECACA',
+  errorText: '#B91C1C',
 
   successBackground: '#F0FDF4', // light green
   successBorder: '#BBF7D0',     // green

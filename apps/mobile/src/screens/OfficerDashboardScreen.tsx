@@ -8,6 +8,7 @@ import {
   Pressable,
   ScrollView,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { Camera, CameraView, type BarcodeScanningResult } from "expo-camera";
@@ -18,6 +19,11 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../lib/AuthContext";
 import { generateId } from "../lib/id";
+import {
+  DRIVER_CATEGORIES,
+  buildTestLocation,
+  stationFromProfileRegion,
+} from "../lib/testLocation";
 import { saveLocally, syncPendingRecords } from "../services/sync";
 import { useSync } from "../lib/SyncContext";
 import {
@@ -100,12 +106,30 @@ async function getDeviceLocation(): Promise<{ lat: number; lng: number }> {
   return { lat, lng };
 }
 
+function getCaptureQualityIssue(
+  image: ImagePicker.ImagePickerAsset,
+): string | null {
+  const width = image.width ?? 0;
+  const height = image.height ?? 0;
+  const base64Length = image.base64?.length ?? 0;
+
+  if (!image.base64 || base64Length < 120_000) {
+    return "Image quality is too low. Hold steady, fill the frame with the licence, and retake.";
+  }
+
+  if (width < 1000 || height < 700) {
+    return "Photo resolution is too low. Move closer to the licence and retake.";
+  }
+
+  return null;
+}
+
 function randomBacReading(): string {
   const value = Math.random() * 0.12;
   return value.toFixed(3);
 }
 
-function bacStatus(bac: string) {
+function bacStatus(bac: string, limit = 0.05) {
   const awaitingState = {
     label: "AWAITING",
     bgColor: colors.surfaceHighlight,
@@ -118,7 +142,7 @@ function bacStatus(bac: string) {
   const reading = parseFloat(bac);
   if (Number.isNaN(reading)) return awaitingState;
 
-  if (reading >= 0.05)
+  if (reading >= limit)
     return {
       label: "FAIL",
       bgColor: colors.error,
@@ -554,24 +578,6 @@ function formatRecentStop(record: LocalTestRecord) {
   };
 }
 
-function getCaptureQualityIssue(
-  image: ImagePicker.ImagePickerAsset,
-): string | null {
-  const width = image.width ?? 0;
-  const height = image.height ?? 0;
-  const base64Length = image.base64?.length ?? 0;
-
-  if (!image.base64 || base64Length < 120_000) {
-    return "Image quality is too low. Hold steady, fill the frame with the licence, and retake.";
-  }
-
-  if (width < 1000 || height < 700) {
-    return "Photo resolution is too low. Move closer to the licence and retake.";
-  }
-
-  return null;
-}
-
 export function OfficerDashboardScreen({ navigation }: Props) {
   const { profile, signOut } = useAuth();
   const {
@@ -608,6 +614,20 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [ocrDebug, setOcrDebug] = useState<DriverLicenseData["_ocr"] | null>(
     null,
   );
+  const [roadblock, setRoadblock] = useState("");
+  const [station, setStation] = useState("");
+  const [officerRank, setOfficerRank] = useState("");
+  const [officerNotes, setOfficerNotes] = useState("");
+  const [driverCategory, setDriverCategory] = useState<string>(
+    DRIVER_CATEGORIES[0],
+  );
+
+  useEffect(() => {
+    if (!profile) return;
+    setStation((prev) =>
+      prev.trim() ? prev : stationFromProfileRegion(profile.region),
+    );
+  }, [profile]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -616,9 +636,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }, [refreshCounts]),
   );
 
-  if (!profile) {
-    return null;
-  }
+  const bacLimit = driverCategory.includes("0.02") ? 0.02 : 0.05;
 
   const resetSessionState = () => {
     setHasPermission(null);
@@ -635,11 +653,15 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
   const startScan = async () => {
     if (isDevBypassProfile(profile)) {
+      if (!profile) return;
       resetSessionState();
       setHasPermission(true);
       setScannedData(DEV_DRIVER_LICENSE);
       setLicensePayload(DEV_LICENSE_PAYLOAD);
       setBacReading(DEV_BAC_READING);
+      setRoadblock("N1 Dev Roadblock");
+      setStation(stationFromProfileRegion(profile.region) || "Dev Station");
+      setOfficerRank("Constable");
       setStep("reading");
       return;
     }
@@ -688,10 +710,6 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       setBarcodeScanned(false);
       return;
     }
-    setScannedData(data);
-    setDecryptedLicenseData(decodedLicense);
-    setDecryptError(decodedLicense ? null : decryptError);
-    setOcrDebug(null);
     setLicensePayload(formatRawPayloadForDisplay(rawPayload));
     setAutoWorkflow(false);
     setStep("reading");
@@ -833,24 +851,44 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       return;
     }
 
+    if (!roadblock.trim()) {
+      Alert.alert(
+        "Roadblock required",
+        "Enter the roadblock or checkpoint name for the court record.",
+      );
+      return;
+    }
+
     setIsSaving(true);
     try {
       const currentLocation = await getDeviceLocation();
-      const isOver = reading >= 0.05;
+      const isOver = reading >= bacLimit;
       const result = reading === 0 ? "pass" : isOver ? "fail" : "pass";
       const id = generateId();
+
+      const location = buildTestLocation({
+        lat: currentLocation.lat,
+        lng: currentLocation.lng,
+        roadblock,
+        station,
+        officerRank,
+        serviceNumber: profile.badgeNumber,
+        officerNotes,
+        driverCategory,
+      });
 
       await saveLocally({
         id,
         officerId: profile.officerId ?? null,
-        officerName: profile.name,
+        officerName:
+          `${profile.name} ${profile.surname}`.trim() || profile.name,
         badgeNumber: profile.badgeNumber,
         driverName: `${scannedData.initials} ${scannedData.surname}`.trim(),
         driverId: scannedData.idNumber || scannedData.licenseNumber,
         driverDob: scannedData.dob,
         bacReading: reading,
         result,
-        location: currentLocation,
+        location,
         photoUri,
         originalTestId: isRetest ? lastSavedTestId : null,
       });
@@ -882,7 +920,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       step !== "reading" ||
       !scannedData ||
       isSaving ||
-      bacReading
+      bacReading ||
+      !roadblock.trim() ||
+      !profile
     ) {
       return;
     }
@@ -899,9 +939,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setBacReading(simulated);
     const numeric = Number.parseFloat(simulated);
     if (!Number.isNaN(numeric)) {
-      persistRecord(numeric);
+      void persistRecord(numeric);
     }
-  }, [autoWorkflow, step, scannedData, isSaving, bacReading]);
+  }, [autoWorkflow, step, scannedData, isSaving, bacReading, roadblock, profile]);
 
   const saveRecord = async () => {
     if (!scannedData || !bacReading || !profile) {
@@ -916,6 +956,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
     await persistRecord(reading);
   };
+
+  if (!profile) {
+    return null;
+  }
 
   return (
     <View style={styles.page}>
@@ -1130,6 +1174,76 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               </View>
             ) : null}
 
+            <View style={styles.courtSection}>
+              <Text style={styles.overline}>Court / Checkpoint</Text>
+              <Text style={styles.courtFieldLabel}>Roadblock / Checkpoint *</Text>
+              <TextInput
+                value={roadblock}
+                onChangeText={setRoadblock}
+                placeholder="e.g. N1 Midrand roadblock"
+                placeholderTextColor={colors.neutralGray}
+                style={styles.courtInput}
+              />
+              <Text style={styles.courtFieldLabel}>Station / Address</Text>
+              <TextInput
+                value={station}
+                onChangeText={setStation}
+                placeholder="Station or location address"
+                placeholderTextColor={colors.neutralGray}
+                style={styles.courtInput}
+              />
+              <Text style={styles.courtFieldLabel}>Officer Rank</Text>
+              <TextInput
+                value={officerRank}
+                onChangeText={setOfficerRank}
+                placeholder="e.g. Constable"
+                placeholderTextColor={colors.neutralGray}
+                style={styles.courtInput}
+              />
+              <Text style={styles.courtFieldLabel}>Service Number</Text>
+              <View style={styles.courtReadonly}>
+                <Text style={styles.courtReadonlyText}>
+                  {profile.badgeNumber || "—"}
+                </Text>
+              </View>
+              <Text style={styles.courtFieldLabel}>Driver Category</Text>
+              <View style={styles.categoryRow}>
+                {DRIVER_CATEGORIES.map((category) => {
+                  const selected = driverCategory === category;
+                  return (
+                    <Pressable
+                      key={category}
+                      style={[
+                        styles.categoryChip,
+                        selected && styles.categoryChipSelected,
+                      ]}
+                      onPress={() => setDriverCategory(category)}
+                    >
+                      <Text
+                        style={[
+                          styles.categoryChipText,
+                          selected && styles.categoryChipTextSelected,
+                        ]}
+                      >
+                        {category.includes("0.02")
+                          ? "Professional 0.02"
+                          : "General 0.05"}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Text style={styles.courtFieldLabel}>Officer Notes</Text>
+              <TextInput
+                value={officerNotes}
+                onChangeText={setOfficerNotes}
+                placeholder="Optional notes for court evidence"
+                placeholderTextColor={colors.neutralGray}
+                multiline
+                style={[styles.courtInput, styles.courtNotesInput]}
+              />
+            </View>
+
             <View style={styles.bacSection}>
               <Text style={styles.overline}>
                 BAC Reading Simulator (g/100ml)
@@ -1171,7 +1285,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                 <Text style={styles.autoBannerText}>
                   {isSaving
                     ? "Auto-saving and syncing record..."
-                    : "BAC simulated and record queued for sync automatically."}
+                    : !roadblock.trim()
+                      ? "Enter a roadblock name above to finish auto-save."
+                      : "BAC simulated and record queued for sync automatically."}
                 </Text>
               </View>
             )}
@@ -1218,21 +1334,21 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             <View style={styles.statusRow}>
               <View style={styles.statusCard}>
                 <Text style={styles.statusLabel}>Legal Limit</Text>
-                <Text style={styles.statusValue}>0.050</Text>
+                <Text style={styles.statusValue}>{bacLimit.toFixed(3)}</Text>
               </View>
               <View
                 style={[
                   styles.statusCardAlt,
                   {
-                    backgroundColor: bacStatus(bacReading).bgColor,
-                    borderColor: bacStatus(bacReading).borderColor,
+                    backgroundColor: bacStatus(bacReading, bacLimit).bgColor,
+                    borderColor: bacStatus(bacReading, bacLimit).borderColor,
                   },
                 ]}
               >
                 <Text
                   style={[
                     styles.statusLabelAlt,
-                    { color: bacStatus(bacReading).textColor },
+                    { color: bacStatus(bacReading, bacLimit).textColor },
                   ]}
                 >
                   Status
@@ -1240,10 +1356,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                 <Text
                   style={[
                     styles.statusValueAlt,
-                    { color: bacStatus(bacReading).textColor },
+                    { color: bacStatus(bacReading, bacLimit).textColor },
                   ]}
                 >
-                  {bacStatus(bacReading).label}
+                  {bacStatus(bacReading, bacLimit).label}
                 </Text>
               </View>
             </View>
@@ -1273,10 +1389,11 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                 <Pressable
                   style={[
                     styles.primaryButton,
-                    (!bacReading || isSaving) && styles.buttonDisabled,
+                    (!bacReading || isSaving || !roadblock.trim()) &&
+                      styles.buttonDisabled,
                   ]}
                   onPress={saveRecord}
-                  disabled={!bacReading || isSaving}
+                  disabled={!bacReading || isSaving || !roadblock.trim()}
                 >
                   {isSaving ? (
                     <ActivityIndicator color="#fff" />

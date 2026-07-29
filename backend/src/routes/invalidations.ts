@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 import type { AuthRequest } from '../middleware/auth';
+import { resolveProfileByEmail } from '../utilities/resolveProfile';
 
 const serviceSupabase = createClient(
   process.env.SUPABASE_URL ?? '',
@@ -46,16 +47,19 @@ router.post('/:testId', async (req, res) => {
     return res.status(400).json({ error: 'Reason for invalidation is required' });
   }
 
-  // Get officer_id from officer_users table
-  const { data: officer, error: officerError } = await serviceSupabase
-    .from('officer_users')
-    .select('officer_id')
-    .eq('id', authReq.userId)
-    .single();
+  let resolved;
+  try {
+    resolved = await resolveProfileByEmail(authReq.userEmail ?? '', authReq.userId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Officer profile lookup failed';
+    return res.status(500).json({ error: message });
+  }
 
-  if (officerError || !officer) {
+  if (!resolved || resolved.source !== 'officer_users' || typeof resolved.profile.officerId !== 'number') {
     return res.status(404).json({ error: 'Officer profile not found' });
   }
+
+  const officerId = resolved.profile.officerId;
 
   // Check if test exists
   const { data: test, error: testError } = await serviceSupabase
@@ -85,7 +89,7 @@ router.post('/:testId', async (req, res) => {
     .insert({
       test_id: testId,
       reason: reason.trim(),
-      invalidated_by: officer.officer_id
+      invalidated_by: officerId
     })
     .select()
     .single();
@@ -99,6 +103,11 @@ router.post('/:testId', async (req, res) => {
 });
 
 router.get('/:testId', async (req, res) => {
+  const authReq = req as unknown as AuthRequest;
+  if (!authReq.userId) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
   const { testId } = req.params;
 
   const { data: invalidations, error } = await serviceSupabase

@@ -400,25 +400,90 @@ export const styles = StyleSheet.create({
     color: colors.primaryDark,
     marginTop: 6
   },
-  evidenceSection: {
-    marginBottom: 20
+  courtSection: {
+    marginBottom: 20,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: colors.pageBackground,
+    borderWidth: 1,
+    borderColor: colors.borderLight
+  },
+  courtFieldLabel: {
+    marginTop: 10,
+    marginBottom: 6,
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    letterSpacing: 0.4
+  },
+  courtInput: {
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: 10,
+    backgroundColor: colors.background,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.textPrimary
+  },
+  courtNotesInput: {
+    minHeight: 72,
+    textAlignVertical: 'top'
+  },
+  courtReadonly: {
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: 10,
+    backgroundColor: colors.surfaceHighlight,
+    paddingHorizontal: 12,
+    paddingVertical: 10
+  },
+  courtReadonlyText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary
+  },
+  categoryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  categoryChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: colors.background
+  },
+  categoryChipSelected: {
+    borderColor: colors.accentBlue,
+    backgroundColor: colors.surfaceHighlight
+  },
+  categoryChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary
+  },
+  categoryChipTextSelected: {
+    color: colors.primaryDark
   },
   autoBanner: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
     marginBottom: 16,
     padding: 12,
     borderRadius: 12,
-    backgroundColor: colors.surfaceHighlight,
     borderWidth: 1,
-    borderColor: colors.borderHighlight
+    borderColor: colors.borderHighlight,
+    backgroundColor: colors.surfaceHighlight,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10
   },
   autoBannerText: {
     flex: 1,
-    color: colors.textPrimary,
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.textSecondary,
     fontWeight: '600'
   },
   ocrDebugCard: {
@@ -426,14 +491,17 @@ export const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#d1fae5', // Kept specific debug green
-    backgroundColor: '#ecfeff' // Kept specific debug teal
+    borderColor: colors.successBorder,
+    backgroundColor: colors.successBackground
   },
   ocrDebugText: {
     marginTop: 4,
     color: colors.textPrimary,
     fontSize: 12,
     lineHeight: 16
+  },
+  evidenceSection: {
+    marginBottom: 20
   },
   photoButton: {
     marginTop: 12,

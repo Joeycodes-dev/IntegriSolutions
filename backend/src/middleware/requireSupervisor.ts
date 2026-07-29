@@ -10,7 +10,13 @@ export interface SupervisorRequest extends AuthRequest {
 
 export async function requireSupervisor(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const headerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  // EventSource cannot send Authorization headers — accept access_token query as fallback.
+  const queryToken =
+    typeof req.query.access_token === 'string' && req.query.access_token.trim()
+      ? req.query.access_token.trim()
+      : null;
+  const token = headerToken || queryToken;
 
   if (!token) {
     return res.status(401).json({ error: 'Authorization header missing or malformed' });

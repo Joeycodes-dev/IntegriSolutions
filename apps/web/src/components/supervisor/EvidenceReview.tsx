@@ -12,7 +12,7 @@ import {
   ShieldX
 } from 'lucide-react';
 import type { TestRecord } from '../../types';
-import { buildTestEvidence, resolveEvidencePhotoUrls } from '../../lib/testEvidence';
+import { buildTestEvidence } from '../../lib/testEvidence';
 import { annotateTest, getAnnotations, getEvidence, uploadEvidence, type Annotation, type EvidencePhoto } from '../../services/api';
 import { BORDER, NAVY, PAGE_BG, pageShell } from './supervisorStyles';
 
@@ -47,7 +47,6 @@ function statusColor(status: string): { bg: string; border: string; text: string
 
 export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
   const evidence = useMemo(() => buildTestEvidence(test), [test]);
-  const photos = useMemo(() => resolveEvidencePhotoUrls(evidence.photoUrls), [evidence.photoUrls]);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [annotationsLoading, setAnnotationsLoading] = useState(true);
@@ -238,25 +237,17 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
                   />
                 </div>
               ))}
-              {evidencePhotos.length === 0 && photos.slice(0, 2).map((url, index) => (
+              {evidencePhotos.length === 0 && (
                 <div
-                  key={`${url}-${index}`}
-                  className="aspect-[4/3] overflow-hidden rounded-lg border bg-slate-100"
+                  className="col-span-2 flex aspect-[4/3] items-center justify-center rounded-lg border border-dashed bg-slate-50 text-center"
                   style={{ borderColor: BORDER }}
                 >
-                  <img
-                    src={url}
-                    alt={`Evidence ${index + 1}`}
-                    className="h-full w-full object-cover"
-                  />
+                  <p className="px-4 text-[0.6875rem] text-slate-400">
+                    No evidence photos uploaded yet. Use Add Photo or capture on mobile during the stop.
+                  </p>
                 </div>
-              ))}
+              )}
             </div>
-            {evidencePhotos.length === 0 && photos.length === 0 && (
-              <p className="mt-2 text-[0.6875rem] text-slate-400">
-                No evidence photos uploaded yet.
-              </p>
-            )}
           </section>
         </div>
 

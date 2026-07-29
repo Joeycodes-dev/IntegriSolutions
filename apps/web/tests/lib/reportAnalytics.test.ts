@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildResultBreakdown,
+  buildTrendSeries,
   buildWeeklyTrend,
+  dataSpanDateRange,
   filterTestsForReport,
+  niceTicks,
+  parseLocalDate,
   weekdayIndex
 } from '../../src/lib/reportAnalytics';
 import type { TestRecord } from '../../src/types';
@@ -46,10 +50,44 @@ describe('reportAnalytics', () => {
     expect(filtered[0].id).toBe('1');
   });
 
+  it('filters by roadblock', () => {
+    const filtered = filterTestsForReport(sample, {
+      from: '2026-05-12',
+      to: '2026-05-13',
+      result: 'all',
+      roadblock: 'N3 Midrand'
+    });
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].id).toBe('2');
+  });
+
   it('builds weekly trend buckets', () => {
     const series = buildWeeklyTrend(sample);
     expect(series).toHaveLength(3);
+    expect(series[0].values.reduce((a, b) => a + b, 0)).toBe(1);
     expect(series[1].values.reduce((a, b) => a + b, 0)).toBe(2);
+  });
+
+  it('builds daily trend series across the date range', () => {
+    const trend = buildTrendSeries(sample, '2026-05-12', '2026-05-13');
+    expect(trend.labels).toHaveLength(2);
+    expect(trend.series).toHaveLength(3);
+    expect(trend.series[1].values).toEqual([1, 1]);
+    expect(trend.series[0].values).toEqual([1, 0]);
+    expect(trend.series[2].values).toEqual([0, 100]);
+  });
+
+  it('builds weekly trend series for longer ranges', () => {
+    const trend = buildTrendSeries(sample, '2026-05-01', '2026-05-31');
+    expect(trend.labels.length).toBeGreaterThan(1);
+    expect(trend.series[1].values.reduce((a, b) => a + b, 0)).toBe(2);
+  });
+
+  it('computes data span from test timestamps', () => {
+    expect(dataSpanDateRange(sample)).toEqual({
+      from: '2026-05-12',
+      to: '2026-05-13'
+    });
   });
 
   it('builds pass/fail breakdown', () => {
@@ -58,5 +96,18 @@ describe('reportAnalytics', () => {
 
   it('maps weekday index with Monday as 0', () => {
     expect(weekdayIndex('2026-05-11T12:00:00Z')).toBe(0);
+  });
+
+  it('parses local calendar dates without UTC shift', () => {
+    const d = parseLocalDate('2026-05-12');
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(4);
+    expect(d.getDate()).toBe(12);
+  });
+
+  it('produces nice axis ticks that cover the max', () => {
+    const ticks = niceTicks(7, 5);
+    expect(ticks[0]).toBe(0);
+    expect(ticks[ticks.length - 1]).toBeGreaterThanOrEqual(7);
   });
 });

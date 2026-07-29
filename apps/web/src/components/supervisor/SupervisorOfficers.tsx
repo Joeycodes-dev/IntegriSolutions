@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getFieldOfficers } from '../../services/api';
-import type { FieldOfficer, OfficerShiftStatus, TestRecord } from '../../types';
+import type { FieldOfficer, OfficerDutyStatus, TestRecord } from '../../types';
 import {
-  ROSTER_ASSIGNMENTS,
   buildOfficerPerformance,
+  buildRosterAssignments,
+  computeCoverageHealth,
+  countOfficersAddedThisWeek,
+  isActiveEmployment,
   isToday
 } from '../../lib/officerDisplay';
 import { BORDER, NAVY, PAGE_BG, pageShell } from './supervisorStyles';
@@ -14,13 +17,15 @@ interface SupervisorOfficersProps {
   tests: TestRecord[];
 }
 
-function StatusBadge({ status }: { status: OfficerShiftStatus }) {
+function StatusBadge({ status }: { status: OfficerDutyStatus }) {
   const styles =
     status === 'On Patrol'
       ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-      : status === 'Checkpoint'
+      : status === 'On Duty'
         ? 'border-blue-200 bg-blue-50 text-blue-700'
-        : 'border-amber-200 bg-amber-50 text-amber-800';
+        : status === 'Invited'
+          ? 'border-amber-200 bg-amber-50 text-amber-800'
+          : 'border-slate-200 bg-slate-50 text-slate-600';
 
   return (
     <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${styles}`}>
@@ -54,7 +59,12 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
   }, [loadOfficers]);
 
   const activeOfficers = useMemo(
-    () => officers.filter((o) => o.status.toLowerCase() === 'active'),
+    () => officers.filter((o) => isActiveEmployment(o.status)),
+    [officers]
+  );
+
+  const invitedCount = useMemo(
+    () => officers.filter((o) => o.status.trim().toLowerCase() === 'invited').length,
     [officers]
   );
 
@@ -65,9 +75,14 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
     return (todayTests.length / activeOfficers.length).toFixed(1);
   }, [activeOfficers.length, todayTests.length]);
 
+  const addedThisWeek = useMemo(() => countOfficersAddedThisWeek(officers), [officers]);
+
+  const roster = useMemo(() => buildRosterAssignments(officers), [officers]);
+  const coverage = useMemo(() => computeCoverageHealth(roster), [roster]);
+
   const performanceRows = useMemo(
-    () => buildOfficerPerformance(activeOfficers, tests),
-    [activeOfficers, tests]
+    () => buildOfficerPerformance(officers, tests),
+    [officers, tests]
   );
 
   const selectedOfficer = useMemo(
@@ -80,7 +95,10 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
       <AddOfficer
         onBack={() => setView('list')}
         onCreated={(created) => {
-          setOfficers((prev) => [created, ...prev]);
+          setOfficers((prev) => {
+            const withoutDup = prev.filter((o) => o.officerId !== created.officerId);
+            return [created, ...withoutDup];
+          });
         }}
       />
     );
@@ -93,6 +111,11 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
         onBack={() => {
           setSelectedOfficerId(null);
           setView('list');
+        }}
+        onUpdated={(updated) => {
+          setOfficers((prev) =>
+            prev.map((o) => (o.officerId === updated.officerId ? updated : o))
+          );
         }}
       />
     );
@@ -135,20 +158,38 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
             <p className="mt-1 text-2xl font-bold leading-none text-slate-900">
               {loading ? '—' : activeOfficers.length}
             </p>
-            <p className="mt-1 text-[0.6875rem] font-medium text-emerald-600">+3 vs last week</p>
+            <p className="mt-1 text-[0.6875rem] font-medium text-emerald-600">
+              {loading
+                ? '…'
+                : invitedCount > 0
+                  ? `${invitedCount} invited · +${addedThisWeek} this week`
+                  : `+${addedThisWeek} this week`}
+            </p>
           </div>
           <div className="rounded-xl border bg-white px-4 py-3" style={{ borderColor: BORDER }}>
             <p className="text-[0.75rem] text-slate-500">Average tests / officer</p>
             <p className="mt-1 text-2xl font-bold leading-none text-slate-900">
               {loading ? '—' : avgTestsPerOfficer}
             </p>
-            <p className="mt-1 text-[0.6875rem] text-slate-500">Current 24-hour cycle</p>
+            <p className="mt-1 text-[0.6875rem] text-slate-500">
+              {todayTests.length} test{todayTests.length === 1 ? '' : 's'} today
+            </p>
           </div>
           <div className="rounded-xl border bg-white px-4 py-3" style={{ borderColor: BORDER }}>
             <p className="text-[0.75rem] text-slate-500">Shift coverage health</p>
-            <p className="mt-1 text-2xl font-bold leading-none text-slate-900">92%</p>
-            <p className="mt-1 text-[0.6875rem] font-medium text-amber-600">
-              Night shift under target by 1 officer
+            <p className="mt-1 text-2xl font-bold leading-none text-slate-900">
+              {loading ? '—' : `${coverage.percent}%`}
+            </p>
+            <p
+              className={`mt-1 text-[0.6875rem] font-medium ${
+                coverage.underTargetLabel ? 'text-amber-600' : 'text-emerald-600'
+              }`}
+            >
+              {loading
+                ? '…'
+                : coverage.underTargetLabel
+                  ? coverage.underTargetLabel
+                  : 'All shifts at target'}
             </p>
           </div>
         </div>
@@ -242,7 +283,7 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
               Roster Assignment
             </h2>
             <ul className="mt-3 space-y-3">
-              {ROSTER_ASSIGNMENTS.map((slot) => {
+              {roster.map((slot) => {
                 const filled = slot.assigned >= slot.target;
                 return (
                   <li
@@ -260,6 +301,11 @@ export function SupervisorOfficers({ tests }: SupervisorOfficersProps) {
                 );
               })}
             </ul>
+            {!loading && (
+              <p className="mt-3 text-[0.6875rem] text-slate-500">
+                Based on active officers with assigned shifts.
+              </p>
+            )}
           </div>
         </div>
       </div>

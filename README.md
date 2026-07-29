@@ -92,9 +92,15 @@ cd apps/web && npm install
 cd apps/mobile && npm install
 ```
 
-### 4. Run the database schema (WIP — can skip for now)
+### 4. Run the database schema
 
-In your Supabase project, open the **SQL Editor** and run the schema SQL to create all tables (`users`, `tests`) with WORM rules and Row Level Security policies.
+In your Supabase project, open the **SQL Editor** and run these files **in order**:
+
+1. `backend/migrations/20260729_core_schema.sql` — `officer_users`, `supervisor_users`, immutable `tests` (WORM), `invalidations`, `system_settings`
+2. `backend/migrations/20260719_officer_invitations.sql`
+3. `backend/migrations/20260728_evidence_annotations_audit.sql` — `audit_logs`, `annotations`, `evidence` + storage bucket
+
+**Important:** DUI test records cannot be edited or deleted (WORM). Status updates use account APIs instead (`PATCH` portal users / field officers).
 
 ### 5. Start the development servers
 
@@ -117,12 +123,17 @@ All endpoints except `/api/auth/login` and `/api/auth/register` require a `Beare
 
 | Method | Endpoint | Description | Role |
 |--------|----------|-------------|------|
-| `POST` | `/api/auth/register` | Create a new user account | Public |
 | `POST` | `/api/auth/login` | Login and receive a JWT | Public |
-| `GET` | `/api/profile` | Get the authenticated user's profile | Any |
-| `GET` | `/api/tests` | List all test records | Any |
-| `POST` | `/api/tests` | Create a new test record (with SHA-256 hash) | Officer |
+| `POST` | `/api/auth/officer-invite` | Accept officer invite + set password | Public |
+| `GET` | `/api/tests` | List enforcement test records | Authenticated |
+| `POST` | `/api/sync` | Sync offline officer captures | Officer |
+| `PATCH` | `/api/admin/users/:id` | Update portal user status (not tests) | Admin |
+| `PATCH` | `/api/supervisor/officers/:id` | Update field officer status | Supervisor |
+| `DELETE` | `/api/admin/users/:id` | Remove portal user | Admin |
+| `POST` | `/api/supervisor/tests/:id` | Annotate case (approve/refer) | Supervisor |
 | `GET` | `/api/health` | Health check | Public |
+
+Test rows are **immutable** (no PUT/PATCH/DELETE on `/api/tests`).
 
 ---
 

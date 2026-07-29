@@ -51,7 +51,9 @@ export function SupervisorDashboard() {
         />
       )}
       {activeNav === 'officers' && <SupervisorOfficers tests={tests} />}
-      {activeNav === 'reports' && <SupervisorReports tests={tests} loading={loading} />}
+      {activeNav === 'reports' && (
+        <SupervisorReports tests={tests} loading={loading} error={error} />
+      )}
       </main>
     </div>
   );

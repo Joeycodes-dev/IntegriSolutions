@@ -2,6 +2,7 @@ import { Router } from 'express';
 import sharp from 'sharp';
 import { createWorker } from 'tesseract.js';
 import { asyncHandler } from '../asyncHandler';
+import { requireAuth } from '../middleware/auth';
 
 const router = Router();
 let workerPromise: ReturnType<typeof createWorker> | null = null;
@@ -683,7 +684,7 @@ function isStrictlyValid(result: DriverLicenseData, scores: Record<string, numbe
   return initialsOk && surnameOk && expiryOk && identityOk && overall >= overallThreshold;
 }
 
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', requireAuth, asyncHandler(async (req, res) => {
   const base64Image = typeof req.body?.base64Image === 'string' ? req.body.base64Image : '';
   const retryMode = req.body?.retry === true;
   const highlightOnly = req.body?.highlightOnly === true;
