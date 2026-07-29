@@ -76,7 +76,7 @@ export interface TestRecord {
   bacReading: number;
   result: 'pass' | 'fail';
   createdAt: string;
-  location?: string;
+  location?: string | Record<string, unknown>;
   hash?: string;
   hashValid?: boolean | null;
   evidence?: TestEvidenceFields;
@@ -101,7 +101,7 @@ export interface FieldOfficer {
 }
 
 /** Live duty/employment badge shown on the Officers roster. */
-export type OfficerDutyStatus = 'Invited' | 'On Patrol' | 'Standby' | 'Inactive';
+export type OfficerDutyStatus = 'Invited' | 'On Patrol' | 'On Duty' | 'Inactive';
 
 /** @deprecated Prefer OfficerDutyStatus */
 export type OfficerShiftStatus = OfficerDutyStatus;

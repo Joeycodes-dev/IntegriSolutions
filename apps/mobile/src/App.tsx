@@ -1,25 +1,56 @@
 import { StatusBar } from 'expo-status-bar';
+import { ActivityIndicator, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useEffect } from 'react';
-import { HomeScreen } from './screens/HomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { OfficerDashboardScreen } from './screens/OfficerDashboardScreen';
 import { OfficerReportsScreen } from './screens/OfficerReportsScreen';
 import { AuditScreen } from './screens/AuditScreen';
-import { AuthProvider } from './lib/AuthContext';
+import { AuthProvider, useAuth } from './lib/AuthContext';
 import { SyncProvider } from './lib/SyncContext';
 import { getDB } from './db/client';
 
 type RootStackParamList = {
   Login: undefined;
-  Home: undefined;
   OfficerDashboard: undefined;
   OfficerReports: undefined;
   Audit: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+function AppNavigator() {
+  const { profile, isRestoring } = useAuth();
+
+  if (isRestoring) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      {profile ? (
+        <>
+          <Stack.Screen
+            name="OfficerDashboard"
+            component={OfficerDashboardScreen}
+          />
+          <Stack.Screen
+            name="OfficerReports"
+            component={OfficerReportsScreen}
+          />
+          <Stack.Screen name="Audit" component={AuditScreen} />
+        </>
+      ) : (
+        <Stack.Screen name="Login" component={LoginScreen} />
+      )}
+    </Stack.Navigator>
+  );
+}
 
 export default function App() {
   useEffect(() => {
@@ -32,29 +63,7 @@ export default function App() {
     <AuthProvider>
       <SyncProvider>
         <NavigationContainer>
-          <Stack.Navigator initialRouteName="Login">
-            <Stack.Screen
-              name="Login"
-              component={LoginScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'IntegriScan' }} />
-            <Stack.Screen
-              name="OfficerDashboard"
-              component={OfficerDashboardScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="OfficerReports"
-              component={OfficerReportsScreen}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="Audit"
-              component={AuditScreen}
-              options={{ headerShown: false }}
-            />
-          </Stack.Navigator>
+          <AppNavigator />
           <StatusBar style="auto" />
         </NavigationContainer>
       </SyncProvider>

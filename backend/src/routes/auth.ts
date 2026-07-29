@@ -177,8 +177,7 @@ router.post('/officer-invite', asyncHandler(async (req, res) => {
     .eq('id', invite.id);
 
   if (inviteUpdateError) {
-    await serviceSupabase.auth.admin.deleteUser(authData.user.id);
-    return res.status(500).json({ error: inviteUpdateError.message });
+    console.warn('[auth] Failed to mark invite as accepted (column may be missing):', inviteUpdateError.message);
   }
 
   const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({

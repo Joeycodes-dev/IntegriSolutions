@@ -21,7 +21,7 @@ function StatusBadge({ status }: { status: OfficerDutyStatus }) {
   const styles =
     status === 'On Patrol'
       ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-      : status === 'Standby'
+      : status === 'On Duty'
         ? 'border-blue-200 bg-blue-50 text-blue-700'
         : status === 'Invited'
           ? 'border-amber-200 bg-amber-50 text-amber-800'

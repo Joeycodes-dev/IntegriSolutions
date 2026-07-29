@@ -87,7 +87,7 @@ describe('officerDisplay', () => {
     const invited = officer({ officerId: 1, status: 'Invited' });
     const active = officer({ officerId: 2, status: 'Active' });
     expect(deriveDutyStatus(invited, 0)).toBe('Invited');
-    expect(deriveDutyStatus(active, 0)).toBe('Standby');
+    expect(deriveDutyStatus(active, 0)).toBe('On Duty');
     expect(deriveDutyStatus(active, 2)).toBe('On Patrol');
   });
 

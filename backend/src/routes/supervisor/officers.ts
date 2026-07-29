@@ -177,6 +177,11 @@ router.post('/', asyncHandler(async (req, res) => {
   const created = toFieldOfficer(inserted[0] as Record<string, unknown>);
   const token = generateOfficerInviteToken();
   const expiresAt = officerInviteExpiresAt();
+
+  let inviteLink: string | undefined;
+  let inviteEmailSent = false;
+  let emailWarning: string | undefined;
+
   const { error: inviteError } = await serviceSupabase.from('officer_invitations').insert([{
     officer_id: created.officerId,
     token_hash: hashOfficerInviteToken(token),
@@ -185,34 +190,31 @@ router.post('/', asyncHandler(async (req, res) => {
   }]);
 
   if (inviteError) {
-    await safeDeleteOfficer(created.officerId);
-    return res.status(500).json({ error: formatDbError(inviteError as DbError | null) });
-  }
+    console.warn('[supervisor/officers] invite table insert failed (table may not exist yet):', inviteError.message);
+    emailWarning = 'Invite link unavailable — officer_invitations table not set up yet. Officer was still created.';
+  } else {
+    inviteLink = buildOfficerInviteLink(token);
 
-  const inviteLink = buildOfficerInviteLink(token);
-
-  let inviteEmailSent = false;
-  let emailWarning: string | undefined;
-  try {
-    await sendOfficerInviteEmail({
-      to: email,
-      officerName: `${name} ${surname}`.trim(),
-      inviteLink,
-      expiresAt
-    });
-    inviteEmailSent = true;
-  } catch (error) {
-    // Keep the officer + invite so supervisors can still onboard via copyable link.
-    emailWarning =
-      error instanceof Error ? error.message : 'Failed to send officer invite email';
-    console.warn('[supervisor/officers] invite email failed, returning link:', emailWarning);
+    try {
+      await sendOfficerInviteEmail({
+        to: email,
+        officerName: `${name} ${surname}`.trim(),
+        inviteLink,
+        expiresAt
+      });
+      inviteEmailSent = true;
+    } catch (error) {
+      emailWarning =
+        error instanceof Error ? error.message : 'Failed to send officer invite email';
+      console.warn('[supervisor/officers] invite email failed, returning link:', emailWarning);
+    }
   }
 
   const createdWithInvite = {
     ...created,
     invitationExpiresAt: expiresAt,
     inviteEmailSent,
-    inviteLink,
+    ...(inviteLink ? { inviteLink } : {}),
     ...(emailWarning ? { emailWarning } : {})
   };
 

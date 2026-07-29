@@ -1,6 +1,7 @@
 import { clearAccessToken, getAccessToken } from './auth';
 import { API_BASE_URL } from './constants';
 import { logAuditEvent } from './audit';
+import { Platform } from 'react-native';
 
 export interface AuditActor {
   officerId: number | null;
@@ -88,9 +89,6 @@ export async function syncRecords(records: Record<string, unknown>[]) {
   return request<{ synced: string[]; failed: { id: string; error: string }[]; duplicates: string[] }>('/sync', {
     method: 'POST',
     body: JSON.stringify({ records })
-  }, {
-    // /sync accepts validated record payloads without auth; this fallback recovers when a cached token has expired.
-    retryWithoutAuthOnInvalidToken: true
   });
 }
 
@@ -99,11 +97,18 @@ export async function uploadEvidencePhoto(testId: string, photoUri: string) {
   const url = `${API_BASE_URL}/evidence/${testId}`;
 
   const formData = new FormData();
-  formData.append('photo', {
-    uri: photoUri,
-    type: 'image/jpeg',
-    name: `${testId}-${Date.now()}.jpg`
-  } as any);
+
+  if (Platform.OS === 'web') {
+    const imageResponse = await fetch(photoUri);
+    const blob = await imageResponse.blob();
+    formData.append('photo', blob, `${testId}-${Date.now()}.jpg`);
+  } else {
+    formData.append('photo', {
+      uri: photoUri,
+      type: 'image/jpeg',
+      name: `${testId}-${Date.now()}.jpg`
+    } as any);
+  }
 
   const response = await fetch(url, {
     method: 'POST',

@@ -24,12 +24,13 @@ jest.mock('../../src/utilities/resolveProfile', () => ({
 
 import syncRoutes from '../../src/routes/sync';
 import { supabase } from '../../src/supabase';
+import { hashData } from '../../src/utilities/hash';
 
 const app = express();
 app.use(express.json());
 app.use('/api/sync', syncRoutes);
 
-const validRecord = {
+const baseRecord = {
   id: 'test-123',
   officerId: 23,
   officerName: 'John Doe',
@@ -40,8 +41,57 @@ const validRecord = {
   bacReading: 0.08,
   result: 'fail',
   location: { lat: -26.2041, lng: 28.0473 },
-  hash: 'a1b2c3d4e5f6',
   createdAt: '2026-05-30T10:00:00Z',
+};
+
+function makeSyncRecord(
+  overrides: Partial<typeof baseRecord & { hash: string; originalTestId?: string | null }> = {},
+  hashOfficer?: { officerId: number; officerName: string; badgeNumber: string }
+) {
+  const merged = { ...baseRecord, ...overrides };
+  const officer = hashOfficer ?? {
+    officerId: merged.officerId,
+    officerName: merged.officerName,
+    badgeNumber: merged.badgeNumber,
+  };
+
+  const hash = overrides.hash ?? hashData({
+    officerId: officer.officerId,
+    officerName: officer.officerName,
+    badgeNumber: officer.badgeNumber,
+    driverName: merged.driverName,
+    driverId: merged.driverId,
+    driverDob: merged.driverDob,
+    bacReading: merged.bacReading,
+    result: merged.result,
+    location: merged.location,
+    createdAt: merged.createdAt,
+    originalTestId: overrides.originalTestId ?? null,
+  });
+
+  return { ...merged, hash };
+}
+
+const validRecord = makeSyncRecord();
+
+const officerProfile = {
+  source: 'officer_users' as const,
+  dbId: 23,
+  profile: {
+    uid: 'user-123',
+    officerId: 23,
+    email: 'officer@example.com',
+    name: 'John Doe',
+    surname: 'Doe',
+    badgeNumber: '12345',
+    idNumber: '9001015009087',
+    employmentStatus: 'Active',
+    province: 'Gauteng',
+    region: 'Tshwane',
+    officerTypeId: 1,
+    roleId: 1,
+    createdAt: '2026-05-30T09:00:00Z',
+  },
 };
 
 describe('Sync Routes', () => {
@@ -51,6 +101,7 @@ describe('Sync Routes', () => {
       data: { user: { id: 'user-123', email: 'officer@example.com' } },
       error: null,
     });
+    mockResolveProfileByEmail.mockResolvedValue(officerProfile);
   });
 
   describe('POST /api/sync', () => {
@@ -93,6 +144,7 @@ describe('Sync Routes', () => {
 
       const response = await request(app)
         .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
         .send({ records: [validRecord] });
 
       expect(response.status).toBe(200);
@@ -115,6 +167,7 @@ describe('Sync Routes', () => {
 
       const response = await request(app)
         .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
         .send({ records: [validRecord] });
 
       expect(response.status).toBe(200);
@@ -153,10 +206,15 @@ describe('Sync Routes', () => {
         })
         .mockReturnValueOnce({ insert });
 
+      const staleRecord = makeSyncRecord(
+        { officerId: 999, officerName: 'Stale Officer', badgeNumber: 'OLD' },
+        { officerId: 1, officerName: 'John Doe', badgeNumber: '12345' }
+      );
+
       const response = await request(app)
         .post('/api/sync')
         .set('Authorization', 'Bearer token-123')
-        .send({ records: [{ ...validRecord, officerId: 999, officerName: 'Stale Officer', badgeNumber: 'OLD' }] });
+        .send({ records: [staleRecord] });
 
       expect(response.status).toBe(200);
       expect(response.body.synced).toContain('test-123');
@@ -172,10 +230,11 @@ describe('Sync Routes', () => {
     });
 
     it('should handle records with missing required fields', async () => {
-      const invalidRecord = { ...validRecord, id: undefined };
-      
+      const invalidRecord = { ...validRecord, id: undefined as unknown as string };
+
       const response = await request(app)
         .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
         .send({ records: [invalidRecord] });
 
       expect(response.status).toBe(200);
@@ -183,34 +242,26 @@ describe('Sync Routes', () => {
       expect(response.body.failed[0].error).toBe('Missing or invalid fields');
     });
 
-    it('should sync offline dev records without an auth token when required fields are present', async () => {
-      const insert = jest.fn().mockResolvedValue({ error: null });
-      mockServiceSupabase.from
-        .mockReturnValueOnce({
-          select: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
-              single: jest.fn().mockResolvedValue({ data: null, error: null }),
-            }),
-          }),
-        })
-        .mockReturnValueOnce({ insert });
-
+    it('should return 401 without officer authentication', async () => {
       const response = await request(app)
         .post('/api/sync')
         .send({ records: [validRecord] });
 
+      expect(response.status).toBe(401);
+      expect(response.body.error).toBe('Officer authentication required');
+    });
+
+    it('should reject records with tampered hashes', async () => {
+      const tampered = makeSyncRecord({ hash: hashData({ tampered: true }) });
+
+      const response = await request(app)
+        .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
+        .send({ records: [tampered] });
+
       expect(response.status).toBe(200);
-      expect(response.body.synced).toContain('test-123');
-      expect(response.body.failed).toHaveLength(0);
-      expect(insert).toHaveBeenCalledWith([
-        expect.objectContaining({
-          officer_id: 23,
-          officer_name: 'John Doe',
-          badge_number: '12345',
-          driver_id: '9876543210123',
-          driver_dob: '1990-01-01',
-        }),
-      ]);
+      expect(response.body.failed).toHaveLength(1);
+      expect(response.body.failed[0].error).toContain('Hash verification failed');
     });
 
     it('should handle database insert errors', async () => {
@@ -228,6 +279,7 @@ describe('Sync Routes', () => {
 
       const response = await request(app)
         .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
         .send({ records: [validRecord] });
 
       expect(response.status).toBe(200);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getTests } from '../services/api';
+import { getAccessToken, getTests } from '../services/api';
 import type { TestRecord } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
@@ -43,9 +43,13 @@ export function useSupervisorTests() {
     void loadTests();
     const interval = setInterval(() => void loadTests(), 10000);
 
-    const stream = typeof EventSource !== 'undefined'
-      ? new EventSource(`${API_BASE}/api/tests/stream`)
+    const token = getAccessToken();
+    // Browser EventSource cannot set Authorization headers — pass JWT as query param.
+    const streamUrl = token
+      ? `${API_BASE}/api/tests/stream?access_token=${encodeURIComponent(token)}`
       : null;
+    const stream =
+      streamUrl && typeof EventSource !== 'undefined' ? new EventSource(streamUrl) : null;
     if (stream) {
       stream.onopen = () => {
         if (!cancelled) {
@@ -72,6 +76,8 @@ export function useSupervisorTests() {
         }
         // keep polling fallback active when EventSource is unavailable
       };
+    } else if (!cancelled) {
+      setStreamConnected(false);
     }
 
     return () => {

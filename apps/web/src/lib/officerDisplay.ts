@@ -48,7 +48,8 @@ export function deriveDutyStatus(
   const status = officer.status.trim().toLowerCase();
   if (status === 'invited') return 'Invited';
   if (status !== 'active') return 'Inactive';
-  return testsToday > 0 ? 'On Patrol' : 'Standby';
+  // Align with mobile duty pill: active officers are On Duty; On Patrol once they submit today.
+  return testsToday > 0 ? 'On Patrol' : 'On Duty';
 }
 
 export function isToday(iso: string): boolean {

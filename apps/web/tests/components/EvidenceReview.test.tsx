@@ -43,6 +43,35 @@ describe('EvidenceReview', () => {
     (api.getEvidence as any).mockResolvedValue([]);
   });
 
+  it('renders mobile court fields from location JSON', async () => {
+    const testWithCourtFields = {
+      ...mockTest,
+      location: JSON.stringify({
+        lat: -26.2041,
+        lng: 28.0473,
+        roadblock: 'N1 Midrand roadblock',
+        station: 'Midrand SAPS',
+        officerRank: 'Constable',
+        officerNotes: 'Driver smelled of alcohol.'
+      })
+    };
+
+    render(<EvidenceReview test={testWithCourtFields} onBack={mockOnBack} />);
+
+    expect(screen.getAllByText('N1 Midrand roadblock').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Midrand SAPS')).toBeInTheDocument();
+    expect(screen.getByText('Driver smelled of alcohol.')).toBeInTheDocument();
+  });
+
+  it('shows empty photo state instead of stock placeholders', async () => {
+    render(<EvidenceReview test={mockTest} onBack={mockOnBack} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/No evidence photos uploaded yet/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByAltText('Evidence 1')).not.toBeInTheDocument();
+  });
+
   it('renders test details correctly', async () => {
     render(<EvidenceReview test={mockTest} onBack={mockOnBack} />);
 
