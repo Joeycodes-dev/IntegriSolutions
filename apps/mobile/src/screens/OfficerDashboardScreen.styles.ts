@@ -50,7 +50,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   headerLabel: {
-    fontSize: 14,
+    fontSize: 12,
     color: colors.textPrimary,
     fontWeight: '700',
     letterSpacing: 1.5
@@ -71,8 +71,6 @@ export const styles = StyleSheet.create({
     padding: 20
   },
   card: {
-    borderColor: colors.primaryDark,
-    borderWidth: 2,
     backgroundColor: colors.background,
     borderRadius: 24,
     padding: 24,
@@ -153,7 +151,7 @@ export const styles = StyleSheet.create({
     bottom: 30,
     left: 20,
     right: 20,
-    flexDirection: 'row',
+    flexDirection: 'column',
     justifyContent: 'space-between',
     gap: 12
   },
@@ -256,6 +254,43 @@ export const styles = StyleSheet.create({
     backgroundColor: colors.pageBackground,
     borderRadius: 20
   },
+  confirmationCard: {
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: colors.background,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.borderLight
+  },
+  confirmationHint: {
+    marginBottom: 14,
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19
+  },
+  licenseField: {
+    marginBottom: 12
+  },
+  licenseFieldLabel: {
+    marginBottom: 5,
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  licenseFieldInput: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.neutralGray,
+    backgroundColor: colors.pageBackground,
+  },
+  licenseFieldValue: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700'
+  },
   profileIcon: {
     width: 56,
     height: 56,
@@ -295,9 +330,20 @@ export const styles = StyleSheet.create({
     borderRadius: 20,
     paddingVertical: 22,
     paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  bacValueText: {
     fontSize: 32,
     fontWeight: '700',
     color: colors.textPrimary,
+    textAlign: 'center'
+  },
+  readOnlyHint: {
+    marginTop: 8,
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
     textAlign: 'center'
   },
   bacSuffix: {
@@ -338,7 +384,7 @@ export const styles = StyleSheet.create({
   },
   statusLabelAlt: {
     fontSize: 10,
-    color: colors.accentBlue,
+    color: colors.primaryDark,
     fontWeight: '800',
     letterSpacing: 1
   },
@@ -351,7 +397,7 @@ export const styles = StyleSheet.create({
   statusValueAlt: {
     fontSize: 16,
     fontWeight: '800',
-    color: colors.accentBlue,
+    color: colors.primaryDark,
     marginTop: 6
   },
   courtSection: {
@@ -457,6 +503,38 @@ export const styles = StyleSheet.create({
   evidenceSection: {
     marginBottom: 20
   },
+  autoBanner: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    marginBottom: 16,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceHighlight,
+    borderWidth: 1,
+    borderColor: colors.borderHighlight
+  },
+  autoBannerText: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600'
+  },
+  ocrDebugCard: {
+    marginBottom: 16,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#d1fae5', // Kept specific debug green
+    backgroundColor: '#ecfeff' // Kept specific debug teal
+  },
+  ocrDebugText: {
+    marginTop: 4,
+    color: colors.textPrimary,
+    fontSize: 12,
+    lineHeight: 16
+  },
   photoButton: {
     marginTop: 12,
     flexDirection: 'row',
@@ -467,13 +545,13 @@ export const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.borderHighlight,
-    backgroundColor: colors.primaryDark,
-    borderStyle: 'solid'
+    backgroundColor: colors.surfaceHighlight,
+    borderStyle: 'dashed'
   },
   photoButtonText: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.background
+    color: colors.primaryDark
   },
   photoPreview: {
     marginTop: 12,
