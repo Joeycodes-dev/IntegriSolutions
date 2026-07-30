@@ -19,7 +19,7 @@ interface AdminSidebarProps {
 export function AdminSidebar({ active, onNavigate, onLogout }: AdminSidebarProps) {
   return (
     <aside
-      className="flex h-screen w-[220px] shrink-0 flex-col px-4 py-5"
+      className="sticky top-0 flex h-screen w-[220px] shrink-0 flex-col px-4 py-5"
       style={{ backgroundColor: NAVY_SIDEBAR }}
     >
       <div className="rounded-xl border border-white/10 bg-white/10 px-3 py-3">

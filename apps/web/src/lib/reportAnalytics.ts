@@ -234,6 +234,341 @@ export function buildResultBreakdown(tests: TestRecord[]) {
   return { passed, failed, total: passed + failed };
 }
 
+/* ------------------------------------------------------------------ */
+/* Insight-layer analytics (KPIs, rankings, heatmaps, auto-insights)  */
+/* ------------------------------------------------------------------ */
+
+export interface ReportKeyMetrics {
+  total: number;
+  failed: number;
+  failureRate: number;
+  avgBacOfFailures: number;
+  activeOfficers: number;
+  integrityFlags: number;
+  peakDayLabel: string | null;
+}
+
+export function buildKeyMetrics(tests: TestRecord[]): ReportKeyMetrics {
+  let failed = 0;
+  let bacSum = 0;
+  let bacCount = 0;
+  let integrityFlags = 0;
+  const officers = new Set<string>();
+  const byDay = new Map<string, number>();
+
+  for (const test of tests) {
+    if (test.result === 'fail') {
+      failed += 1;
+      if (Number.isFinite(test.bacReading)) {
+        bacSum += test.bacReading;
+        bacCount += 1;
+      }
+    }
+    if (test.hashValid === false) integrityFlags += 1;
+    if (test.officerName?.trim()) officers.add(test.officerName.trim());
+
+    const created = new Date(test.createdAt);
+    if (!Number.isNaN(created.getTime())) {
+      const key = dayKey(created);
+      byDay.set(key, (byDay.get(key) ?? 0) + 1);
+    }
+  }
+
+  let peakDayLabel: string | null = null;
+  let peakCount = 0;
+  for (const [key, count] of byDay) {
+    if (count > peakCount) {
+      peakCount = count;
+      const d = parseLocalDate(key);
+      peakDayLabel = `${WEEKDAY_LABELS[d.getDay() === 0 ? 6 : d.getDay() - 1]} ${d.getDate()}/${d.getMonth() + 1}`;
+    }
+  }
+
+  return {
+    total: tests.length,
+    failed,
+    failureRate: tests.length === 0 ? 0 : Math.round((failed / tests.length) * 1000) / 10,
+    avgBacOfFailures: bacCount === 0 ? 0 : Math.round((bacSum / bacCount) * 1000) / 1000,
+    activeOfficers: officers.size,
+    integrityFlags,
+    peakDayLabel
+  };
+}
+
+/** Equivalent-length period immediately before [from, to]. */
+export function previousPeriodRange(from: string, to: string): { from: string; to: string } | null {
+  const start = startOfDay(parseLocalDate(from));
+  const end = startOfDay(parseLocalDate(to));
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return null;
+  const days = Math.round((end.getTime() - start.getTime()) / MS_PER_DAY) + 1;
+  const prevEnd = new Date(start);
+  prevEnd.setDate(prevEnd.getDate() - 1);
+  const prevStart = new Date(prevEnd);
+  prevStart.setDate(prevStart.getDate() - (days - 1));
+  return { from: toIsoDate(prevStart), to: toIsoDate(prevEnd) };
+}
+
+export interface PeriodDelta {
+  /** Percentage-point change in failure rate (current - previous). */
+  failureRatePts: number | null;
+  /** % change in test volume (current vs previous). */
+  volumePct: number | null;
+}
+
+export function buildPeriodDelta(current: TestRecord[], previous: TestRecord[]): PeriodDelta {
+  if (previous.length === 0) return { failureRatePts: null, volumePct: null };
+  const curFails = current.filter((t) => t.result === 'fail').length;
+  const prevFails = previous.filter((t) => t.result === 'fail').length;
+  const curRate = current.length === 0 ? 0 : (curFails / current.length) * 100;
+  const prevRate = (prevFails / previous.length) * 100;
+  return {
+    failureRatePts: Math.round((curRate - prevRate) * 10) / 10,
+    volumePct: Math.round(((current.length - previous.length) / previous.length) * 100)
+  };
+}
+
+export interface RoadblockStat {
+  name: string;
+  total: number;
+  failed: number;
+  failureRate: number;
+}
+
+export function buildRoadblockStats(tests: TestRecord[]): RoadblockStat[] {
+  const map = new Map<string, { total: number; failed: number }>();
+  for (const test of tests) {
+    const name = getTestRoadblock(test);
+    const bucket = map.get(name) ?? { total: 0, failed: 0 };
+    bucket.total += 1;
+    if (test.result === 'fail') bucket.failed += 1;
+    map.set(name, bucket);
+  }
+  return Array.from(map.entries())
+    .map(([name, b]) => ({
+      name,
+      total: b.total,
+      failed: b.failed,
+      failureRate: b.total === 0 ? 0 : Math.round((b.failed / b.total) * 1000) / 10
+    }))
+    .sort((a, b) => b.failed - a.failed || b.total - a.total);
+}
+
+/** 7 weekday rows (Mon–Sun) x 24 hour columns. */
+export interface HourlyHeatmapData {
+  /** counts[row][hour] — failed tests */
+  fails: number[][];
+  /** counts[row][hour] — all tests */
+  totals: number[][];
+  maxFail: number;
+  peak: { dayLabel: string; hour: number; fails: number } | null;
+}
+
+export function buildHourlyHeatmap(tests: TestRecord[]): HourlyHeatmapData {
+  const fails = Array.from({ length: 7 }, () => Array<number>(24).fill(0));
+  const totals = Array.from({ length: 7 }, () => Array<number>(24).fill(0));
+  let maxFail = 0;
+  let peak: HourlyHeatmapData['peak'] = null;
+
+  for (const test of tests) {
+    const created = new Date(test.createdAt);
+    if (Number.isNaN(created.getTime())) continue;
+    const row = created.getDay() === 0 ? 6 : created.getDay() - 1;
+    const hour = created.getHours();
+    totals[row][hour] += 1;
+    if (test.result === 'fail') {
+      fails[row][hour] += 1;
+      if (fails[row][hour] > maxFail) {
+        maxFail = fails[row][hour];
+        peak = { dayLabel: WEEKDAY_LABELS[row], hour, fails: fails[row][hour] };
+      }
+    }
+  }
+
+  return { fails, totals, maxFail, peak };
+}
+
+export interface BacBucket {
+  label: string;
+  min: number;
+  count: number;
+  failed: number;
+}
+
+/** BAC distribution in g/100ml, aligned to SA legal limits (0.02 prof / 0.05 gen). */
+export function buildBacDistribution(tests: TestRecord[]): BacBucket[] {
+  const edges: Array<{ label: string; min: number }> = [
+    { label: '0.00–0.02', min: 0 },
+    { label: '0.02–0.05', min: 0.02 },
+    { label: '0.05–0.08', min: 0.05 },
+    { label: '0.08–0.10', min: 0.08 },
+    { label: '0.10–0.15', min: 0.1 },
+    { label: '0.15+', min: 0.15 }
+  ];
+  const buckets: BacBucket[] = edges.map((e) => ({ ...e, count: 0, failed: 0 }));
+
+  for (const test of tests) {
+    const bac = test.bacReading;
+    if (!Number.isFinite(bac) || bac < 0) continue;
+    let idx = buckets.length - 1;
+    for (let i = 0; i < edges.length; i += 1) {
+      const nextMin = edges[i + 1]?.min ?? Number.POSITIVE_INFINITY;
+      if (bac >= edges[i].min && bac < nextMin) {
+        idx = i;
+        break;
+      }
+    }
+    buckets[idx].count += 1;
+    if (test.result === 'fail') buckets[idx].failed += 1;
+  }
+  return buckets;
+}
+
+export interface OfficerStat {
+  name: string;
+  badge: string;
+  total: number;
+  failed: number;
+  failureRate: number;
+}
+
+export function buildOfficerStats(tests: TestRecord[]): OfficerStat[] {
+  const map = new Map<string, { badge: string; total: number; failed: number }>();
+  for (const test of tests) {
+    const name = test.officerName?.trim() || 'Unknown officer';
+    const bucket = map.get(name) ?? { badge: test.badgeNumber || '—', total: 0, failed: 0 };
+    bucket.total += 1;
+    if (test.result === 'fail') bucket.failed += 1;
+    map.set(name, bucket);
+  }
+  return Array.from(map.entries())
+    .map(([name, b]) => ({
+      name,
+      badge: b.badge,
+      total: b.total,
+      failed: b.failed,
+      failureRate: b.total === 0 ? 0 : Math.round((b.failed / b.total) * 1000) / 10
+    }))
+    .sort((a, b) => b.total - a.total || b.failed - a.failed);
+}
+
+export interface DriverCategorySplit {
+  professional: number;
+  general: number;
+  professionalFailed: number;
+  generalFailed: number;
+}
+
+export function buildDriverCategorySplit(tests: TestRecord[]): DriverCategorySplit {
+  const split: DriverCategorySplit = {
+    professional: 0,
+    general: 0,
+    professionalFailed: 0,
+    generalFailed: 0
+  };
+  for (const test of tests) {
+    const category =
+      test.evidence?.driverCategory ?? parseTestLocation(test.location).driverCategory ?? '';
+    const isProfessional = category.includes('0.02');
+    if (isProfessional) {
+      split.professional += 1;
+      if (test.result === 'fail') split.professionalFailed += 1;
+    } else {
+      split.general += 1;
+      if (test.result === 'fail') split.generalFailed += 1;
+    }
+  }
+  return split;
+}
+
+export type InsightTone = 'warning' | 'critical' | 'positive' | 'info';
+
+export interface ReportInsight {
+  tone: InsightTone;
+  title: string;
+  detail: string;
+}
+
+interface InsightInput {
+  metrics: ReportKeyMetrics;
+  delta: PeriodDelta;
+  roadblocks: RoadblockStat[];
+  heatmap: HourlyHeatmapData;
+  officers: OfficerStat[];
+  categories: DriverCategorySplit;
+}
+
+/** Auto-generated supervisory insights, ordered by importance. */
+export function generateInsights(input: InsightInput): ReportInsight[] {
+  const { metrics, delta, roadblocks, heatmap, officers, categories } = input;
+  const insights: ReportInsight[] = [];
+
+  if (metrics.integrityFlags > 0) {
+    insights.push({
+      tone: 'critical',
+      title: `${metrics.integrityFlags} record${metrics.integrityFlags === 1 ? '' : 's'} failed integrity verification`,
+      detail: 'SHA-256 hash mismatch detected. Quarantine these records before court export.'
+    });
+  }
+
+  if (delta.failureRatePts != null && Math.abs(delta.failureRatePts) >= 1) {
+    const rising = delta.failureRatePts > 0;
+    insights.push({
+      tone: rising ? 'warning' : 'positive',
+      title: `Failure rate ${rising ? 'up' : 'down'} ${Math.abs(delta.failureRatePts)} pts vs previous period`,
+      detail: rising
+        ? 'Non-compliance is trending upward — consider increased roadblock frequency.'
+        : 'Compliance is improving against the previous equivalent period.'
+    });
+  }
+
+  if (heatmap.peak && heatmap.peak.fails > 0) {
+    const endHour = (heatmap.peak.hour + 1) % 24;
+    const fmt = (h: number) => `${String(h).padStart(2, '0')}:00`;
+    insights.push({
+      tone: 'info',
+      title: `Peak offence window: ${heatmap.peak.dayLabel} ${fmt(heatmap.peak.hour)}–${fmt(endHour)}`,
+      detail: `${heatmap.peak.fails} failed test${heatmap.peak.fails === 1 ? '' : 's'} recorded in this hour. Prioritise staffing here.`
+    });
+  }
+
+  const riskiest = roadblocks.find((r) => r.total >= 3 && r.failed > 0);
+  if (riskiest) {
+    insights.push({
+      tone: 'warning',
+      title: `${riskiest.name} is the highest-yield checkpoint`,
+      detail: `${riskiest.failed} failure${riskiest.failed === 1 ? '' : 's'} from ${riskiest.total} tests (${riskiest.failureRate}% failure rate).`
+    });
+  }
+
+  if (categories.professionalFailed > 0) {
+    insights.push({
+      tone: 'warning',
+      title: `${categories.professionalFailed} professional driver${categories.professionalFailed === 1 ? '' : 's'} over the 0.02 limit`,
+      detail: 'Professional permit holders failing screening carry elevated public-transport risk.'
+    });
+  }
+
+  const topOfficer = officers[0];
+  if (topOfficer && topOfficer.total > 0) {
+    insights.push({
+      tone: 'positive',
+      title: `${topOfficer.name} leads activity with ${topOfficer.total} tests`,
+      detail: `${topOfficer.failed} failure${topOfficer.failed === 1 ? '' : 's'} recorded (${topOfficer.failureRate}% failure rate).`
+    });
+  }
+
+  if (metrics.avgBacOfFailures > 0) {
+    const multiple = Math.round((metrics.avgBacOfFailures / 0.05) * 10) / 10;
+    insights.push({
+      tone: multiple >= 2 ? 'critical' : 'info',
+      title: `Average failing BAC is ${metrics.avgBacOfFailures.toFixed(3)} g/100ml`,
+      detail: `That is ${multiple}× the general legal limit (0.05 g/100ml).`
+    });
+  }
+
+  return insights.slice(0, 5);
+}
+
 /** Evenly spaced axis ticks from 0 to at least `max`. */
 export function niceTicks(max: number, tickCount = 5): number[] {
   if (!Number.isFinite(max) || max <= 0) {

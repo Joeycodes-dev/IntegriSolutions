@@ -27,7 +27,7 @@ interface SupervisorSidebarProps {
 export function SupervisorSidebar({ active, onNavigate, onLogout }: SupervisorSidebarProps) {
   return (
     <aside
-      className="flex h-screen w-[200px] shrink-0 flex-col px-3 py-4"
+      className="sticky top-0 flex h-screen w-[200px] shrink-0 flex-col px-3 py-4"
       style={{ backgroundColor: NAVY_SIDEBAR }}
     >
       <div className="rounded-lg border border-white/10 bg-white/10 px-2.5 py-2">
