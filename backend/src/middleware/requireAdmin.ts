@@ -5,7 +5,7 @@ import { ROLE_ADMIN } from '../constants/roles';
 import { resolveRoleByEmail } from '../utilities/resolveProfile';
 
 export interface AdminRequest extends AuthRequest {
-  adminOfficerId: number;
+  adminProfileId: number;
 }
 
 export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
@@ -38,6 +38,6 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
     return res.status(403).json({ error: 'Admin access required' });
   }
 
-  authReq.adminOfficerId = resolved.dbId;
+  authReq.adminProfileId = resolved.dbId;
   return next();
 }

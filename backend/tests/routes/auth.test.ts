@@ -156,4 +156,24 @@ describe('Auth Routes', () => {
       );
     });
   });
+
+  describe('POST /api/auth/supervisor-invite', () => {
+    it('should return 400 when invite link is missing', async () => {
+      const response = await request(app)
+        .post('/api/auth/supervisor-invite')
+        .send({ password: 'password123' });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe('Invite link and password are required');
+    });
+
+    it('should reject short supervisor invite passwords', async () => {
+      const response = await request(app)
+        .post('/api/auth/supervisor-invite')
+        .send({ invite: 'https://integriscan.test?token=abc123', password: 'short' });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe('Password must be at least 6 characters');
+    });
+  });
 });

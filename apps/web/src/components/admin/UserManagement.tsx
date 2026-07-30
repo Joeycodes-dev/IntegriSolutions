@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getPortalUsers, removePortalUser, updatePortalUser } from '../../services/api';
 import type { PortalUser } from '../../types';
+import { AddAdmin } from './AddAdmin';
 import { AddSupervisor } from './AddSupervisor';
 
 const NAVY = '#0D2137';
@@ -11,7 +12,7 @@ export function UserManagement() {
   const [users, setUsers] = useState<PortalUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<'list' | 'add'>('list');
+  const [view, setView] = useState<'list' | 'add-supervisor' | 'add-admin'>('list');
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const loadUsers = useCallback(async () => {
@@ -67,9 +68,20 @@ export function UserManagement() {
     }
   };
 
-  if (view === 'add') {
+  if (view === 'add-supervisor') {
     return (
       <AddSupervisor
+        onBack={() => setView('list')}
+        onCreated={(created) => {
+          setUsers((prev) => [created, ...prev]);
+        }}
+      />
+    );
+  }
+
+  if (view === 'add-admin') {
+    return (
+      <AddAdmin
         onBack={() => setView('list')}
         onCreated={(created) => {
           setUsers((prev) => [created, ...prev]);
@@ -91,14 +103,24 @@ export function UserManagement() {
             Test records are immutable — only account status can be updated.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setView('add')}
-          className="shrink-0 rounded-full px-5 py-2 text-[0.8125rem] font-bold text-white transition hover:brightness-110"
-          style={{ backgroundColor: NAVY }}
-        >
-          Add Supervisor
-        </button>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setView('add-admin')}
+            className="rounded-full border bg-white px-5 py-2 text-[0.8125rem] font-bold transition hover:bg-slate-50"
+            style={{ borderColor: BORDER, color: NAVY }}
+          >
+            Add Admin
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('add-supervisor')}
+            className="rounded-full px-5 py-2 text-[0.8125rem] font-bold text-white transition hover:brightness-110"
+            style={{ backgroundColor: NAVY }}
+          >
+            Add Supervisor
+          </button>
+        </div>
       </header>
 
       <div className="flex-1 px-8 pb-8">

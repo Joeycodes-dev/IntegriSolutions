@@ -1,8 +1,8 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Eye, EyeOff, ShieldCheck } from 'lucide-react';
-import { clearAccessToken, login } from '../services/api';
+import { clearAccessToken, completeSupervisorInvite, login, register } from '../services/api';
 import { useAuth } from '../lib/AuthContext';
-import { canAccessWebPortal, ROLE_SUPERVISOR } from '../lib/roles';
+import { canAccessWebPortal, ROLE_ADMIN, ROLE_SUPERVISOR } from '../lib/roles';
 import type { UserProfile } from '../types';
 
 const NAVY = '#0D2137';
@@ -11,10 +11,36 @@ const LABEL = '#4B5563';
 const BORDER = '#D1D5DB';
 const PAGE_BG = '#EEF1F5';
 
+type AuthMode = 'login' | 'admin-register' | 'supervisor-invite';
+
+function initialAuthMode(): AuthMode {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('supervisorInvite') || params.get('inviteType') === 'supervisor'
+    ? 'supervisor-invite'
+    : 'login';
+}
+
+function initialInviteValue(): string {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('supervisorInvite') || params.get('inviteType') === 'supervisor'
+    ? window.location.href
+    : '';
+}
+
 export function Login() {
+  const [mode, setMode] = useState<AuthMode>(() => initialAuthMode());
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [badgeNumber, setBadgeNumber] = useState('');
+  const [idNumber, setIdNumber] = useState('');
+  const [province, setProvince] = useState('');
+  const [region, setRegion] = useState('');
+  const [inviteLink, setInviteLink] = useState(() => initialInviteValue());
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -29,12 +55,22 @@ export function Login() {
     }
   };
 
+  const completeSignIn = (response: { session?: { access_token: string }; profile: any }) => {
+    if (response.session?.access_token && response.profile) {
+      const profile = response.profile as UserProfile;
+      ensurePortalAccess(profile);
+      signIn(profile, response.session.access_token);
+      return true;
+    }
+    return false;
+  };
+
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      if (devMode) {
+      if (mode === 'login' && devMode) {
         const profile: UserProfile = {
           uid: `local-${Date.now()}`,
           email,
@@ -54,14 +90,54 @@ export function Login() {
         return;
       }
 
-      const response = await login(email, password);
-      if (response.session?.access_token && response.profile) {
-        const profile = response.profile as UserProfile;
-        ensurePortalAccess(profile);
-        signIn(profile, response.session.access_token);
+      if (mode === 'login') {
+        const response = await login(email, password);
+        if (completeSignIn(response)) return;
+        throw new Error('Login failed.');
+      }
+
+      if (mode === 'admin-register') {
+        if (password !== confirmPassword) {
+          throw new Error('Passwords do not match.');
+        }
+        if (password.length < 6) {
+          throw new Error('Password must be at least 6 characters.');
+        }
+
+        const response = await register({
+          email,
+          password,
+          name: firstName.trim(),
+          surname: lastName.trim(),
+          badgeNumber: badgeNumber.trim(),
+          idNumber: idNumber.trim(),
+          employmentStatus: 'Active',
+          province: province.trim(),
+          region: region.trim(),
+          officerTypeId: 1,
+          roleId: ROLE_ADMIN
+        });
+        if (completeSignIn(response)) return;
+        alert('Admin account created. Please log in with the new credentials.');
+        setMode('login');
         return;
       }
-      throw new Error('Login failed.');
+
+      if (password !== confirmPassword) {
+        throw new Error('Passwords do not match.');
+      }
+      if (password.length < 6) {
+        throw new Error('Password must be at least 6 characters.');
+      }
+      const response = await completeSupervisorInvite({
+        invite: inviteLink.trim(),
+        password
+      });
+      if (completeSignIn(response)) {
+        window.history.replaceState(null, '', window.location.pathname);
+        return;
+      }
+      throw new Error('Invite setup failed.');
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Auth failed');
     } finally {
@@ -69,13 +145,40 @@ export function Login() {
     }
   };
 
+  const switchMode = (nextMode: AuthMode) => {
+    setMode(nextMode);
+    setPassword('');
+    setConfirmPassword('');
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+  };
+
+  const title =
+    mode === 'admin-register'
+      ? 'Register Admin'
+      : mode === 'supervisor-invite'
+        ? 'Supervisor Invite'
+        : 'IntegriScan';
+  const subtitle =
+    mode === 'admin-register'
+      ? 'Create the first administrator account'
+      : mode === 'supervisor-invite'
+        ? 'Create your supervisor password'
+        : 'Welcome Back !!';
+  const submitLabel =
+    mode === 'admin-register'
+      ? 'Register Admin'
+      : mode === 'supervisor-invite'
+        ? 'Complete Invite'
+        : 'Login';
+
   return (
     <div
       className="flex min-h-screen items-center justify-center px-4 py-6 font-sans antialiased"
       style={{ backgroundColor: PAGE_BG }}
     >
       <div
-        className="w-full max-w-[318px] overflow-y-auto rounded-2xl border bg-white px-6 py-6 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        className="w-full max-w-[378px] overflow-y-auto rounded-2xl border bg-white px-6 py-6 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
         style={{ borderColor: BORDER }}
       >
         <header className="flex flex-col items-center text-center">
@@ -86,38 +189,140 @@ export function Login() {
             <ShieldCheck size={22} strokeWidth={2} />
           </div>
           <h1 className="text-[1.25rem] font-bold leading-tight tracking-tight" style={{ color: NAVY }}>
-            IntegriScan
+            {title}
           </h1>
           <p className="mt-1 text-[0.8125rem] font-normal leading-snug" style={{ color: LABEL }}>
-            Welcome Back !!
+            {subtitle}
           </p>
         </header>
 
         <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-[10px]">
-          <AuthField label="Work Email">
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="supervisor@integriscan.co.za"
-              className={fieldClassName}
-              autoComplete="username"
-              aria-label="Work Email"
-              required
-            />
-          </AuthField>
+          {mode === 'supervisor-invite' && (
+            <AuthField label="Invite Link">
+              <textarea
+                value={inviteLink}
+                onChange={(e) => setInviteLink(e.target.value)}
+                placeholder="Paste supervisor invite link"
+                className={`${fieldClassName} min-h-[68px] resize-y py-2`}
+                aria-label="Invite Link"
+                required
+              />
+            </AuthField>
+          )}
+
+          {mode === 'admin-register' && (
+            <div className="grid grid-cols-2 gap-2">
+              <AuthField label="First Name">
+                <input
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  placeholder="Admin"
+                  className={fieldClassName}
+                  aria-label="First Name"
+                  required
+                />
+              </AuthField>
+              <AuthField label="Last Name">
+                <input
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  placeholder="User"
+                  className={fieldClassName}
+                  aria-label="Last Name"
+                  required
+                />
+              </AuthField>
+            </div>
+          )}
+
+          {mode !== 'supervisor-invite' && (
+            <AuthField label="Work Email">
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="supervisor@integriscan.co.za"
+                className={fieldClassName}
+                autoComplete="username"
+                aria-label="Work Email"
+                required
+              />
+            </AuthField>
+          )}
+
+          {mode === 'admin-register' && (
+            <div className="grid grid-cols-2 gap-2">
+              <AuthField label="Badge Number">
+                <input
+                  value={badgeNumber}
+                  onChange={(e) => setBadgeNumber(e.target.value)}
+                  placeholder="ADM-001"
+                  className={fieldClassName}
+                  aria-label="Badge Number"
+                  required
+                />
+              </AuthField>
+              <AuthField label="ID Number">
+                <input
+                  value={idNumber}
+                  onChange={(e) => setIdNumber(e.target.value)}
+                  placeholder="9001015009087"
+                  className={fieldClassName}
+                  aria-label="ID Number"
+                  required
+                />
+              </AuthField>
+            </div>
+          )}
+
+          {mode === 'admin-register' && (
+            <div className="grid grid-cols-2 gap-2">
+              <AuthField label="Province">
+                <input
+                  value={province}
+                  onChange={(e) => setProvince(e.target.value)}
+                  placeholder="Gauteng"
+                  className={fieldClassName}
+                  aria-label="Province"
+                  required
+                />
+              </AuthField>
+              <AuthField label="Region">
+                <input
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value)}
+                  placeholder="Johannesburg"
+                  className={fieldClassName}
+                  aria-label="Region"
+                  required
+                />
+              </AuthField>
+            </div>
+          )}
 
           <PasswordField
-            label="Password"
+            label={mode === 'login' ? 'Password' : 'New Password'}
             value={password}
             onChange={setPassword}
             show={showPassword}
             onToggle={() => setShowPassword((v) => !v)}
-            placeholder="Enter password"
-            autoComplete="current-password"
+            placeholder={mode === 'login' ? 'Enter password' : 'Create password'}
+            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
           />
 
-          {import.meta.env.DEV && (
+          {mode !== 'login' && (
+            <PasswordField
+              label="Confirm Password"
+              value={confirmPassword}
+              onChange={setConfirmPassword}
+              show={showConfirmPassword}
+              onToggle={() => setShowConfirmPassword((v) => !v)}
+              placeholder="Confirm password"
+              autoComplete="new-password"
+            />
+          )}
+
+          {mode === 'login' && import.meta.env.DEV && (
             <label className="flex items-center gap-2 pt-0.5 text-[11px] text-slate-500">
               <input
                 type="checkbox"
@@ -130,9 +335,11 @@ export function Login() {
             </label>
           )}
 
-          <p className="pt-0.5 text-center text-[10px] leading-relaxed text-slate-500">
-            Admins add supervisors. Supervisors add officers. Accounts are not self-registered.
-          </p>
+          {mode === 'login' && (
+            <p className="pt-0.5 text-center text-[10px] leading-relaxed text-slate-500">
+              Admins add supervisors. Supervisors add officers. Accounts are not self-registered.
+            </p>
+          )}
 
           <button
             type="submit"
@@ -140,15 +347,40 @@ export function Login() {
             className="mt-4 w-full rounded-full py-2.5 text-[0.8125rem] font-bold text-white transition hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
             style={{ backgroundColor: NAVY }}
           >
-            {isLoading ? 'Please wait…' : 'Login'}
+            {isLoading ? 'Please wait…' : submitLabel}
           </button>
 
-          <p className="mt-1 text-center text-[10px] leading-[1.45] text-slate-500">
-            Need access? Ask your administrator.{' '}
-            <a href="#" className="underline" style={{ color: ACCENT }} onClick={(e) => e.preventDefault()}>
-              Support
-            </a>
-          </p>
+          <div className="mt-1 flex flex-wrap justify-center gap-x-3 gap-y-1 text-center text-[10px] leading-[1.45] text-slate-500">
+            {mode !== 'login' ? (
+              <button
+                type="button"
+                className="underline"
+                style={{ color: ACCENT }}
+                onClick={() => switchMode('login')}
+              >
+                Back to login
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="underline"
+                  style={{ color: ACCENT }}
+                  onClick={() => switchMode('admin-register')}
+                >
+                  Register admin
+                </button>
+                <button
+                  type="button"
+                  className="underline"
+                  style={{ color: ACCENT }}
+                  onClick={() => switchMode('supervisor-invite')}
+                >
+                  Use supervisor invite
+                </button>
+              </>
+            )}
+          </div>
         </form>
       </div>
     </div>

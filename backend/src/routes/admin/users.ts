@@ -10,11 +10,18 @@ import {
 } from '../../constants/roles';
 import { writeAuditLog } from '../../utilities/auditLog';
 import { asyncHandler } from '../../asyncHandler';
+import {
+  buildSupervisorInviteLink,
+  generateOfficerInviteToken,
+  hashOfficerInviteToken,
+  officerInviteExpiresAt
+} from '../../utilities/officerInvites';
+import { sendSupervisorInviteEmail } from '../../utilities/email';
 
 const router = Router();
 
 type DbError = { message?: string; code?: string; details?: string; hint?: string };
-type PortalSource = 'officer_users' | 'supervisor_users';
+type PortalSource = 'officer_users' | 'supervisor_users' | 'admin_users';
 
 const serviceSupabase = createClient(
   process.env.SUPABASE_URL ?? '',
@@ -32,8 +39,8 @@ function digitsOnly(value?: string): string {
 }
 
 async function allocateIdNumber(
-  table: 'officer_users' | 'supervisor_users',
-  idColumn: 'officer_id_number' | 'supervisor_id_number',
+  table: 'officer_users' | 'supervisor_users' | 'admin_users',
+  idColumn: 'officer_id_number' | 'supervisor_id_number' | 'admin_id_number',
   phone?: string,
   serviceNumber?: string,
   idNumber?: string
@@ -70,7 +77,7 @@ function formatDbError(error: DbError | null): string {
 
 async function emailTaken(email: string): Promise<boolean> {
   const normalized = email.trim().toLowerCase();
-  const [{ data: officers }, { data: supervisors }] = await Promise.all([
+  const [{ data: officers }, { data: supervisors }, { data: admins }] = await Promise.all([
     serviceSupabase
       .from('officer_users')
       .select('officer_id')
@@ -80,9 +87,14 @@ async function emailTaken(email: string): Promise<boolean> {
       .from('supervisor_users')
       .select('supervisor_id')
       .eq('supervisor_email_address', normalized)
+      .limit(1),
+    serviceSupabase
+      .from('admin_users')
+      .select('admin_id')
+      .eq('admin_email_address', normalized)
       .limit(1)
   ]);
-  return Boolean(officers?.length || supervisors?.length);
+  return Boolean(officers?.length || supervisors?.length || admins?.length);
 }
 
 async function removeOrphanAuthUser(email: string): Promise<boolean> {
@@ -142,14 +154,30 @@ function toPortalUserFromSupervisor(row: Record<string, unknown>) {
   };
 }
 
+function toPortalUserFromAdmin(row: Record<string, unknown>) {
+  const adminId = Number(row.admin_id);
+  const roleId = Number(row.role_id) || ROLE_ADMIN;
+  return {
+    officerId: adminId,
+    userId: portalUserId(adminId, roleId),
+    name: `${row.admin_name} ${row.admin_surname}`.trim(),
+    email: String(row.admin_email_address),
+    role: roleLabel(roleId),
+    roleId,
+    station: String(row.region || row.province || '—'),
+    status: String(row.employment_status || 'Active'),
+    createdAt: String(row.created_at ?? ''),
+    source: 'admin_users' as const
+  };
+}
+
 router.use(requireAdmin);
 
 router.get('/', async (_req, res) => {
   const [adminsResult, supervisorsResult] = await Promise.all([
     serviceSupabase
-      .from('officer_users')
+      .from('admin_users')
       .select('*')
-      .eq('role_id', ROLE_ADMIN)
       .order('created_at', { ascending: false }),
     serviceSupabase
       .from('supervisor_users')
@@ -177,7 +205,7 @@ router.get('/', async (_req, res) => {
   }
 
   const users = [
-    ...(adminsResult.data ?? []).map((row) => toPortalUserFromOfficer(row as Record<string, unknown>)),
+    ...(adminsResult.data ?? []).map((row) => toPortalUserFromAdmin(row as Record<string, unknown>)),
     ...(supervisorsResult.data ?? []).map((row) =>
       toPortalUserFromSupervisor(row as Record<string, unknown>)
     ),
@@ -216,12 +244,12 @@ router.post('/', asyncHandler(async (req, res) => {
     idNumber?: string;
   };
 
-  if (!email || !password || !name || !surname) {
+  if (!email || !name || !surname) {
     return res.status(400).json({
       error:
         Object.keys(body).length === 0
           ? 'Request body is missing. Send JSON with Content-Type: application/json.'
-          : 'Email, password, name, and surname are required'
+          : 'Email, name, and surname are required'
     });
   }
 
@@ -230,44 +258,28 @@ router.post('/', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Role must be Supervisor or Admin' });
   }
 
+  if (resolvedRoleId === ROLE_ADMIN && !password) {
+    return res.status(400).json({ error: 'Password is required when creating an admin account' });
+  }
+
   const normalizedEmail = email.trim().toLowerCase();
 
   if (await emailTaken(normalizedEmail)) {
     return res.status(409).json({ error: 'A user with this email already exists' });
   }
 
-  await removeOrphanAuthUser(normalizedEmail);
-
-  let authData = await serviceSupabase.auth.admin.createUser({
-    email: normalizedEmail,
-    password,
-    email_confirm: true
-  });
-
-  if (authData.error?.message?.toLowerCase().includes('already')) {
-    const cleaned = await removeOrphanAuthUser(normalizedEmail);
-    if (cleaned) {
-      authData = await serviceSupabase.auth.admin.createUser({
-        email: normalizedEmail,
-        password,
-        email_confirm: true
-      });
-    }
-  }
-
-  const { data: authUserData, error: authError } = authData;
-
-  if (authError || !authUserData.user) {
-    const msg = authError?.message ?? 'Failed to create auth account';
-    const statusCode = msg.toLowerCase().includes('already') ? 409 : 400;
-    return res.status(statusCode).json({ error: msg });
-  }
-
   let created:
     | ReturnType<typeof toPortalUserFromOfficer>
-    | ReturnType<typeof toPortalUserFromSupervisor>;
+    | ReturnType<typeof toPortalUserFromSupervisor>
+    | ReturnType<typeof toPortalUserFromAdmin>;
 
   if (resolvedRoleId === ROLE_SUPERVISOR) {
+    const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    const existingAuth = authList?.users?.find((u) => u.email?.toLowerCase() === normalizedEmail);
+    if (existingAuth) {
+      return res.status(409).json({ error: 'An auth account with this email already exists' });
+    }
+
     const supervisorIdNumber = await allocateIdNumber(
       'supervisor_users',
       'supervisor_id_number',
@@ -285,7 +297,7 @@ router.post('/', asyncHandler(async (req, res) => {
           supervisor_surname: surname,
           supervisor_id_number: supervisorIdNumber,
           badge_number: serviceNumber?.trim() || 'SUP',
-          employment_status: status ?? 'Active',
+          employment_status: 'Invited',
           province: rank?.trim() || '',
           region: station ?? '',
           officer_type_id: 1,
@@ -295,7 +307,6 @@ router.post('/', asyncHandler(async (req, res) => {
       .select('*');
 
     if (insertError || !inserted?.length) {
-      await safeDeleteAuthUser(authUserData.user.id);
       console.error('[admin/users] supervisor insert failed:', insertError);
       return res.status(500).json({
         error: formatDbError(insertError as DbError | null),
@@ -304,25 +315,103 @@ router.post('/', asyncHandler(async (req, res) => {
     }
 
     created = toPortalUserFromSupervisor(inserted[0] as Record<string, unknown>);
+
+    const token = generateOfficerInviteToken();
+    const expiresAt = officerInviteExpiresAt();
+    let inviteLink: string | undefined;
+    let inviteEmailSent = false;
+    let emailWarning: string | undefined;
+
+    const { error: inviteError } = await serviceSupabase.from('supervisor_invitations').insert([{
+      supervisor_id: created.officerId,
+      token_hash: hashOfficerInviteToken(token),
+      created_by_email: authReq.userEmail ?? null,
+      expires_at: expiresAt
+    }]);
+
+    if (inviteError) {
+      console.warn('[admin/users] supervisor invite table insert failed (table may not exist yet):', inviteError.message);
+      emailWarning = 'Invite link unavailable — supervisor_invitations table not set up yet. Supervisor was still created.';
+    } else {
+      inviteLink = buildSupervisorInviteLink(token);
+
+      try {
+        await sendSupervisorInviteEmail({
+          to: normalizedEmail,
+          supervisorName: `${name} ${surname}`.trim(),
+          inviteLink,
+          expiresAt
+        });
+        inviteEmailSent = true;
+      } catch (error) {
+        emailWarning = error instanceof Error ? error.message : 'Failed to send supervisor invite email';
+        console.warn('[admin/users] supervisor invite email failed, returning link:', emailWarning);
+      }
+    }
+
+    const createdWithInvite = {
+      ...created,
+      invitationExpiresAt: expiresAt,
+      inviteEmailSent,
+      ...(inviteLink ? { inviteLink } : {}),
+      ...(emailWarning ? { emailWarning } : {})
+    };
+
+    await writeAuditLog(
+      authReq.userEmail ?? 'unknown',
+      inviteEmailSent
+        ? 'Created supervisor invite'
+        : 'Created supervisor invite (email not sent)',
+      created.userId
+    );
+
+    return res.status(201).json(createdWithInvite);
   } else {
-    const officerIdNumber = await allocateIdNumber(
-      'officer_users',
-      'officer_id_number',
+    await removeOrphanAuthUser(normalizedEmail);
+
+    let authData = await serviceSupabase.auth.admin.createUser({
+      email: normalizedEmail,
+      password,
+      email_confirm: true
+    });
+
+    if (authData.error?.message?.toLowerCase().includes('already')) {
+      const cleaned = await removeOrphanAuthUser(normalizedEmail);
+      if (cleaned) {
+        authData = await serviceSupabase.auth.admin.createUser({
+          email: normalizedEmail,
+          password,
+          email_confirm: true
+        });
+      }
+    }
+
+    const { data: authUserData, error: authError } = authData;
+
+    if (authError || !authUserData.user) {
+      const msg = authError?.message ?? 'Failed to create auth account';
+      const statusCode = msg.toLowerCase().includes('already') ? 409 : 400;
+      return res.status(statusCode).json({ error: msg });
+    }
+
+    const adminIdNumber = await allocateIdNumber(
+      'admin_users',
+      'admin_id_number',
       phone,
       serviceNumber,
       idNumber
     );
 
     const { data: inserted, error: insertError } = await serviceSupabase
-      .from('officer_users')
+      .from('admin_users')
       .insert([
         {
-          officer_email_address: normalizedEmail,
-          officer_name: name,
-          officer_surname: surname,
-          officer_id_number: officerIdNumber,
+          admin_email_address: normalizedEmail,
+          admin_name: name,
+          admin_surname: surname,
+          admin_id_number: adminIdNumber,
           badge_number: serviceNumber?.trim() || 'ADM',
-          officer_employment_status: status ?? 'Active',
+          employment_status: status ?? 'Active',
           province: rank?.trim() || '',
           region: station ?? '',
           officer_type_id: 1,
@@ -340,12 +429,12 @@ router.post('/', asyncHandler(async (req, res) => {
       });
     }
 
-    created = toPortalUserFromOfficer(inserted[0] as Record<string, unknown>);
+    created = toPortalUserFromAdmin(inserted[0] as Record<string, unknown>);
   }
 
   await writeAuditLog(
     authReq.userEmail ?? 'unknown',
-    resolvedRoleId === ROLE_SUPERVISOR ? 'Created supervisor account' : 'Created admin account',
+    'Created admin account',
     created.userId
   );
 
@@ -353,6 +442,15 @@ router.post('/', asyncHandler(async (req, res) => {
 }));
 
 const PORTAL_STATUSES = ['Active', 'Inactive'] as const;
+type PortalUserResult =
+  | {
+      user:
+        | ReturnType<typeof toPortalUserFromOfficer>
+        | ReturnType<typeof toPortalUserFromSupervisor>
+        | ReturnType<typeof toPortalUserFromAdmin>;
+    }
+  | { missing: true }
+  | { error: string };
 
 router.patch('/:officerId', asyncHandler(async (req, res) => {
   const authReq = req as unknown as AdminRequest;
@@ -380,17 +478,38 @@ router.patch('/:officerId', asyncHandler(async (req, res) => {
 
   if (
     status === 'Inactive' &&
-    officerId === authReq.adminOfficerId &&
-    (!sourceParam || sourceParam === 'officer_users')
+    officerId === authReq.adminProfileId &&
+    (!sourceParam || sourceParam === 'admin_users' || roleIdParam === ROLE_ADMIN)
   ) {
     return res.status(400).json({ error: 'You cannot deactivate your own account' });
   }
 
+  const preferAdmin =
+    sourceParam === 'admin_users' ||
+    (!sourceParam && roleIdParam === ROLE_ADMIN);
   const preferSupervisor =
     sourceParam === 'supervisor_users' ||
     (!sourceParam && roleIdParam === ROLE_SUPERVISOR);
 
-  const updateSupervisor = async () => {
+  const updateAdmin = async (): Promise<PortalUserResult> => {
+    const patch: Record<string, unknown> = {};
+    if (status) patch.employment_status = status;
+    if (station !== undefined) patch.region = station;
+
+    const { data, error } = await serviceSupabase
+      .from('admin_users')
+      .update(patch)
+      .eq('admin_id', officerId)
+      .select('*')
+      .limit(1);
+
+    if (error) return { error: error.message };
+    const row = Array.isArray(data) ? data[0] : null;
+    if (!row) return { missing: true as const };
+    return { user: toPortalUserFromAdmin(row as Record<string, unknown>) };
+  };
+
+  const updateSupervisor = async (): Promise<PortalUserResult> => {
     const patch: Record<string, unknown> = {};
     if (status) patch.employment_status = status;
     if (station !== undefined) patch.region = station;
@@ -408,7 +527,7 @@ router.patch('/:officerId', asyncHandler(async (req, res) => {
     return { user: toPortalUserFromSupervisor(row as Record<string, unknown>) };
   };
 
-  const updateOfficerPortal = async () => {
+  const updateOfficerPortal = async (): Promise<PortalUserResult> => {
     const patch: Record<string, unknown> = {};
     if (status) patch.officer_employment_status = status;
     if (station !== undefined) patch.region = station;
@@ -427,9 +546,16 @@ router.patch('/:officerId', asyncHandler(async (req, res) => {
     return { user: toPortalUserFromOfficer(row as Record<string, unknown>) };
   };
 
-  let result = preferSupervisor ? await updateSupervisor() : await updateOfficerPortal();
-  if ('missing' in result && result.missing) {
-    result = preferSupervisor ? await updateOfficerPortal() : await updateSupervisor();
+  const attempts = preferAdmin
+    ? [updateAdmin, updateOfficerPortal, updateSupervisor]
+    : preferSupervisor
+      ? [updateSupervisor, updateOfficerPortal, updateAdmin]
+      : [updateOfficerPortal, updateAdmin, updateSupervisor];
+
+  let result: PortalUserResult = { missing: true };
+  for (const attempt of attempts) {
+    result = await attempt();
+    if (!('missing' in result)) break;
   }
 
   if ('error' in result && result.error) {
@@ -439,7 +565,7 @@ router.patch('/:officerId', asyncHandler(async (req, res) => {
     return res.status(404).json({ error: 'User not found' });
   }
 
-  const updated = (result as { user: ReturnType<typeof toPortalUserFromOfficer> }).user;
+  const updated = (result as Extract<PortalUserResult, { user: unknown }>).user;
 
   await writeAuditLog(
     authReq.userEmail ?? 'unknown',
@@ -460,13 +586,42 @@ router.delete('/:officerId', async (req, res) => {
     return res.status(400).json({ error: 'Invalid user id' });
   }
 
-  if (officerId === authReq.adminOfficerId && (!sourceParam || sourceParam === 'officer_users')) {
+  if (
+    officerId === authReq.adminProfileId &&
+    (!sourceParam || sourceParam === 'admin_users' || roleIdParam === ROLE_ADMIN)
+  ) {
     return res.status(400).json({ error: 'You cannot remove your own account' });
   }
 
+  const preferAdmin =
+    sourceParam === 'admin_users' ||
+    (!sourceParam && roleIdParam === ROLE_ADMIN);
   const preferSupervisor =
     sourceParam === 'supervisor_users' ||
     (!sourceParam && roleIdParam === ROLE_SUPERVISOR);
+
+  const tryDeleteAdmin = async () => {
+    const { data: targetRows, error: fetchError } = await serviceSupabase
+      .from('admin_users')
+      .select('*')
+      .eq('admin_id', officerId)
+      .limit(1);
+
+    if (fetchError) return { error: fetchError.message as string };
+    const target = Array.isArray(targetRows) ? targetRows[0] : null;
+    if (!target) return { missing: true as const };
+
+    const email = String(target.admin_email_address);
+    const removedUserId = portalUserId(officerId, ROLE_ADMIN);
+
+    const { error: deleteError } = await serviceSupabase
+      .from('admin_users')
+      .delete()
+      .eq('admin_id', officerId);
+
+    if (deleteError) return { error: deleteError.message };
+    return { email, removedUserId };
+  };
 
   const tryDeleteOfficer = async () => {
     const { data: targetRows, error: fetchError } = await serviceSupabase
@@ -515,9 +670,19 @@ router.delete('/:officerId', async (req, res) => {
     return { email, removedUserId };
   };
 
-  let result = preferSupervisor ? await tryDeleteSupervisor() : await tryDeleteOfficer();
-  if ('missing' in result && result.missing) {
-    result = preferSupervisor ? await tryDeleteOfficer() : await tryDeleteSupervisor();
+  const attempts = preferAdmin
+    ? [tryDeleteAdmin, tryDeleteOfficer, tryDeleteSupervisor]
+    : preferSupervisor
+      ? [tryDeleteSupervisor, tryDeleteOfficer, tryDeleteAdmin]
+      : [tryDeleteOfficer, tryDeleteAdmin, tryDeleteSupervisor];
+
+  let result:
+    | { email: string; removedUserId: string }
+    | { missing: true }
+    | { error: string } = { missing: true };
+  for (const attempt of attempts) {
+    result = await attempt();
+    if (!('missing' in result)) break;
   }
 
   if ('error' in result && result.error) {

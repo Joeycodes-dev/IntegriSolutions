@@ -140,6 +140,15 @@ router.post('/officer-invite', asyncHandler(async (req, res) => {
     return res.status(409).json({ error: 'A user with this email already exists' });
   }
 
+  const { data: adminRows } = await serviceSupabase
+    .from('admin_users')
+    .select('admin_id')
+    .eq('admin_email_address', email)
+    .limit(1);
+  if (adminRows?.length) {
+    return res.status(409).json({ error: 'A user with this email already exists' });
+  }
+
   const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
   const existingAuth = authList?.users?.find((u) => u.email?.toLowerCase() === email);
   if (existingAuth) {
@@ -203,6 +212,160 @@ router.post('/officer-invite', asyncHandler(async (req, res) => {
   });
 }));
 
+router.post('/supervisor-invite', asyncHandler(async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const inviteInput = String(body.invite ?? body.inviteLink ?? body.token ?? '');
+  const password = String(body.password ?? '');
+
+  if (!inviteInput || !password) {
+    return res.status(400).json({ error: 'Invite link and password are required' });
+  }
+
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+
+  const token = extractOfficerInviteToken(inviteInput);
+  if (!token) {
+    return res.status(400).json({ error: 'Invalid invite link' });
+  }
+
+  const { data: inviteRows, error: inviteError } = await serviceSupabase
+    .from('supervisor_invitations')
+    .select('*')
+    .eq('token_hash', hashOfficerInviteToken(token))
+    .limit(1);
+
+  if (inviteError) {
+    return res.status(500).json({ error: inviteError.message });
+  }
+
+  const invite = Array.isArray(inviteRows) ? inviteRows[0] as Record<string, unknown> : null;
+  if (!invite) {
+    return res.status(400).json({ error: 'Invite link is invalid or has been revoked' });
+  }
+
+  if (invite.accepted_at) {
+    return res.status(409).json({ error: 'Invite link has already been used' });
+  }
+
+  const expiresAt = new Date(String(invite.expires_at));
+  if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() < Date.now()) {
+    return res.status(410).json({ error: 'Invite link has expired. Ask your administrator for a new invite.' });
+  }
+
+  const supervisorId = Number(invite.supervisor_id);
+  const { data: supervisorRows, error: supervisorError } = await serviceSupabase
+    .from('supervisor_users')
+    .select('*')
+    .eq('supervisor_id', supervisorId)
+    .limit(1);
+
+  if (supervisorError) {
+    return res.status(500).json({ error: supervisorError.message });
+  }
+
+  const supervisor = Array.isArray(supervisorRows) ? supervisorRows[0] as Record<string, unknown> : null;
+  if (!supervisor || Number(supervisor.role_id) !== ROLE_SUPERVISOR) {
+    return res.status(404).json({ error: 'Supervisor profile not found for this invite' });
+  }
+
+  const email = String(supervisor.supervisor_email_address ?? '').trim().toLowerCase();
+  if (!email) {
+    return res.status(400).json({ error: 'Supervisor invite does not have an email address. Ask your administrator for a new invite.' });
+  }
+
+  const { data: supervisorEmailRows } = await serviceSupabase
+    .from('supervisor_users')
+    .select('supervisor_id')
+    .eq('supervisor_email_address', email)
+    .limit(1);
+  const existingSupervisor = Array.isArray(supervisorEmailRows) ? supervisorEmailRows[0] as Record<string, unknown> : null;
+  if (existingSupervisor && Number(existingSupervisor.supervisor_id) !== supervisorId) {
+    return res.status(409).json({ error: 'A user with this email already exists' });
+  }
+
+  const { data: officerRows } = await serviceSupabase
+    .from('officer_users')
+    .select('officer_id')
+    .eq('officer_email_address', email)
+    .limit(1);
+  if (officerRows?.length) {
+    return res.status(409).json({ error: 'A user with this email already exists' });
+  }
+
+  const { data: adminRows } = await serviceSupabase
+    .from('admin_users')
+    .select('admin_id')
+    .eq('admin_email_address', email)
+    .limit(1);
+  if (adminRows?.length) {
+    return res.status(409).json({ error: 'A user with this email already exists' });
+  }
+
+  const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  const existingAuth = authList?.users?.find((u) => u.email?.toLowerCase() === email);
+  if (existingAuth) {
+    return res.status(409).json({ error: 'An auth account with this email already exists' });
+  }
+
+  const { data: authData, error: authError } = await serviceSupabase.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true
+  });
+
+  if (authError || !authData.user) {
+    const msg = authError?.message ?? 'Failed to create supervisor login';
+    const status = msg.toLowerCase().includes('already') ? 409 : 400;
+    return res.status(status).json({ error: msg });
+  }
+
+  const { error: profileError } = await serviceSupabase
+    .from('supervisor_users')
+    .update({
+      employment_status: 'Active'
+    })
+    .eq('supervisor_id', supervisorId);
+
+  if (profileError) {
+    await serviceSupabase.auth.admin.deleteUser(authData.user.id);
+    return res.status(500).json({ error: (profileError as DbError).message ?? 'Failed to activate supervisor profile' });
+  }
+
+  const acceptedAt = new Date().toISOString();
+  const { error: inviteUpdateError } = await serviceSupabase
+    .from('supervisor_invitations')
+    .update({ accepted_at: acceptedAt, accepted_email: email })
+    .eq('id', invite.id);
+
+  if (inviteUpdateError) {
+    console.warn('[auth] Failed to mark supervisor invite as accepted (column may be missing):', inviteUpdateError.message);
+  }
+
+  const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  if (loginError || !loginData.session || !loginData.user) {
+    return res.status(500).json({ error: loginError?.message ?? 'Supervisor login was created but automatic sign-in failed' });
+  }
+
+  const resolved = await resolveProfileByEmail(email, loginData.user.id);
+  if (!resolved) {
+    return res.status(500).json({ error: 'Supervisor profile activation failed' });
+  }
+
+  await writeAuditLog(email, 'Accepted supervisor invite', portalUserId(resolved.dbId, resolved.profile.roleId));
+
+  return res.status(201).json({
+    session: loginData.session,
+    user: loginData.user,
+    profile: resolved.profile
+  });
+}));
+
 router.post('/register', async (req, res) => {
   const {
     email,
@@ -243,9 +406,8 @@ router.post('/register', async (req, res) => {
 
   // First-admin bootstrap only — after that, admins create other portal users.
   const { data: existingAdmins, error: adminCountError } = await serviceSupabase
-    .from('officer_users')
-    .select('officer_id')
-    .eq('role_id', ROLE_ADMIN)
+    .from('admin_users')
+    .select('admin_id')
     .limit(1);
 
   if (adminCountError) {
@@ -270,7 +432,13 @@ router.post('/register', async (req, res) => {
     .eq('supervisor_email_address', email)
     .limit(1);
 
-  if (existingOfficers?.length || existingSupervisors?.length) {
+  const { data: existingAdminsByEmail } = await serviceSupabase
+    .from('admin_users')
+    .select('admin_id')
+    .eq('admin_email_address', email)
+    .limit(1);
+
+  if (existingOfficers?.length || existingSupervisors?.length || existingAdminsByEmail?.length) {
     return res.status(409).json({ error: 'A user with this email already exists' });
   }
 
@@ -292,13 +460,13 @@ router.post('/register', async (req, res) => {
     return res.status(400).json({ error: authError?.message ?? 'Registration failed' });
   }
 
-  const { error: insertError } = await serviceSupabase.from('officer_users').insert([{
-    officer_email_address: email,
-    officer_name: name,
-    officer_surname: surname,
-    officer_id_number: Number(idNumber),
+  const { error: insertError } = await serviceSupabase.from('admin_users').insert([{
+    admin_email_address: email,
+    admin_name: name,
+    admin_surname: surname,
+    admin_id_number: Number(idNumber),
     badge_number: badgeNumber,
-    officer_employment_status: employmentStatus ?? 'Active',
+    employment_status: employmentStatus ?? 'Active',
     province: province ?? '',
     region: region ?? '',
     officer_type_id: Number(officerTypeId ?? 1),

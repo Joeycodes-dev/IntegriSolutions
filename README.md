@@ -96,9 +96,11 @@ cd apps/mobile && npm install
 
 In your Supabase project, open the **SQL Editor** and run these files **in order**:
 
-1. `backend/migrations/20260729_core_schema.sql` — `officer_users`, `supervisor_users`, immutable `tests` (WORM), `invalidations`, `system_settings`
-2. `backend/migrations/20260719_officer_invitations.sql`
-3. `backend/migrations/20260728_evidence_annotations_audit.sql` — `audit_logs`, `annotations`, `evidence` + storage bucket
+1. `backend/migrations/20260729_core_schema.sql` — `officer_users`, `supervisor_users`, `admin_users`, immutable `tests` (WORM), `invalidations`, `system_settings`
+2. `backend/migrations/20260729_admin_users.sql`
+3. `backend/migrations/20260719_officer_invitations.sql`
+4. `backend/migrations/20260729_supervisor_invitations.sql`
+5. `backend/migrations/20260728_evidence_annotations_audit.sql` — `audit_logs`, `annotations`, `evidence` + storage bucket
 
 **Important:** DUI test records cannot be edited or deleted (WORM). Status updates use account APIs instead (`PATCH` portal users / field officers).
 
@@ -119,12 +121,13 @@ cd apps/mobile && npx expo start
 
 ## API Overview
 
-All endpoints except `/api/auth/login` and `/api/auth/register` require a `Bearer <token>` JWT in the `Authorization` header.
+All endpoints except `/api/auth/login`, `/api/auth/register`, and invite acceptance endpoints require a `Bearer <token>` JWT in the `Authorization` header.
 
 | Method | Endpoint | Description | Role |
 |--------|----------|-------------|------|
 | `POST` | `/api/auth/login` | Login and receive a JWT | Public |
 | `POST` | `/api/auth/officer-invite` | Accept officer invite + set password | Public |
+| `POST` | `/api/auth/supervisor-invite` | Accept supervisor invite + set password | Public |
 | `GET` | `/api/tests` | List enforcement test records | Authenticated |
 | `POST` | `/api/sync` | Sync offline officer captures | Officer |
 | `PATCH` | `/api/admin/users/:id` | Update portal user status (not tests) | Admin |

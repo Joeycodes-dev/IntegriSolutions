@@ -87,6 +87,16 @@ export async function register(params: {
   });
 }
 
+export async function completeSupervisorInvite(params: {
+  invite: string;
+  password: string;
+}) {
+  return request<{ session?: { access_token: string }; profile: any }>('/api/auth/supervisor-invite', {
+    method: 'POST',
+    body: JSON.stringify(params)
+  });
+}
+
 export async function getProfile() {
   const token = getAccessToken();
   if (!token) throw new Error('Not authenticated');
@@ -156,7 +166,7 @@ export async function getPortalUsers() {
 
 export async function createPortalUser(payload: {
   email: string;
-  password: string;
+  password?: string;
   name: string;
   surname: string;
   roleId: number;
@@ -177,7 +187,7 @@ export async function createPortalUser(payload: {
 export async function updatePortalUser(
   officerId: number,
   payload: { status?: string; station?: string },
-  options?: { source?: 'officer_users' | 'supervisor_users'; roleId?: number }
+  options?: { source?: 'officer_users' | 'supervisor_users' | 'admin_users'; roleId?: number }
 ) {
   const params = new URLSearchParams();
   if (options?.source) params.set('source', options.source);
@@ -196,7 +206,7 @@ export async function updatePortalUser(
 
 export async function removePortalUser(
   officerId: number,
-  options?: { source?: 'officer_users' | 'supervisor_users'; roleId?: number }
+  options?: { source?: 'officer_users' | 'supervisor_users' | 'admin_users'; roleId?: number }
 ) {
   const params = new URLSearchParams();
   if (options?.source) params.set('source', options.source);

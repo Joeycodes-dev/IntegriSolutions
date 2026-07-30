@@ -1,4 +1,4 @@
-export type UserRole = 'officer' | 'supervisor';
+export type UserRole = 'officer' | 'supervisor' | 'admin';
 
 export interface UserProfile {
   uid: string;                    // Supabase Auth user ID

@@ -29,8 +29,12 @@ export interface PortalUser {
   station: string;
   status: string;
   createdAt: string;
+  invitationExpiresAt?: string;
+  inviteEmailSent?: boolean;
+  inviteLink?: string;
+  emailWarning?: string;
   /** Which profile table this portal user lives in. */
-  source?: 'officer_users' | 'supervisor_users';
+  source?: 'officer_users' | 'supervisor_users' | 'admin_users';
 }
 
 export interface UserProfile {

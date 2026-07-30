@@ -47,3 +47,10 @@ export function buildOfficerInviteLink(token: string): string {
   const separator = baseUrl.includes('?') ? '&' : '?';
   return `${baseUrl}${separator}token=${encodeURIComponent(token)}`;
 }
+
+export function buildSupervisorInviteLink(token: string): string {
+  const baseUrl = process.env.SUPERVISOR_INVITE_BASE_URL
+    ?? `${process.env.FRONTEND_URL ?? 'http://localhost:3000'}?supervisorInvite=1`;
+  const separator = baseUrl.includes('?') ? '&' : '?';
+  return `${baseUrl}${separator}token=${encodeURIComponent(token)}`;
+}

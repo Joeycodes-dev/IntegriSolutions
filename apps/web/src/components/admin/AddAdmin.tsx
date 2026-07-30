@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
-import { ArrowLeft, CheckCircle2, ChevronDown, Copy, Mail } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Eye, EyeOff } from 'lucide-react';
 import { createPortalUser, getAccessToken } from '../../services/api';
-import { ROLE_SUPERVISOR } from '../../lib/roles';
+import { ROLE_ADMIN } from '../../lib/roles';
 import type { PortalUser } from '../../types';
 
 const NAVY = '#0D2137';
@@ -10,19 +10,17 @@ const BORDER = '#E2E8F0';
 const LABEL = '#334155';
 
 const RANKS = [
-  'Constable',
-  'Sergeant',
-  'Warrant Officer',
   'Captain',
   'Lieutenant',
   'Major',
-  'Colonel'
+  'Colonel',
+  'Administrator'
 ] as const;
 
 const fieldClassName =
   'h-[38px] w-full rounded-lg border border-[#E2E8F0] bg-white px-3 text-[0.8125rem] text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-[#0D2137]/40 focus:ring-1 focus:ring-[#0D2137]/15';
 
-interface AddSupervisorProps {
+interface AddAdminProps {
   onBack: () => void;
   onCreated: (user: PortalUser) => void;
 }
@@ -35,7 +33,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function AddSupervisor({ onBack, onCreated }: AddSupervisorProps) {
+export function AddAdmin({ onBack, onCreated }: AddAdminProps) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [serviceNumber, setServiceNumber] = useState('');
@@ -43,24 +41,34 @@ export function AddSupervisor({ onBack, onCreated }: AddSupervisorProps) {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [branch, setBranch] = useState('');
-  const [createdSupervisor, setCreatedSupervisor] = useState<PortalUser | null>(null);
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!firstName.trim() || !lastName.trim() || !email || !serviceNumber || !branch) {
+    if (!firstName.trim() || !lastName.trim() || !email || !serviceNumber.trim() || !branch.trim()) {
       setError('Please complete all required fields.');
       return;
     }
 
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+
     if (!getAccessToken()) {
-      setError(
-        'Not signed in to the API. Log out, turn off Dev Bypass on login, and sign in with your admin email and password.'
-      );
+      setError('Not signed in. Log in with your admin account to add administrators.');
       return;
     }
 
@@ -77,145 +85,24 @@ export function AddSupervisor({ onBack, onCreated }: AddSupervisorProps) {
 
       const created = await createPortalUser({
         email,
+        password,
         name: firstName.trim(),
         surname: lastName.trim(),
-        roleId: ROLE_SUPERVISOR,
+        roleId: ROLE_ADMIN,
         station: branch.trim(),
-        status: 'Invited',
+        status: 'Active',
         serviceNumber: serviceNumber.trim(),
         rank,
         phone: phone.trim(),
         idNumber
       });
-      setCreatedSupervisor(created);
       onCreated(created);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add supervisor');
+      setError(err instanceof Error ? err.message : 'Failed to add admin');
     } finally {
       setIsLoading(false);
     }
   };
-
-  const handleCopyInvite = async () => {
-    if (!createdSupervisor?.inviteLink) return;
-    try {
-      await navigator.clipboard.writeText(createdSupervisor.inviteLink);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setError('Could not copy invite link. Select and copy it manually.');
-    }
-  };
-
-  if (createdSupervisor) {
-    const emailSent = createdSupervisor.inviteEmailSent !== false && !createdSupervisor.emailWarning;
-
-    return (
-      <div className="flex min-h-screen flex-1 flex-col px-6 py-8" style={{ backgroundColor: PAGE_BG }}>
-        <div className="mx-auto w-full max-w-[640px]">
-          <div className="rounded-2xl border bg-white px-6 py-6 shadow-sm" style={{ borderColor: BORDER }}>
-            <div className="mb-6 flex items-start gap-3">
-              <button
-                type="button"
-                onClick={onBack}
-                className="mt-0.5 rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
-                aria-label="Back to user management"
-              >
-                <ArrowLeft size={20} strokeWidth={2} />
-              </button>
-              <div>
-                <h1 className="text-lg font-bold leading-tight" style={{ color: NAVY }}>
-                  {emailSent ? 'Supervisor Invite Sent' : 'Supervisor Created'}
-                </h1>
-                <p className="mt-1 text-[0.8125rem] text-slate-500">
-                  {createdSupervisor.name} can open the invite link and create a password for the web portal.
-                </p>
-              </div>
-            </div>
-
-            <div
-              className={`rounded-xl border p-4 ${emailSent ? 'bg-emerald-50' : 'bg-amber-50'}`}
-              style={{ borderColor: emailSent ? '#bbf7d0' : '#fde68a' }}
-            >
-              <div className="flex items-start gap-3">
-                <div
-                  className={`mt-0.5 rounded-full p-2 ${
-                    emailSent ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
-                  }`}
-                >
-                  <CheckCircle2 size={18} />
-                </div>
-                <div>
-                  <p
-                    className={`text-[0.8125rem] font-bold ${
-                      emailSent ? 'text-emerald-900' : 'text-amber-900'
-                    }`}
-                  >
-                    {emailSent
-                      ? `Invite email sent to ${createdSupervisor.email}`
-                      : 'Supervisor saved — share the invite link manually'}
-                  </p>
-                  <p
-                    className={`mt-1 text-[0.75rem] leading-snug ${
-                      emailSent ? 'text-emerald-800' : 'text-amber-800'
-                    }`}
-                  >
-                    {emailSent
-                      ? 'The invite link is single-use. The supervisor will sign in with this email after creating their password.'
-                      : createdSupervisor.emailWarning ||
-                        'Email delivery is not configured. Copy the invite link below and send it to the supervisor.'}
-                  </p>
-                </div>
-              </div>
-              {createdSupervisor.invitationExpiresAt ? (
-                <p
-                  className={`mt-3 text-[0.6875rem] ${
-                    emailSent ? 'text-emerald-800' : 'text-amber-800'
-                  }`}
-                >
-                  Expires {new Date(createdSupervisor.invitationExpiresAt).toLocaleDateString()}.
-                </p>
-              ) : null}
-            </div>
-
-            {createdSupervisor.inviteLink ? (
-              <div className="mt-4 rounded-xl border bg-slate-50 px-3 py-3" style={{ borderColor: BORDER }}>
-                <p className="text-[0.6875rem] font-semibold text-slate-600">Invite link</p>
-                <p className="mt-1 break-all font-mono text-[0.6875rem] text-slate-700">
-                  {createdSupervisor.inviteLink}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void handleCopyInvite()}
-                  className="mt-2 inline-flex h-[30px] items-center gap-1.5 rounded-md border bg-white px-2.5 text-[0.6875rem] font-semibold text-slate-700 transition hover:bg-slate-100"
-                  style={{ borderColor: BORDER }}
-                >
-                  <Copy size={12} />
-                  {copied ? 'Copied' : 'Copy link'}
-                </button>
-              </div>
-            ) : null}
-
-            {error && (
-              <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-[0.8125rem] text-rose-700">{error}</p>
-            )}
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={onBack}
-                className="inline-flex h-[34px] items-center gap-2 rounded-lg px-4 text-[0.75rem] font-bold text-white transition hover:brightness-110"
-                style={{ backgroundColor: NAVY }}
-              >
-                <Mail size={14} />
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex min-h-screen flex-1 flex-col px-6 py-8" style={{ backgroundColor: PAGE_BG }}>
@@ -232,10 +119,10 @@ export function AddSupervisor({ onBack, onCreated }: AddSupervisorProps) {
             </button>
             <div>
               <h1 className="text-lg font-bold leading-tight" style={{ color: NAVY }}>
-                Add New Supervisor
+                Add New Admin
               </h1>
               <p className="mt-1 text-[0.8125rem] text-slate-500">
-                Enter the supervisor details below to generate a web portal onboarding invite.
+                Create an administrator account for web portal management.
               </p>
             </div>
           </div>
@@ -248,7 +135,7 @@ export function AddSupervisor({ onBack, onCreated }: AddSupervisorProps) {
                   className={fieldClassName}
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
-                  placeholder="Nomsa"
+                  placeholder="Admin"
                   required
                 />
               </label>
@@ -258,7 +145,7 @@ export function AddSupervisor({ onBack, onCreated }: AddSupervisorProps) {
                   className={fieldClassName}
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
-                  placeholder="Dlamini"
+                  placeholder="User"
                   required
                 />
               </label>
@@ -271,7 +158,7 @@ export function AddSupervisor({ onBack, onCreated }: AddSupervisorProps) {
                   className={fieldClassName}
                   value={serviceNumber}
                   onChange={(e) => setServiceNumber(e.target.value)}
-                  placeholder="SA-TRF-1440"
+                  placeholder="ADM-001"
                   required
                 />
               </label>
@@ -305,7 +192,7 @@ export function AddSupervisor({ onBack, onCreated }: AddSupervisorProps) {
                   className={fieldClassName}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="supervisor@integriscan.co.za"
+                  placeholder="admin@integriscan.co.za"
                   required
                 />
               </label>
@@ -332,6 +219,51 @@ export function AddSupervisor({ onBack, onCreated }: AddSupervisorProps) {
               />
             </label>
 
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <label className="flex flex-col gap-1.5">
+                <FieldLabel>Create Password</FieldLabel>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    className={`${fieldClassName} pr-10`}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Create password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <FieldLabel>Confirm Password</FieldLabel>
+                <div className="relative">
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    className={`${fieldClassName} pr-10`}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </label>
+            </div>
+
             {error && (
               <p className="rounded-lg bg-rose-50 px-3 py-2 text-[0.8125rem] text-rose-700">{error}</p>
             )}
@@ -342,7 +274,7 @@ export function AddSupervisor({ onBack, onCreated }: AddSupervisorProps) {
               className="mt-2 w-full rounded-xl py-3 text-[0.8125rem] font-bold text-white transition hover:brightness-110 disabled:opacity-60"
               style={{ backgroundColor: NAVY }}
             >
-              {isLoading ? 'Creating invite…' : 'Send Supervisor Invite'}
+              {isLoading ? 'Adding admin...' : 'Add Admin'}
             </button>
           </form>
         </div>

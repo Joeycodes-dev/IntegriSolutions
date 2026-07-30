@@ -5,6 +5,13 @@ interface OfficerInviteEmailParams {
   expiresAt: string;
 }
 
+interface SupervisorInviteEmailParams {
+  to: string;
+  supervisorName: string;
+  inviteLink: string;
+  expiresAt: string;
+}
+
 interface ResendErrorPayload {
   message?: string;
   name?: string;
@@ -96,5 +103,60 @@ export async function sendOfficerInviteEmail(params: OfficerInviteEmailParams): 
     const payload = await response.json().catch(() => ({} as ResendErrorPayload));
     const message = payload.message ?? payload.error ?? response.statusText;
     throw new Error(`Failed to send officer invite email: ${message}`);
+  }
+}
+
+export async function sendSupervisorInviteEmail(params: SupervisorInviteEmailParams): Promise<void> {
+  const { apiKey, from } = requireEmailConfig();
+  const expiry = formatExpiry(params.expiresAt);
+  const subject = 'Your IntegriScan supervisor invite';
+  const supervisorName = escapeHtml(params.supervisorName);
+  const inviteLink = escapeHtml(params.inviteLink);
+  const expiryLabel = escapeHtml(expiry);
+
+  const text = [
+    `Hello ${params.supervisorName},`,
+    '',
+    'You have been invited to use the IntegriScan web portal as a supervisor.',
+    'Open this invite link and create your password:',
+    '',
+    params.inviteLink,
+    '',
+    `This invite expires on ${expiry}.`,
+    '',
+    'If you were not expecting this invite, you can ignore this email.'
+  ].join('\n');
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5">
+      <h2 style="margin:0 0 12px">Your IntegriScan supervisor invite</h2>
+      <p>Hello ${supervisorName},</p>
+      <p>You have been invited to use the IntegriScan web portal as a supervisor.</p>
+      <p>Open this invite link and create your password:</p>
+      <p><a href="${inviteLink}" style="color:#4338ca;font-weight:700">${inviteLink}</a></p>
+      <p style="font-size:13px;color:#475569">This invite expires on ${expiryLabel}.</p>
+      <p style="font-size:13px;color:#475569">If you were not expecting this invite, you can ignore this email.</p>
+    </div>
+  `;
+
+  const response = await fetch(RESEND_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      from,
+      to: [params.to],
+      subject,
+      text,
+      html
+    })
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({} as ResendErrorPayload));
+    const message = payload.message ?? payload.error ?? response.statusText;
+    throw new Error(`Failed to send supervisor invite email: ${message}`);
   }
 }

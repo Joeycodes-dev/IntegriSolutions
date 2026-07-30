@@ -2,11 +2,13 @@
 -- Run in Supabase SQL Editor AFTER feature migrations.
 -- Order:
 --   1) 20260729_core_schema.sql  (this file)
---   2) 20260719_officer_invitations.sql
---   3) 20260728_evidence_annotations_audit.sql
+--   2) 20260729_admin_users.sql
+--   3) 20260719_officer_invitations.sql
+--   4) 20260729_supervisor_invitations.sql
+--   5) 20260728_evidence_annotations_audit.sql
 
 -- ---------------------------------------------------------------------------
--- Role reference
+-- Role reference and profile tables
 --   1 = Officer, 2 = Supervisor, 3 = Admin
 -- ---------------------------------------------------------------------------
 
@@ -21,7 +23,7 @@ CREATE TABLE IF NOT EXISTS officer_users (
   province TEXT NOT NULL DEFAULT '',
   region TEXT NOT NULL DEFAULT '',
   officer_type_id INTEGER NOT NULL DEFAULT 1,
-  role_id INTEGER NOT NULL DEFAULT 1 CHECK (role_id IN (1, 2, 3)),
+  role_id INTEGER NOT NULL DEFAULT 1 CHECK (role_id = 1),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -46,6 +48,24 @@ CREATE TABLE IF NOT EXISTS supervisor_users (
 
 CREATE INDEX IF NOT EXISTS idx_supervisor_users_email ON supervisor_users (supervisor_email_address);
 CREATE INDEX IF NOT EXISTS idx_supervisor_users_status ON supervisor_users (employment_status);
+
+CREATE TABLE IF NOT EXISTS admin_users (
+  admin_id BIGSERIAL PRIMARY KEY,
+  admin_email_address TEXT NOT NULL UNIQUE,
+  admin_name TEXT NOT NULL,
+  admin_surname TEXT NOT NULL,
+  admin_id_number BIGINT NOT NULL,
+  badge_number TEXT NOT NULL,
+  employment_status TEXT NOT NULL DEFAULT 'Active',
+  province TEXT NOT NULL DEFAULT '',
+  region TEXT NOT NULL DEFAULT '',
+  officer_type_id INTEGER NOT NULL DEFAULT 1,
+  role_id INTEGER NOT NULL DEFAULT 3 CHECK (role_id = 3),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_users_email ON admin_users (admin_email_address);
+CREATE INDEX IF NOT EXISTS idx_admin_users_status ON admin_users (employment_status);
 
 -- ---------------------------------------------------------------------------
 -- Enforcement tests (immutable / WORM for UPDATE + DELETE)

@@ -43,7 +43,22 @@ interface SupervisorRow {
   created_at: string;
 }
 
-export type ProfileSource = 'officer_users' | 'supervisor_users';
+interface AdminRow {
+  admin_id: number;
+  admin_email_address: string;
+  admin_name: string;
+  admin_surname: string;
+  badge_number: string;
+  admin_id_number: number;
+  employment_status: string;
+  province: string;
+  region: string;
+  officer_type_id: number;
+  role_id: number;
+  created_at: string;
+}
+
+export type ProfileSource = 'officer_users' | 'supervisor_users' | 'admin_users';
 
 export interface ResolvedProfile {
   profile: UserProfile;
@@ -99,11 +114,49 @@ function fromSupervisorRow(row: SupervisorRow, uid: string): ResolvedProfile {
   };
 }
 
+function fromAdminRow(row: AdminRow, uid: string): ResolvedProfile {
+  return {
+    source: 'admin_users',
+    dbId: row.admin_id,
+    profile: {
+      uid,
+      officerId: row.admin_id,
+      email: row.admin_email_address,
+      name: row.admin_name,
+      surname: row.admin_surname,
+      badgeNumber: row.badge_number,
+      idNumber: String(row.admin_id_number),
+      employmentStatus: row.employment_status,
+      dutyStatus: normalizeDutyStatus(undefined),
+      province: row.province,
+      region: row.region,
+      officerTypeId: row.officer_type_id,
+      roleId: row.role_id,
+      createdAt: row.created_at
+    }
+  };
+}
+
 export async function resolveProfileByEmail(
   email: string,
   uid: string,
   client: SupabaseClient = serviceSupabase
 ): Promise<ResolvedProfile | null> {
+  const { data: adminRows, error: adminError } = await client
+    .from('admin_users')
+    .select('*')
+    .eq('admin_email_address', email)
+    .limit(1);
+
+  if (adminError) {
+    throw new Error(adminError.message);
+  }
+
+  const admin = Array.isArray(adminRows) ? adminRows[0] : null;
+  if (admin) {
+    return fromAdminRow(admin as AdminRow, uid);
+  }
+
   const { data: officerRows, error: officerError } = await client
     .from('officer_users')
     .select('*')
@@ -141,6 +194,17 @@ export async function resolveRoleByEmail(
   email: string,
   client: SupabaseClient = serviceSupabase
 ): Promise<{ dbId: number; roleId: number; source: ProfileSource } | null> {
+  const { data: adminRows } = await client
+    .from('admin_users')
+    .select('admin_id, role_id')
+    .eq('admin_email_address', email)
+    .limit(1);
+
+  const admin = Array.isArray(adminRows) ? adminRows[0] : null;
+  if (admin) {
+    return { dbId: admin.admin_id, roleId: Number(admin.role_id), source: 'admin_users' };
+  }
+
   const { data: officerRows } = await client
     .from('officer_users')
     .select('officer_id, role_id')
