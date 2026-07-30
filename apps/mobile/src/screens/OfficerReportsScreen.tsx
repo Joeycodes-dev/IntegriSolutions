@@ -108,10 +108,11 @@ export function OfficerReportsScreen({ navigation }: Props) {
   };
 
   const handleLogout = async () => {
-    navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
-    signOut().catch((error) => {
+    try {
+      await signOut();
+    } catch (error) {
       console.warn('Sign out warning:', error);
-    });
+    }
   };
 
   const renderTest = ({ item }: { item: LocalTestRecord }) => {

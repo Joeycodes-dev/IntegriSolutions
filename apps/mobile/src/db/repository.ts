@@ -129,7 +129,7 @@ export async function getPendingSync(officerId?: number | null): Promise<LocalTe
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
     return db.getAllAsync<LocalTestRecord>(
-      `SELECT * FROM tests WHERE syncStatus = 'pending_sync' AND officerId = ? ORDER BY createdAt ASC`,
+      `SELECT * FROM tests WHERE syncStatus = 'pending_sync' AND (officerId = ? OR officerId IS NULL) ORDER BY createdAt ASC`,
       [officerId]
     );
   }
@@ -142,7 +142,7 @@ export async function getFailedSync(officerId?: number | null): Promise<LocalTes
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
     return db.getAllAsync<LocalTestRecord>(
-      `SELECT * FROM tests WHERE syncStatus = 'failed' AND officerId = ? ORDER BY createdAt ASC`,
+      `SELECT * FROM tests WHERE syncStatus = 'failed' AND (officerId = ? OR officerId IS NULL) ORDER BY createdAt ASC`,
       [officerId]
     );
   }
@@ -155,7 +155,7 @@ export async function resetFailedToPending(officerId?: number | null): Promise<v
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
     await db.runAsync(
-      `UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND officerId = ?`,
+      `UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND (officerId = ? OR officerId IS NULL)`,
       [officerId]
     );
     return;
@@ -170,7 +170,7 @@ export async function getSyncedCount(officerId?: number | null): Promise<number>
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
     const row = await db.getFirstAsync<{ count: number }>(
-      `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'synced' AND officerId = ?`,
+      `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'synced' AND (officerId = ? OR officerId IS NULL)`,
       [officerId]
     );
     return row?.count ?? 0;
@@ -185,7 +185,7 @@ export async function getPendingCount(officerId?: number | null): Promise<number
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
     const row = await db.getFirstAsync<{ count: number }>(
-      `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'pending_sync' AND officerId = ?`,
+      `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'pending_sync' AND (officerId = ? OR officerId IS NULL)`,
       [officerId]
     );
     return row?.count ?? 0;
@@ -200,7 +200,7 @@ export async function getFailedCount(officerId?: number | null): Promise<number>
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
     const row = await db.getFirstAsync<{ count: number }>(
-      `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'failed' AND officerId = ?`,
+      `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'failed' AND (officerId = ? OR officerId IS NULL)`,
       [officerId]
     );
     return row?.count ?? 0;
@@ -219,7 +219,7 @@ export async function getTestCountBetween(
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
     const row = await db.getFirstAsync<{ count: number }>(
-      `SELECT COUNT(*) as count FROM tests WHERE createdAt >= ? AND createdAt < ? AND officerId = ?`,
+      `SELECT COUNT(*) as count FROM tests WHERE createdAt >= ? AND createdAt < ? AND (officerId = ? OR officerId IS NULL)`,
       [startIso, endIso, officerId]
     );
     return row?.count ?? 0;
@@ -234,17 +234,9 @@ export async function getTestCountBetween(
 export async function getAllTests(officerId?: number | null): Promise<LocalTestRecord[]> {
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
-    const scoped = await db.getAllAsync<LocalTestRecord>(
-      `SELECT * FROM tests WHERE officerId = ? ORDER BY createdAt DESC`,
-      [officerId]
-    );
-    if (scoped.length > 0) {
-      return scoped;
-    }
-
-    // Backward compatibility for rows created before officer scoping was available.
     return db.getAllAsync<LocalTestRecord>(
-      `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC`
+      `SELECT * FROM tests WHERE officerId = ? OR officerId IS NULL ORDER BY createdAt DESC`,
+      [officerId]
     );
   }
   return db.getAllAsync<LocalTestRecord>(
@@ -256,17 +248,9 @@ export async function getRecentTests(limit = 3, officerId?: number | null): Prom
   const db = await getDB();
   const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 3;
   if (officerId !== undefined && officerId !== null) {
-    const scoped = await db.getAllAsync<LocalTestRecord>(
-      `SELECT * FROM tests WHERE officerId = ? ORDER BY createdAt DESC LIMIT ${safeLimit}`,
-      [officerId]
-    );
-    if (scoped.length > 0) {
-      return scoped;
-    }
-
-    // Backward compatibility for rows created before officer scoping was available.
     return db.getAllAsync<LocalTestRecord>(
-      `SELECT * FROM tests WHERE officerId IS NULL ORDER BY createdAt DESC LIMIT ${safeLimit}`
+      `SELECT * FROM tests WHERE officerId = ? OR officerId IS NULL ORDER BY createdAt DESC LIMIT ${safeLimit}`,
+      [officerId]
     );
   }
   return db.getAllAsync<LocalTestRecord>(

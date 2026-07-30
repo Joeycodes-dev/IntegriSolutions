@@ -6,10 +6,13 @@ import * as sync from '../../src/services/sync';
 import * as Network from 'expo-network';
 import { AppState } from 'react-native';
 
+const mockAuthState = {
+  profile: { officerId: 1, name: 'Test Officer' },
+  token: 'token-123' as string | null
+};
+
 jest.mock('../../src/lib/AuthContext', () => ({
-  useAuth: () => ({
-    profile: { officerId: 1, name: 'Test Officer' }
-  })
+  useAuth: () => mockAuthState
 }));
 
 jest.mock('../../src/db/repository', () => ({
@@ -64,6 +67,7 @@ describe('SyncContext', () => {
     (repository.resetFailedToPending as jest.Mock).mockResolvedValue(undefined);
     (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true });
     (sync.syncPendingRecords as jest.Mock).mockResolvedValue({ synced: [], failed: [] });
+    mockAuthState.token = 'token-123';
   });
 
   afterEach(() => {
@@ -130,6 +134,18 @@ describe('SyncContext', () => {
 
   it('does not sync when offline', async () => {
     (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: false });
+
+    const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
+
+    await act(async () => {
+      await result.current.forceSync();
+    });
+
+    expect(sync.syncPendingRecords).not.toHaveBeenCalled();
+  });
+
+  it('does not sync without an access token', async () => {
+    mockAuthState.token = null;
 
     const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
 

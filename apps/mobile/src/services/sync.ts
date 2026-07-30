@@ -3,6 +3,7 @@ import { insertTest, updateSyncStatus, getPendingSync, type LocalTestRecord } fr
 import type { TestLocationPayload } from '../lib/testLocation';
 import { syncRecords, uploadEvidencePhoto } from './api';
 import { logAuditEvent } from './audit';
+import { getAccessToken } from './auth';
 
 export { generateId } from '../lib/id';
 export type { TestLocationPayload } from '../lib/testLocation';
@@ -126,6 +127,11 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
   synced: string[];
   failed: { id: string; error: string }[];
 }> {
+  const token = await getAccessToken();
+  if (!token) {
+    return { synced: [], failed: [] };
+  }
+
   const pending = await getPendingSync(officerId);
 
   if (pending.length === 0) {

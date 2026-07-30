@@ -87,6 +87,11 @@ function matchesOfficer(row: { officerId: number | null }, officerId?: number | 
   return true;
 }
 
+function matchesScopedOfficer(row: { officerId: number | null }, officerId: number | undefined, includeUnscoped: boolean) {
+  if (officerId === undefined) return row.officerId === null;
+  return row.officerId === officerId || (includeUnscoped && row.officerId === null);
+}
+
 function sortByCreatedAtDesc<T extends { createdAt: string }>(rows: T[]) {
   return [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
@@ -169,10 +174,10 @@ const webDb = {
       return;
     }
 
-    if (sql.startsWith("UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND officerId = ?")) {
+    if (sql.startsWith("UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND (officerId = ? OR officerId IS NULL)")) {
       const [officerId] = params as [number];
       state.tests = state.tests.map((item) =>
-        item.syncStatus === "failed" && item.officerId === officerId
+        item.syncStatus === "failed" && (item.officerId === officerId || item.officerId === null)
           ? { ...item, syncStatus: "pending_sync" }
           : item,
       );
@@ -254,10 +259,11 @@ const webDb = {
 
     if (sql.includes("FROM tests WHERE syncStatus = 'pending_sync'")) {
       const officerId = params[0] as number | undefined;
+      const includeUnscoped = sql.includes("OR officerId IS NULL");
       const rows = sortByCreatedAtAsc(
         state.tests.filter(
           (item) =>
-            item.syncStatus === "pending_sync" && matchesOfficer(item, officerId ?? null),
+            item.syncStatus === "pending_sync" && matchesScopedOfficer(item, officerId, includeUnscoped),
         ),
       );
       return rows as T[];
@@ -265,13 +271,30 @@ const webDb = {
 
     if (sql.includes("FROM tests WHERE syncStatus = 'failed'")) {
       const officerId = params[0] as number | undefined;
+      const includeUnscoped = sql.includes("OR officerId IS NULL");
       const rows = sortByCreatedAtAsc(
         state.tests.filter(
           (item) =>
-            item.syncStatus === "failed" && matchesOfficer(item, officerId ?? null),
+            item.syncStatus === "failed" && matchesScopedOfficer(item, officerId, includeUnscoped),
         ),
       );
       return rows as T[];
+    }
+
+    if (sql.includes("FROM tests WHERE officerId = ? OR officerId IS NULL ORDER BY createdAt DESC LIMIT")) {
+      const [officerId] = params as [number];
+      const limitMatch = sql.match(/LIMIT (\d+)/);
+      const limit = Number(limitMatch?.[1] ?? 3);
+      return sortByCreatedAtDesc(
+        state.tests.filter((item) => item.officerId === officerId || item.officerId === null),
+      ).slice(0, limit) as T[];
+    }
+
+    if (sql.includes("FROM tests WHERE officerId = ? OR officerId IS NULL ORDER BY createdAt DESC")) {
+      const [officerId] = params as [number];
+      return sortByCreatedAtDesc(
+        state.tests.filter((item) => item.officerId === officerId || item.officerId === null),
+      ) as T[];
     }
 
     if (sql.includes("FROM tests WHERE officerId = ? ORDER BY createdAt DESC")) {
@@ -328,47 +351,44 @@ const webDb = {
 
     if (sql.includes("SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'synced'")) {
       const officerId = params[0] as number | undefined;
+      const includeUnscoped = sql.includes("OR officerId IS NULL");
       const count = state.tests.filter(
         (item) =>
           item.syncStatus === "synced" &&
-          (sql.includes("officerId = ?")
-            ? item.officerId === officerId
-            : item.officerId === null),
+          matchesScopedOfficer(item, officerId, includeUnscoped),
       ).length;
       return { count } as T;
     }
 
     if (sql.includes("SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'pending_sync'")) {
       const officerId = params[0] as number | undefined;
+      const includeUnscoped = sql.includes("OR officerId IS NULL");
       const count = state.tests.filter(
         (item) =>
           item.syncStatus === "pending_sync" &&
-          (sql.includes("officerId = ?")
-            ? item.officerId === officerId
-            : item.officerId === null),
+          matchesScopedOfficer(item, officerId, includeUnscoped),
       ).length;
       return { count } as T;
     }
 
     if (sql.includes("SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'failed'")) {
       const officerId = params[0] as number | undefined;
+      const includeUnscoped = sql.includes("OR officerId IS NULL");
       const count = state.tests.filter(
         (item) =>
           item.syncStatus === "failed" &&
-          (sql.includes("officerId = ?")
-            ? item.officerId === officerId
-            : item.officerId === null),
+          matchesScopedOfficer(item, officerId, includeUnscoped),
       ).length;
       return { count } as T;
     }
 
     if (sql.includes("SELECT COUNT(*) as count FROM tests WHERE createdAt >=")) {
       const [startIso, endIso, officerId] = params as [string, string, number | undefined];
+      const includeUnscoped = sql.includes("OR officerId IS NULL");
       const count = state.tests.filter((item) => {
         const inRange = item.createdAt >= startIso && item.createdAt < endIso;
         if (!inRange) return false;
-        if (sql.includes("officerId = ?")) return item.officerId === officerId;
-        return item.officerId === null;
+        return matchesScopedOfficer(item, officerId, includeUnscoped);
       }).length;
       return { count } as T;
     }

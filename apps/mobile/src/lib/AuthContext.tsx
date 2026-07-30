@@ -60,12 +60,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = useCallback(async (profileData: UserProfile, tokenValue: string | null) => {
     assertMobileAccess(profileData);
-    setProfile(profileData);
-    setToken(tokenValue);
     if (tokenValue) {
       await setAccessToken(tokenValue);
+    } else {
+      await clearAccessToken();
     }
     await saveProfile(profileData as any);
+    setProfile(profileData);
+    setToken(tokenValue);
     await logAuditEvent({
       action: 'auth.login',
       outcome: 'success',
@@ -79,10 +81,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInLocal = useCallback(async (profileData: UserProfile) => {
     assertMobileAccess(profileData);
-    setProfile(profileData);
-    setToken(null);
     await clearAccessToken();
     await saveProfile(profileData as any);
+    setProfile(profileData);
+    setToken(null);
     await logAuditEvent({
       action: 'auth.login',
       outcome: 'success',

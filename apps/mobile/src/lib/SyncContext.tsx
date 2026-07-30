@@ -50,7 +50,7 @@ function getWeekRange(now = new Date()): { start: string; end: string } {
 }
 
 export function SyncProvider({ children }: { children: React.ReactNode }) {
-  const { profile } = useAuth();
+  const { profile, token } = useAuth();
   const [pendingCount, setPendingCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
   const [syncedCount, setSyncedCount] = useState(0);
@@ -97,6 +97,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (!isOnline) return;
+    if (!token) return;
 
     isSyncingRef.current = true;
     setIsSyncing(true);
@@ -126,7 +127,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       setIsSyncing(false);
       await refreshCounts();
     }
-  }, [refreshCounts, profile?.officerId]);
+  }, [refreshCounts, profile?.officerId, token]);
 
   const forceSync = useCallback(async () => {
     const officerId = profile?.officerId ?? null;

@@ -181,10 +181,11 @@ export function AuditScreen({ navigation }: Props) {
   };
 
   const handleLogout = async () => {
-    navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
-    signOut().catch((error) => {
+    try {
+      await signOut();
+    } catch (error) {
       console.warn('Sign out warning:', error);
-    });
+    }
   };
 
   return (
@@ -203,10 +204,7 @@ export function AuditScreen({ navigation }: Props) {
         </View>
         <Pressable
           style={styles.signOutButton}
-          onPress={async () => {
-            await signOut();
-            navigation.replace('Login');
-          }}
+          onPress={() => { void handleLogout(); }}
         >
           <Feather name="log-out" size={20} color="#475569" />
         </Pressable>

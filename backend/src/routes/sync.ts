@@ -63,6 +63,10 @@ interface SyncRecord {
   originalTestId?: string | null;
 }
 
+function formatOfficerName(profile: { name: string; surname?: string | null }): string {
+  return `${profile.name} ${profile.surname ?? ''}`.trim() || profile.name;
+}
+
 router.post('/', async (req, res) => {
   const { records } = req.body as { records: SyncRecord[] };
   console.log(`[/api/sync] received ${records?.length ?? 0} records`);
@@ -103,7 +107,7 @@ router.post('/', async (req, res) => {
 
   authenticatedOfficer = {
     officerId: resolved.profile.officerId,
-    officerName: resolved.profile.name,
+    officerName: formatOfficerName(resolved.profile),
     badgeNumber: resolved.profile.badgeNumber
   };
 
