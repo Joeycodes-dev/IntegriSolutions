@@ -77,7 +77,10 @@ function normalizePrivateKey(value: string | undefined): string | undefined {
 }
 
 function parseVisionCredentialsJson(): Record<string, unknown> | null {
-  const raw = process.env.GOOGLE_CLOUD_VISION_CREDENTIALS_JSON ?? process.env.GOOGLE_CLOUD_CREDENTIALS_JSON;
+  const encoded = process.env.GOOGLE_CLOUD_VISION_CREDENTIALS_BASE64 ?? process.env.GOOGLE_CLOUD_CREDENTIALS_BASE64;
+  const raw = encoded
+    ? Buffer.from(encoded, 'base64').toString('utf8')
+    : process.env.GOOGLE_CLOUD_VISION_CREDENTIALS_JSON ?? process.env.GOOGLE_CLOUD_CREDENTIALS_JSON;
   if (!raw) return null;
 
   try {
@@ -87,7 +90,7 @@ function parseVisionCredentialsJson(): Record<string, unknown> | null {
     }
     return credentials;
   } catch (error) {
-    console.warn('[scan] GOOGLE_CLOUD_VISION_CREDENTIALS_JSON could not be parsed:', error instanceof Error ? error.message : error);
+    console.warn('[scan] Google Vision credentials env could not be parsed:', error instanceof Error ? error.message : error);
     return null;
   }
 }
@@ -96,6 +99,8 @@ function isGoogleVisionConfigured(): boolean {
   return Boolean(
     process.env.GOOGLE_CLOUD_VISION_API_KEY ||
     process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+    process.env.GOOGLE_CLOUD_VISION_CREDENTIALS_BASE64 ||
+    process.env.GOOGLE_CLOUD_CREDENTIALS_BASE64 ||
     process.env.GOOGLE_CLOUD_VISION_CREDENTIALS_JSON ||
     process.env.GOOGLE_CLOUD_CREDENTIALS_JSON ||
     (process.env.GOOGLE_CLOUD_CLIENT_EMAIL && process.env.GOOGLE_CLOUD_PRIVATE_KEY)

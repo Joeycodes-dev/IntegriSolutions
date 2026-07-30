@@ -38,19 +38,38 @@ describe('Annotations Routes', () => {
       error: null,
     });
 
-    mockServiceSupabase.from.mockImplementation((table: string) => {
-      if (table === 'officer_users') {
+    const roleLookup = (table: string) => {
+      if (table === 'admin_users' || table === 'officer_users') {
         return {
           select: jest.fn().mockReturnValue({
             eq: jest.fn().mockReturnValue({
               limit: jest.fn().mockResolvedValue({
-                data: [{ officer_id: 1, role_id: 2 }],
+                data: [],
                 error: null,
               }),
             }),
           }),
         };
       }
+      if (table === 'supervisor_users') {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue({
+                data: [{ supervisor_id: 1, role_id: 2 }],
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return null;
+    };
+
+    mockServiceSupabase.from.mockImplementation((table: string) => {
+      const roleMock = roleLookup(table);
+      if (roleMock) return roleMock;
+
       if (table === 'annotations') {
         return {
           select: jest.fn().mockReturnValue({
@@ -130,12 +149,24 @@ describe('Annotations Routes', () => {
 
     it('should return 404 when test does not exist', async () => {
       mockServiceSupabase.from.mockImplementation((table: string) => {
-        if (table === 'officer_users') {
+        if (table === 'admin_users' || table === 'officer_users') {
           return {
             select: jest.fn().mockReturnValue({
               eq: jest.fn().mockReturnValue({
                 limit: jest.fn().mockResolvedValue({
-                  data: [{ officer_id: 1, role_id: 2 }],
+                  data: [],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'supervisor_users') {
+          return {
+            select: jest.fn().mockReturnValue({
+              eq: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue({
+                  data: [{ supervisor_id: 1, role_id: 2 }],
                   error: null,
                 }),
               }),

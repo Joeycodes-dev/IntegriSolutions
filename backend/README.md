@@ -55,6 +55,7 @@ If Resend is not configured or email delivery fails, the account profile + invit
 Configure one of the following:
 
 - `GOOGLE_APPLICATION_CREDENTIALS` + `GOOGLE_CLOUD_PROJECT_ID` for a service-account JSON file.
+- `GOOGLE_CLOUD_VISION_CREDENTIALS_BASE64` for base64-encoded service-account JSON in hosted environments that reject raw JSON values.
 - `GOOGLE_CLOUD_VISION_CREDENTIALS_JSON` for inline service-account JSON in hosted environments.
 - `GOOGLE_CLOUD_CLIENT_EMAIL`, `GOOGLE_CLOUD_PRIVATE_KEY`, and `GOOGLE_CLOUD_PROJECT_ID` for split service-account values.
 - `GOOGLE_CLOUD_VISION_API_KEY` for API-key mode.
