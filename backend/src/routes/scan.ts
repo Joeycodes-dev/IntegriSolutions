@@ -1,11 +1,14 @@
 import { Router } from 'express';
 import sharp from 'sharp';
+import { ImageAnnotatorClient } from '@google-cloud/vision';
 import { createWorker } from 'tesseract.js';
 import { asyncHandler } from '../asyncHandler';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
 let workerPromise: ReturnType<typeof createWorker> | null = null;
+let visionClient: ImageAnnotatorClient | null | undefined;
+const VISION_TIMEOUT_MS = 12_000;
 
 interface DriverLicenseData {
   name: string;
@@ -31,6 +34,7 @@ interface OcrPassResult {
 }
 
 interface OcrDebug {
+  engine: 'google-vision' | 'tesseract';
   overallConfidence: number;
   fieldConfidence: Record<string, number>;
   passes: Array<{ name: string; confidence: number; preview: string }>;
@@ -40,11 +44,98 @@ interface OcrDebug {
 
 type ScanResponse = DriverLicenseData & { _ocr: OcrDebug };
 
+type BuiltOcrResult = { data: DriverLicenseData; scoreMap: Record<string, number>; overall: number };
+type ScanAttempt = { response: ScanResponse; valid: boolean };
+type VisionClientOptions = NonNullable<ConstructorParameters<typeof ImageAnnotatorClient>[0]>;
+
+type VisionTextNode = {
+  confidence?: number | null;
+  pages?: VisionTextNode[];
+  blocks?: VisionTextNode[];
+  paragraphs?: VisionTextNode[];
+  words?: VisionTextNode[];
+  symbols?: VisionTextNode[];
+};
+
+type VisionAnnotateResponse = {
+  responses?: Array<{
+    fullTextAnnotation?: (VisionTextNode & { text?: string | null }) | null;
+    textAnnotations?: Array<{ description?: string | null; score?: number | null }> | null;
+    error?: { message?: string | null } | null;
+  }>;
+};
+
 function getWorker() {
   if (!workerPromise) {
     workerPromise = createWorker('eng');
   }
   return workerPromise;
+}
+
+function normalizePrivateKey(value: string | undefined): string | undefined {
+  return value?.replace(/\\n/g, '\n');
+}
+
+function parseVisionCredentialsJson(): Record<string, unknown> | null {
+  const raw = process.env.GOOGLE_CLOUD_VISION_CREDENTIALS_JSON ?? process.env.GOOGLE_CLOUD_CREDENTIALS_JSON;
+  if (!raw) return null;
+
+  try {
+    const credentials = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof credentials.private_key === 'string') {
+      credentials.private_key = normalizePrivateKey(credentials.private_key);
+    }
+    return credentials;
+  } catch (error) {
+    console.warn('[scan] GOOGLE_CLOUD_VISION_CREDENTIALS_JSON could not be parsed:', error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+function isGoogleVisionConfigured(): boolean {
+  return Boolean(
+    process.env.GOOGLE_CLOUD_VISION_API_KEY ||
+    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+    process.env.GOOGLE_CLOUD_VISION_CREDENTIALS_JSON ||
+    process.env.GOOGLE_CLOUD_CREDENTIALS_JSON ||
+    (process.env.GOOGLE_CLOUD_CLIENT_EMAIL && process.env.GOOGLE_CLOUD_PRIVATE_KEY)
+  );
+}
+
+function getVisionClient(): ImageAnnotatorClient | null {
+  if (visionClient !== undefined) return visionClient;
+
+  if (process.env.GOOGLE_CLOUD_VISION_API_KEY) {
+    visionClient = null;
+    return visionClient;
+  }
+
+  if (!isGoogleVisionConfigured()) {
+    visionClient = null;
+    return visionClient;
+  }
+
+  const options: VisionClientOptions = {};
+  const credentials = parseVisionCredentialsJson();
+  const clientEmail = process.env.GOOGLE_CLOUD_CLIENT_EMAIL;
+  const privateKey = normalizePrivateKey(process.env.GOOGLE_CLOUD_PRIVATE_KEY);
+
+  if (credentials) {
+    options.credentials = credentials as VisionClientOptions['credentials'];
+    if (typeof credentials.project_id === 'string') {
+      options.projectId = credentials.project_id;
+    }
+  } else if (clientEmail && privateKey) {
+    options.credentials = { client_email: clientEmail, private_key: privateKey };
+  }
+
+  const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID ?? process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
+  if (projectId) {
+    options.projectId = projectId;
+  }
+
+  visionClient = new ImageAnnotatorClient(options);
+  return visionClient;
 }
 
 function normalizeSpaces(value: string): string {
@@ -115,6 +206,90 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
         reject(error);
       });
   });
+}
+
+function collectVisionConfidences(node: VisionTextNode | null | undefined, output: number[] = []): number[] {
+  if (!node) return output;
+
+  if (typeof node.confidence === 'number' && Number.isFinite(node.confidence) && node.confidence > 0) {
+    output.push(node.confidence);
+  }
+
+  for (const child of [
+    ...(node.pages ?? []),
+    ...(node.blocks ?? []),
+    ...(node.paragraphs ?? []),
+    ...(node.words ?? []),
+    ...(node.symbols ?? [])
+  ]) {
+    collectVisionConfidences(child, output);
+  }
+
+  return output;
+}
+
+function visionConfidence(annotation: VisionTextNode | null | undefined): number {
+  const values = collectVisionConfidences(annotation);
+  if (values.length === 0) return 90;
+
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return Math.max(0, Math.min(100, average <= 1 ? average * 100 : average));
+}
+
+function visionTextFromPayload(payload: VisionAnnotateResponse): OcrPassResult | null {
+  const result = payload.responses?.[0];
+  const errorMessage = result?.error?.message;
+  if (errorMessage) {
+    throw new Error(errorMessage);
+  }
+
+  const annotation = result?.fullTextAnnotation;
+  const text = annotation?.text ?? result?.textAnnotations?.[0]?.description ?? '';
+  if (!text.trim()) return null;
+
+  return {
+    name: 'google_vision_document_text',
+    text,
+    confidence: visionConfidence(annotation)
+  };
+}
+
+async function runGoogleVisionOcr(base64Image: string): Promise<OcrPassResult | null> {
+  const apiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY;
+
+  if (apiKey) {
+    const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [
+          {
+            image: { content: base64Image },
+            features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
+            imageContext: { languageHints: ['en'] }
+          }
+        ]
+      })
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = (payload as { error?: { message?: string } })?.error?.message ?? 'Google Vision request failed';
+      throw new Error(message);
+    }
+
+    return visionTextFromPayload(payload as VisionAnnotateResponse);
+  }
+
+  const client = getVisionClient();
+  if (!client) return null;
+
+  const [result] = await client.documentTextDetection({
+    image: { content: Buffer.from(base64Image, 'base64') },
+    imageContext: { languageHints: ['en'] }
+  } as Parameters<ImageAnnotatorClient['documentTextDetection']>[0]);
+
+  return visionTextFromPayload({ responses: [result as NonNullable<VisionAnnotateResponse['responses']>[number]] });
 }
 
 function extractDateCandidates(text: string): string[] {
@@ -617,7 +792,7 @@ async function runEmergencyNightPass(base64Image: string): Promise<OcrPassResult
   }];
 }
 
-function buildFastLocalResult(passes: OcrPassResult[]): { data: DriverLicenseData; scoreMap: Record<string, number>; overall: number } {
+function buildFastLocalResult(passes: OcrPassResult[]): BuiltOcrResult {
   const aggregate = {
     initials: emptyCandidate('none'),
     surname: emptyCandidate('none'),
@@ -684,6 +859,91 @@ function isStrictlyValid(result: DriverLicenseData, scores: Record<string, numbe
   return initialsOk && surnameOk && expiryOk && identityOk && overall >= overallThreshold;
 }
 
+function fieldConfidence(scoreMap: Record<string, number>): Record<string, number> {
+  return {
+    initials: Number(scoreMap.initials.toFixed(3)),
+    surname: Number(scoreMap.surname.toFixed(3)),
+    idNumber: Number(scoreMap.idNumber.toFixed(3)),
+    licenseNumber: Number(scoreMap.licenseNumber.toFixed(3)),
+    expiryDate: Number(scoreMap.expiryDate.toFixed(3)),
+    dob: Number(scoreMap.dob.toFixed(3)),
+    idOrLicense: Number(scoreMap.idOrLicense.toFixed(3))
+  };
+}
+
+function debugPasses(passes: OcrPassResult[]): OcrDebug['passes'] {
+  return passes.slice(0, 8).map((pass) => ({
+    name: pass.name,
+    confidence: Number((pass.confidence / 100).toFixed(3)),
+    preview: normalizeSpaces(pass.text).slice(0, 140)
+  }));
+}
+
+function buildScanResponse(
+  engine: OcrDebug['engine'],
+  local: BuiltOcrResult,
+  passes: OcrPassResult[],
+  usedPaidFallback: boolean,
+  fallbackReason: string | null
+): ScanResponse {
+  return {
+    ...local.data,
+    _ocr: {
+      engine,
+      overallConfidence: Number(local.overall.toFixed(3)),
+      fieldConfidence: fieldConfidence(local.scoreMap),
+      passes: debugPasses(passes),
+      usedPaidFallback,
+      fallbackReason
+    }
+  };
+}
+
+async function runVisionScan(base64Image: string, retryMode: boolean): Promise<ScanAttempt | null> {
+  if (!isGoogleVisionConfigured()) return null;
+
+  const pass = await withTimeout(runGoogleVisionOcr(base64Image), VISION_TIMEOUT_MS);
+  if (!pass) return null;
+
+  const passes = [pass];
+  const local = buildFastLocalResult(passes);
+  return {
+    response: buildScanResponse('google-vision', local, passes, false, null),
+    valid: isStrictlyValid(local.data, local.scoreMap, retryMode)
+  };
+}
+
+async function runTesseractScan(
+  base64Image: string,
+  retryMode: boolean,
+  highlightOnly: boolean,
+  fallbackReason?: string
+): Promise<ScanAttempt | null> {
+  const timeoutMs = retryMode ? 40_000 : 24_000;
+  const variants = highlightOnly ? [] : await makeFastVariants(base64Image, retryMode);
+  const timedPasses = highlightOnly
+    ? null
+    : await withTimeout(runOcrPasses(variants), timeoutMs).catch(() => null);
+  const highlightPasses = timedPasses ? null : await runHighlightedOnlyPass(base64Image);
+  const emergencyPasses = timedPasses || highlightPasses ? null : await runEmergencyNightPass(base64Image);
+  const passes = timedPasses ?? highlightPasses ?? emergencyPasses;
+  if (!passes) return null;
+
+  const local = buildFastLocalResult(passes);
+  const reason = fallbackReason ?? (timedPasses
+    ? (retryMode
+      ? 'Retry mode enabled stronger local preprocessing only.'
+      : 'Tesseract fast mode used without Google Vision configuration.')
+    : (highlightPasses
+      ? 'Tesseract primary OCR timed out; used highlighted-values fallback.'
+      : 'Tesseract primary OCR timed out; used emergency night pass fallback.'));
+
+  return {
+    response: buildScanResponse('tesseract', local, passes, Boolean(fallbackReason), reason),
+    valid: isStrictlyValid(local.data, local.scoreMap, retryMode)
+  };
+}
+
 router.post('/', requireAuth, asyncHandler(async (req, res) => {
   const base64Image = typeof req.body?.base64Image === 'string' ? req.body.base64Image : '';
   const retryMode = req.body?.retry === true;
@@ -695,63 +955,47 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
     return res.status(413).json({ error: 'Licence image is too large.' });
   }
 
-  const timeoutMs = retryMode ? 40_000 : 24_000;
-  const variants = highlightOnly ? [] : await makeFastVariants(base64Image, retryMode);
-  const timedPasses = highlightOnly
-    ? null
-    : await withTimeout(runOcrPasses(variants), timeoutMs).catch(() => null);
-  const highlightPasses = timedPasses ? null : await runHighlightedOnlyPass(base64Image);
-  const emergencyPasses = timedPasses || highlightPasses ? null : await runEmergencyNightPass(base64Image);
-  const passes = timedPasses ?? highlightPasses ?? emergencyPasses;
-  if (!passes) {
+  let visionFailure: string | null = null;
+  let visionAttempt: ScanAttempt | null = null;
+  if (!highlightOnly) {
+    try {
+      visionAttempt = await runVisionScan(base64Image, retryMode);
+      if (visionAttempt?.valid) {
+        return res.json(visionAttempt.response);
+      }
+      if (visionAttempt) {
+        visionFailure = 'Google Vision returned low-confidence fields.';
+      }
+    } catch (error) {
+      visionFailure = error instanceof Error ? error.message : 'Google Vision OCR failed.';
+      console.warn('[scan] Google Vision OCR failed; falling back to Tesseract:', visionFailure);
+    }
+  }
+
+  const tesseractAttempt = await runTesseractScan(
+    base64Image,
+    retryMode,
+    highlightOnly,
+    visionFailure ? `${visionFailure} Used Tesseract fallback.` : undefined
+  );
+
+  if (!tesseractAttempt) {
     return res.status(422).json({
       error: 'Scan timed out. Retake in steadier light or use retry mode for darker captures.',
       hint: 'Night captures are supported, but avoid motion blur and severe glare.'
     });
   }
 
-  const local = buildFastLocalResult(passes);
-  const valid = isStrictlyValid(local.data, local.scoreMap, retryMode);
-
-  const ocrDebug: OcrDebug = {
-    overallConfidence: Number(local.overall.toFixed(3)),
-    fieldConfidence: {
-      initials: Number(local.scoreMap.initials.toFixed(3)),
-      surname: Number(local.scoreMap.surname.toFixed(3)),
-      idNumber: Number(local.scoreMap.idNumber.toFixed(3)),
-      licenseNumber: Number(local.scoreMap.licenseNumber.toFixed(3)),
-      expiryDate: Number(local.scoreMap.expiryDate.toFixed(3)),
-      dob: Number(local.scoreMap.dob.toFixed(3)),
-      idOrLicense: Number(local.scoreMap.idOrLicense.toFixed(3))
-    },
-    passes: passes.slice(0, 8).map((pass) => ({
-      name: pass.name,
-      confidence: Number((pass.confidence / 100).toFixed(3)),
-      preview: normalizeSpaces(pass.text).slice(0, 140)
-    })),
-    usedPaidFallback: false,
-    fallbackReason: timedPasses
-      ? (retryMode
-        ? 'Retry mode enabled stronger local preprocessing only.'
-        : 'Fast mode: no paid fallback on first attempt.')
-      : (highlightPasses
-        ? 'Primary OCR timed out; used highlighted-values fallback.'
-        : 'Primary OCR timed out; used emergency night pass fallback.')
-  };
-
-  const response: ScanResponse = {
-    ...local.data,
-    _ocr: ocrDebug
-  };
-
-  if (!valid) {
+  if (!tesseractAttempt.valid) {
     return res.status(422).json({
       error: 'Low confidence capture. Retake in good light, avoid glare, and fill the frame with the card.',
-      partial: response
+      partial: visionAttempt && visionAttempt.response._ocr.overallConfidence > tesseractAttempt.response._ocr.overallConfidence
+        ? visionAttempt.response
+        : tesseractAttempt.response
     });
   }
 
-  return res.json(response);
+  return res.json(tesseractAttempt.response);
 }));
 
 export default router;

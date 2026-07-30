@@ -58,6 +58,8 @@ const DEV_BYPASS_UID_PREFIX = "local-";
 const DEV_LICENSE_PAYLOAD =
   "Developer bypass licence payload - camera scan skipped for local testing.";
 const DEV_BAC_READING = "0.062";
+const DEFAULT_DRIVER_CATEGORY = DRIVER_CATEGORIES[0];
+const DEFAULT_BAC_LIMIT = 0.05;
 
 const DEV_DRIVER_LICENSE: DriverLicenseData = {
   name: "Thabo",
@@ -614,21 +616,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [ocrDebug, setOcrDebug] = useState<DriverLicenseData["_ocr"] | null>(
     null,
   );
-  const autoSaveAttemptRef = React.useRef<string | null>(null);
-  const [roadblock, setRoadblock] = useState("");
-  const [station, setStation] = useState("");
-  const [officerRank, setOfficerRank] = useState("");
   const [officerNotes, setOfficerNotes] = useState("");
-  const [driverCategory, setDriverCategory] = useState<string>(
-    DRIVER_CATEGORIES[0],
-  );
-
-  useEffect(() => {
-    if (!profile) return;
-    setStation((prev) =>
-      prev.trim() ? prev : stationFromProfileRegion(profile.region),
-    );
-  }, [profile]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -637,7 +625,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }, [refreshCounts]),
   );
 
-  const bacLimit = driverCategory.includes("0.02") ? 0.02 : 0.05;
+  const bacLimit = DEFAULT_BAC_LIMIT;
 
   const resetSessionState = () => {
     setHasPermission(null);
@@ -650,7 +638,6 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setPhotoUri(null);
     setAutoWorkflow(false);
     setOcrDebug(null);
-    autoSaveAttemptRef.current = null;
   };
 
   const startScan = async () => {
@@ -661,9 +648,6 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       setScannedData(DEV_DRIVER_LICENSE);
       setLicensePayload(DEV_LICENSE_PAYLOAD);
       setBacReading(DEV_BAC_READING);
-      setRoadblock("N1 Dev Roadblock");
-      setStation(stationFromProfileRegion(profile.region) || "Dev Station");
-      setOfficerRank("Constable");
       setStep("reading");
       return;
     }
@@ -854,14 +838,6 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       return;
     }
 
-    if (!roadblock.trim()) {
-      Alert.alert(
-        "Roadblock required",
-        "Enter the roadblock or checkpoint name for the court record.",
-      );
-      return;
-    }
-
     setIsSaving(true);
     try {
       const currentLocation = await getDeviceLocation();
@@ -872,12 +848,12 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       const location = buildTestLocation({
         lat: currentLocation.lat,
         lng: currentLocation.lng,
-        roadblock,
-        station,
-        officerRank,
+        roadblock: "",
+        station: stationFromProfileRegion(profile.region),
+        officerRank: "",
         serviceNumber: profile.badgeNumber,
         officerNotes,
-        driverCategory,
+        driverCategory: DEFAULT_DRIVER_CATEGORY,
       });
 
       await saveLocally({
@@ -929,41 +905,6 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
     setBacReading(randomBacReading());
   }, [step, scannedData, isSaving, bacReading]);
-
-  useEffect(() => {
-    if (
-      !autoWorkflow ||
-      step !== "reading" ||
-      !scannedData ||
-      isSaving ||
-      !bacReading ||
-      !roadblock.trim() ||
-      !profile
-    ) {
-      return;
-    }
-
-    if (
-      !scannedData.initials.trim() ||
-      !scannedData.surname.trim() ||
-      !scannedData.expiryDate.trim()
-    ) {
-      return;
-    }
-
-    const numeric = Number.parseFloat(bacReading);
-    if (!Number.isNaN(numeric)) {
-      const autoSaveKey = [
-        scannedData.idNumber || scannedData.licenseNumber || scannedData.surname,
-        bacReading,
-        roadblock.trim(),
-        isRetest ? lastSavedTestId ?? "retest" : "new",
-      ].join("|");
-      if (autoSaveAttemptRef.current === autoSaveKey) return;
-      autoSaveAttemptRef.current = autoSaveKey;
-      void persistRecord(numeric);
-    }
-  }, [autoWorkflow, step, scannedData, isSaving, bacReading, roadblock, profile, isRetest, lastSavedTestId]);
 
   const saveRecord = async () => {
     if (!scannedData || !bacReading || !profile) {
@@ -1197,64 +1138,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             ) : null}
 
             <View style={styles.courtSection}>
-              <Text style={styles.overline}>Court / Checkpoint</Text>
-              <Text style={styles.courtFieldLabel}>Roadblock / Checkpoint *</Text>
-              <TextInput
-                value={roadblock}
-                onChangeText={setRoadblock}
-                placeholder="e.g. N1 Midrand roadblock"
-                placeholderTextColor={colors.neutralGray}
-                style={styles.courtInput}
-              />
-              <Text style={styles.courtFieldLabel}>Station / Address</Text>
-              <TextInput
-                value={station}
-                onChangeText={setStation}
-                placeholder="Station or location address"
-                placeholderTextColor={colors.neutralGray}
-                style={styles.courtInput}
-              />
-              <Text style={styles.courtFieldLabel}>Officer Rank</Text>
-              <TextInput
-                value={officerRank}
-                onChangeText={setOfficerRank}
-                placeholder="e.g. Constable"
-                placeholderTextColor={colors.neutralGray}
-                style={styles.courtInput}
-              />
-              <Text style={styles.courtFieldLabel}>Service Number</Text>
-              <View style={styles.courtReadonly}>
-                <Text style={styles.courtReadonlyText}>
-                  {profile.badgeNumber || "—"}
-                </Text>
-              </View>
-              <Text style={styles.courtFieldLabel}>Driver Category</Text>
-              <View style={styles.categoryRow}>
-                {DRIVER_CATEGORIES.map((category) => {
-                  const selected = driverCategory === category;
-                  return (
-                    <Pressable
-                      key={category}
-                      style={[
-                        styles.categoryChip,
-                        selected && styles.categoryChipSelected,
-                      ]}
-                      onPress={() => setDriverCategory(category)}
-                    >
-                      <Text
-                        style={[
-                          styles.categoryChipText,
-                          selected && styles.categoryChipTextSelected,
-                        ]}
-                      >
-                        {category.includes("0.02")
-                          ? "Professional 0.02"
-                          : "General 0.05"}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+              <Text style={styles.overline}>Officer Notes</Text>
               <Text style={styles.courtFieldLabel}>Officer Notes</Text>
               <TextInput
                 value={officerNotes}
@@ -1297,26 +1181,14 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               </Text>
             </View>
 
-            {autoWorkflow && (
-              <View style={styles.autoBanner}>
-                {isSaving ? (
-                  <ActivityIndicator size="small" color="#4338ca" />
-                ) : (
-                  <Feather name="check-circle" size={16} color="#16a34a" />
-                )}
-                <Text style={styles.autoBannerText}>
-                  {isSaving
-                    ? "Auto-saving and syncing record..."
-                    : !roadblock.trim()
-                      ? "Enter a roadblock name above to finish auto-save."
-                      : "BAC simulated and record queued for sync automatically."}
-                </Text>
-              </View>
-            )}
-
             {autoWorkflow && ocrDebug && (
               <View style={styles.ocrDebugCard}>
                 <Text style={styles.overline}>OCR Debug</Text>
+                {ocrDebug.engine ? (
+                  <Text style={styles.ocrDebugText}>
+                    Engine: {ocrDebug.engine === "google-vision" ? "Google Vision" : "Tesseract"}
+                  </Text>
+                ) : null}
                 <Text style={styles.ocrDebugText}>
                   Overall confidence:{" "}
                   {(ocrDebug.overallConfidence * 100).toFixed(0)}%
@@ -1406,31 +1278,27 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               )}
             </View>
 
-            {!autoWorkflow && (
-              <View style={styles.actionRow}>
-                <Pressable
-                  style={[
-                    styles.primaryButton,
-                    (!bacReading || isSaving || !roadblock.trim()) &&
-                      styles.buttonDisabled,
-                  ]}
-                  onPress={saveRecord}
-                  disabled={!bacReading || isSaving || !roadblock.trim()}
-                >
-                  {isSaving ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>
-                      <Feather name="shield" size={18} color="#fff" /> COMMIT TO
-                      LEDGER
-                    </Text>
-                  )}
-                </Pressable>
-                <Pressable onPress={() => setStep("idle")}>
-                  <Text style={styles.abortText}>Abort Session</Text>
-                </Pressable>
-              </View>
-            )}
+            <View style={styles.actionRow}>
+              <Pressable
+                style={[
+                  styles.primaryButton,
+                  (!bacReading || isSaving) && styles.buttonDisabled,
+                ]}
+                onPress={saveRecord}
+                disabled={!bacReading || isSaving}
+              >
+                {isSaving ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>
+                    <Feather name="shield" size={18} color="#fff" /> SAVE RECORD
+                  </Text>
+                )}
+              </Pressable>
+              <Pressable onPress={() => setStep("idle")}>
+                <Text style={styles.abortText}>Abort Session</Text>
+              </Pressable>
+            </View>
 
             {isRetest && (
               <View style={styles.actionRow}>

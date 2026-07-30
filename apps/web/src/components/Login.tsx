@@ -161,7 +161,7 @@ export function Login() {
         : 'IntegriScan';
   const subtitle =
     mode === 'admin-register'
-      ? 'Create the first administrator account'
+      ? 'Create an administrator account'
       : mode === 'supervisor-invite'
         ? 'Create your supervisor password'
         : 'Welcome Back !!';
@@ -337,7 +337,7 @@ export function Login() {
 
           {mode === 'login' && (
             <p className="pt-0.5 text-center text-[10px] leading-relaxed text-slate-500">
-              Admins add supervisors. Supervisors add officers. Accounts are not self-registered.
+              Admins can register here. Admins add supervisors. Supervisors add officers.
             </p>
           )}
 

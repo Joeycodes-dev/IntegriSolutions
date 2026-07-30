@@ -404,22 +404,6 @@ router.post('/register', async (req, res) => {
     return res.status(400).json({ error: 'Invalid role for registration' });
   }
 
-  // First-admin bootstrap only — after that, admins create other portal users.
-  const { data: existingAdmins, error: adminCountError } = await serviceSupabase
-    .from('admin_users')
-    .select('admin_id')
-    .limit(1);
-
-  if (adminCountError) {
-    return res.status(500).json({ error: adminCountError.message });
-  }
-
-  if (existingAdmins?.length) {
-    return res.status(403).json({
-      error: 'Admin accounts must be created by an existing administrator.'
-    });
-  }
-
   const { data: existingOfficers } = await serviceSupabase
     .from('officer_users')
     .select('officer_id')

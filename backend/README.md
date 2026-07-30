@@ -6,7 +6,7 @@ Node.js + Express REST API for the IntegriScan platform. Handles authentication,
 
 1. **Admin** creates **Supervisor** invites (User Management → Add Supervisor)
 2. **Supervisor** creates **Officer** accounts (Officers → Add Officer + invite)
-3. Public self-registration is disabled (except first-admin bootstrap via `POST /api/auth/register` when no admin exists)
+3. Admins can register from the web app via `POST /api/auth/register`; supervisors and officers are invite-created.
 
 Admins are stored in `admin_users`. Supervisors are stored in `supervisor_users`. Field officers are stored in `officer_users`.
 
@@ -47,3 +47,16 @@ Required environment variables:
 - `SUPERVISOR_INVITE_BASE_URL`: Link base for supervisor web invites. Defaults to `FRONTEND_URL?supervisorInvite=1`.
 
 If Resend is not configured or email delivery fails, the account profile + invite are still created and the API returns a copyable `inviteLink` to share manually.
+
+## OCR
+
+`POST /api/scan` uses Google Cloud Vision as the primary OCR engine when configured, then falls back to the local Tesseract pipeline if Vision is unavailable, times out, errors, or returns low-confidence structured fields.
+
+Configure one of the following:
+
+- `GOOGLE_APPLICATION_CREDENTIALS` + `GOOGLE_CLOUD_PROJECT_ID` for a service-account JSON file.
+- `GOOGLE_CLOUD_VISION_CREDENTIALS_JSON` for inline service-account JSON in hosted environments.
+- `GOOGLE_CLOUD_CLIENT_EMAIL`, `GOOGLE_CLOUD_PRIVATE_KEY`, and `GOOGLE_CLOUD_PROJECT_ID` for split service-account values.
+- `GOOGLE_CLOUD_VISION_API_KEY` for API-key mode.
+
+If none are set, scanning continues with Tesseract only.

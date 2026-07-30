@@ -26,6 +26,7 @@ export interface DriverLicenseData {
   expiryDate: string;
   licenseCodes: string;
   _ocr?: {
+    engine?: 'google-vision' | 'tesseract';
     overallConfidence: number;
     fieldConfidence: Record<string, number>;
     passes: Array<{ name: string; confidence: number; preview: string }>;
