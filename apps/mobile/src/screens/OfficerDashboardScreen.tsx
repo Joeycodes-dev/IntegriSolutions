@@ -614,6 +614,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [ocrDebug, setOcrDebug] = useState<DriverLicenseData["_ocr"] | null>(
     null,
   );
+  const autoSaveAttemptRef = React.useRef<string | null>(null);
   const [roadblock, setRoadblock] = useState("");
   const [station, setStation] = useState("");
   const [officerRank, setOfficerRank] = useState("");
@@ -649,6 +650,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setPhotoUri(null);
     setAutoWorkflow(false);
     setOcrDebug(null);
+    autoSaveAttemptRef.current = null;
   };
 
   const startScan = async () => {
@@ -711,6 +713,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       return;
     }
     setLicensePayload(formatRawPayloadForDisplay(rawPayload));
+    setScannedData(data);
+    setDecryptedLicenseData(decodedLicense);
+    setOcrDebug(null);
+    setBacReading("");
     setAutoWorkflow(false);
     setStep("reading");
   };
@@ -829,10 +835,6 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setLastSavedTestId(null);
     setLastSavedDriver(null);
     setIsRetest(false);
-    Alert.alert(
-      "Record saved",
-      "Record saved locally. It will sync when network is available.",
-    );
   };
 
   const persistRecord = async (reading: number) => {
@@ -917,11 +919,24 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
   useEffect(() => {
     if (
+      step !== "reading" ||
+      !scannedData ||
+      isSaving ||
+      bacReading
+    ) {
+      return;
+    }
+
+    setBacReading(randomBacReading());
+  }, [step, scannedData, isSaving, bacReading]);
+
+  useEffect(() => {
+    if (
       !autoWorkflow ||
       step !== "reading" ||
       !scannedData ||
       isSaving ||
-      bacReading ||
+      !bacReading ||
       !roadblock.trim() ||
       !profile
     ) {
@@ -936,13 +951,19 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       return;
     }
 
-    const simulated = randomBacReading();
-    setBacReading(simulated);
-    const numeric = Number.parseFloat(simulated);
+    const numeric = Number.parseFloat(bacReading);
     if (!Number.isNaN(numeric)) {
+      const autoSaveKey = [
+        scannedData.idNumber || scannedData.licenseNumber || scannedData.surname,
+        bacReading,
+        roadblock.trim(),
+        isRetest ? lastSavedTestId ?? "retest" : "new",
+      ].join("|");
+      if (autoSaveAttemptRef.current === autoSaveKey) return;
+      autoSaveAttemptRef.current = autoSaveKey;
       void persistRecord(numeric);
     }
-  }, [autoWorkflow, step, scannedData, isSaving, bacReading, roadblock, profile]);
+  }, [autoWorkflow, step, scannedData, isSaving, bacReading, roadblock, profile, isRetest, lastSavedTestId]);
 
   const saveRecord = async () => {
     if (!scannedData || !bacReading || !profile) {
@@ -1463,51 +1484,6 @@ export function OfficerDashboardScreen({ navigation }: Props) {
           </View>
         )}
 
-        {step === "saved" && (
-          <View style={styles.card}>
-            <View style={styles.savedIcon}>
-              <Feather name="check-circle" size={48} color={colors.success} />
-            </View>
-            <Text style={styles.savedTitle}>Record Saved</Text>
-            <Text style={styles.savedSubtitle}>
-              Test record has been committed to the ledger and will sync when
-              network is available.
-            </Text>
-
-            {lastSavedDriver && (
-              <View style={styles.savedDriverCard}>
-                <Text style={styles.overline}>Driver</Text>
-                <Text style={styles.savedDriverName}>
-                  {lastSavedDriver.name} {lastSavedDriver.surname}
-                </Text>
-                <Text style={[styles.savedDriverId]}>
-                  ID:{" "}
-                  {lastSavedDriver.licenseNumber || lastSavedDriver.idNumber}
-                </Text>
-              </View>
-            )}
-
-            <View style={styles.actionRow}>
-              <Pressable
-                style={styles.secondaryActionButton}
-                onPress={handleRetest}
-              >
-                <Feather
-                  name="refresh-cw"
-                  size={18}
-                  color={colors.primaryDark}
-                />
-                <Text style={styles.secondaryActionText}>RETEST DRIVER</Text>
-              </Pressable>
-              <Pressable
-                style={styles.primaryButton}
-                onPress={handleFinishSession}
-              >
-                <Text style={styles.primaryButtonText}>FINISH SESSION</Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
       </ScrollView>
 
       <OfficerBottomNav active="OfficerDashboard" />
