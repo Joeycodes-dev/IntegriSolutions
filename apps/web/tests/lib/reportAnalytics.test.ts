@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildResultBreakdown,
+  buildRoadblockStats,
   buildTrendSeries,
   buildWeeklyTrend,
+  collectRoadblockOptions,
   dataSpanDateRange,
   filterTestsForReport,
   niceTicks,
@@ -59,6 +61,71 @@ describe('reportAnalytics', () => {
     });
     expect(filtered).toHaveLength(1);
     expect(filtered[0].id).toBe('2');
+  });
+
+  it('uses the stable roadblock ID for filtering and accountability grouping', () => {
+    const tests: TestRecord[] = [
+      {
+        ...sample[0],
+        officerId: 1,
+        location: JSON.stringify({
+          roadblockId: 'shift-1',
+          roadblock: 'N1 Midrand',
+          station: 'Midrand SAPS',
+          supervisorName: 'Supervisor One',
+          shiftStartsAt: '2026-05-12T08:00:00Z',
+          shiftEndsAt: '2026-05-12T16:00:00Z'
+        })
+      },
+      {
+        ...sample[1],
+        id: '3',
+        officerId: 2,
+        result: 'fail',
+        location: JSON.stringify({
+          roadblockId: 'shift-1',
+          roadblock: 'N1 Midrand',
+          station: 'Midrand SAPS',
+          supervisorName: 'Supervisor One',
+          shiftStartsAt: '2026-05-12T08:00:00Z',
+          shiftEndsAt: '2026-05-12T16:00:00Z'
+        })
+      },
+      {
+        ...sample[1],
+        id: '4',
+        location: JSON.stringify({
+          roadblockId: 'shift-2',
+          roadblock: 'N1 Midrand',
+          station: 'Midrand SAPS',
+          supervisorName: 'Supervisor Two'
+        })
+      }
+    ];
+
+    const filtered = filterTestsForReport(tests, {
+      from: '2026-05-12',
+      to: '2026-05-13',
+      result: 'all',
+      roadblock: 'shift-1'
+    });
+    const stats = buildRoadblockStats(tests);
+    const options = collectRoadblockOptions(tests);
+
+    expect(filtered).toHaveLength(2);
+    expect(stats).toHaveLength(2);
+    expect(stats[0]).toMatchObject({
+      key: 'shift-1',
+      roadblockId: 'shift-1',
+      name: 'N1 Midrand',
+      station: 'Midrand SAPS',
+      supervisor: 'Supervisor One',
+      total: 2,
+      passed: 0,
+      failed: 2,
+      officerCount: 2
+    });
+    expect(options.map((option) => option.key)).toEqual(['shift-1', 'shift-2']);
   });
 
   it('builds weekly trend buckets', () => {

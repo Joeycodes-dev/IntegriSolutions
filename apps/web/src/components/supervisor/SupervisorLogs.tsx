@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filt
 import type { TestRecord } from '../../types';
 import { getTests, type TestFilters } from '../../services/api';
 import { parseTestLocation } from '../../lib/testEvidence';
+import { collectRoadblockOptions, getTestRoadblockContext } from '../../lib/reportAnalytics';
 import { BORDER, NAVY, PAGE_BG, pageContent, pageShell } from './supervisorStyles';
 
 interface SupervisorLogsProps {
@@ -51,6 +52,7 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
   const [search, setSearch] = useState('');
   const [resultFilter, setResultFilter] = useState<'' | 'pass' | 'fail'>('');
   const [officerFilter, setOfficerFilter] = useState('');
+  const [roadblockFilter, setRoadblockFilter] = useState('');
   const [driverLicenseFilter, setDriverLicenseFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -105,19 +107,29 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [tests, filteredTests]);
 
-  const hasActiveFilters = resultFilter !== '' || officerFilter !== '' || driverLicenseFilter.trim() !== '' || dateFrom !== '' || dateTo !== '';
-
-  const totalPages = Math.max(1, Math.ceil(filteredTests.length / PAGE_SIZE));
-  const paginatedTests = useMemo(
-    () => filteredTests.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
-    [filteredTests, currentPage]
+  const roadblockOptions = useMemo(
+    () => collectRoadblockOptions([...tests, ...filteredTests]),
+    [tests, filteredTests]
   );
-  const firstVisible = filteredTests.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
-  const lastVisible = Math.min(currentPage * PAGE_SIZE, filteredTests.length);
+
+  const visibleTests = useMemo(() => {
+    if (!roadblockFilter) return filteredTests;
+    return filteredTests.filter((test) => getTestRoadblockContext(test).key === roadblockFilter);
+  }, [filteredTests, roadblockFilter]);
+
+  const hasActiveFilters = resultFilter !== '' || officerFilter !== '' || roadblockFilter !== '' || driverLicenseFilter.trim() !== '' || dateFrom !== '' || dateTo !== '';
+
+  const totalPages = Math.max(1, Math.ceil(visibleTests.length / PAGE_SIZE));
+  const paginatedTests = useMemo(
+    () => visibleTests.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [visibleTests, currentPage]
+  );
+  const firstVisible = visibleTests.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const lastVisible = Math.min(currentPage * PAGE_SIZE, visibleTests.length);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, resultFilter, officerFilter, driverLicenseFilter, dateFrom, dateTo]);
+  }, [search, resultFilter, officerFilter, roadblockFilter, driverLicenseFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
@@ -126,6 +138,7 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
   const clearFilters = () => {
     setResultFilter('');
     setOfficerFilter('');
+    setRoadblockFilter('');
     setDriverLicenseFilter('');
     setDateFrom('');
     setDateTo('');
@@ -172,7 +185,7 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
             Filters
             {hasActiveFilters && (
               <span className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#0D2137] text-[9px] font-bold text-white">
-                {[resultFilter, officerFilter, driverLicenseFilter.trim(), dateFrom, dateTo].filter(Boolean).length}
+                {[resultFilter, officerFilter, roadblockFilter, driverLicenseFilter.trim(), dateFrom, dateTo].filter(Boolean).length}
               </span>
             )}
           </button>
@@ -232,6 +245,27 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
             </div>
 
             <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold tracking-[0.1em] text-slate-500">ROADBLOCK</span>
+              <div className="relative">
+                <select
+                  aria-label="Roadblock filter"
+                  value={roadblockFilter}
+                  onChange={(e) => setRoadblockFilter(e.target.value)}
+                  className="h-[30px] min-w-[220px] appearance-none rounded-md border bg-white pl-2.5 pr-7 text-[0.75rem] text-slate-800 outline-none transition focus:border-[#0D2137]/35 focus:ring-1 focus:ring-[#0D2137]/10"
+                  style={{ borderColor: BORDER }}
+                >
+                  <option value="">All Roadblocks</option>
+                  {roadblockOptions.map((option) => (
+                    <option key={option.key} value={option.key}>
+                      {option.name}{option.station !== '—' ? ` · ${option.station}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={13} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
               <span className="text-[10px] font-bold tracking-[0.1em] text-slate-500">FROM</span>
               <input
                 type="date"
@@ -283,7 +317,7 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
               <table className="min-w-full text-left">
                 <thead>
                   <tr className="border-b" style={{ borderColor: BORDER }}>
-                    {['TIMESTAMP', 'OFFICER', 'DRIVER LICENCE', 'RESULT', 'READING', 'GPS', 'INTEGRITY'].map((col) => (
+                    {['TIMESTAMP', 'OFFICER', 'ROADBLOCK', 'DRIVER LICENCE', 'RESULT', 'READING', 'GPS', 'INTEGRITY'].map((col) => (
                       <th
                         key={col}
                         className="px-4 py-2.5 text-[10px] font-bold tracking-[0.1em] text-slate-500"
@@ -294,15 +328,17 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredTests.length === 0 ? (
+                  {visibleTests.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-10 text-center text-[0.75rem] text-slate-500">
+                      <td colSpan={8} className="px-4 py-10 text-center text-[0.75rem] text-slate-500">
                         {search.trim() || hasActiveFilters ? 'No logs match your filters.' : 'No test records found.'}
                       </td>
                     </tr>
                   ) : (
                     paginatedTests.map((test) => {
                       const failed = test.result === 'fail';
+                      const roadblock = getTestRoadblockContext(test);
+                      const roadblockName = roadblock.name === 'Unspecified' ? 'Not linked' : roadblock.name;
                       return (
                         <tr
                           key={test.id}
@@ -323,6 +359,15 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
                           </td>
                           <td className="px-4 py-2.5 text-[0.8125rem] font-medium text-slate-800">
                             {formatOfficerName(test.officerName)}
+                          </td>
+                          <td className="min-w-[190px] px-4 py-2.5">
+                            <p className="max-w-[220px] truncate text-[0.8125rem] font-semibold text-slate-800" title={roadblockName}>
+                              {roadblockName}
+                            </p>
+                            <p className="mt-0.5 truncate text-[10px] text-slate-500" title={roadblock.roadblockId ?? undefined}>
+                              {roadblock.station !== '—' ? `${roadblock.station} · ` : ''}
+                              <span className="font-mono">ID {roadblock.roadblockId ?? '—'}</span>
+                            </p>
                           </td>
                           <td className="px-4 py-2.5 font-mono text-[0.8125rem] text-slate-700">
                             {test.driverId}
@@ -368,10 +413,10 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
             )}
           </div>
 
-          {!filteredLoading && filteredTests.length > 0 && (
+          {!filteredLoading && visibleTests.length > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3" style={{ borderColor: BORDER }}>
               <span className="text-[0.75rem] text-slate-500">
-                Showing {firstVisible}-{lastVisible} of {filteredTests.length} logs
+                Showing {firstVisible}-{lastVisible} of {visibleTests.length} logs
               </span>
               <div className="flex items-center gap-2">
                 <button

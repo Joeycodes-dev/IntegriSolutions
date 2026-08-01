@@ -14,7 +14,12 @@ const mockTests = [
     bacReading: 0.08,
     result: 'fail' as const,
     createdAt: '2026-05-30T10:00:00Z',
-    location: 'JHB',
+    location: JSON.stringify({
+      roadblockId: 'shift-123',
+      roadblock: 'N1 Midrand Roadblock',
+      station: 'Midrand SAPS',
+      supervisorName: 'Jane Supervisor'
+    }),
     hash: 'abc123',
     hashValid: true
   },
@@ -119,6 +124,27 @@ describe('SupervisorLogs', () => {
     });
   });
 
+  it('shows roadblock name, station, and shift ID in the log row', async () => {
+    render(
+      <SupervisorLogs
+        tests={mockTests}
+        loading={false}
+        error={null}
+        onSelectTest={mockOnSelectTest}
+      />
+    );
+
+    vi.advanceTimersByTime(400);
+
+    await waitFor(() => {
+      expect(screen.getByText('ROADBLOCK')).toBeInTheDocument();
+      expect(screen.getByText('N1 Midrand Roadblock')).toBeInTheDocument();
+      const row = screen.getByText('N1 Midrand Roadblock').closest('tr');
+      expect(row?.textContent).toContain('Midrand SAPS');
+      expect(row?.textContent).toContain('ID shift-123');
+    });
+  });
+
   it('calls getTests with search filter when typing', async () => {
     render(
       <SupervisorLogs
@@ -188,6 +214,27 @@ describe('SupervisorLogs', () => {
         officer: 'John Doe',
         driverLicense: '987654'
       }));
+    });
+  });
+
+  it('filters visible logs by roadblock assignment', async () => {
+    render(
+      <SupervisorLogs
+        tests={mockTests}
+        loading={false}
+        error={null}
+        onSelectTest={mockOnSelectTest}
+      />
+    );
+
+    vi.advanceTimersByTime(400);
+    fireEvent.click(screen.getByRole('button', { name: /Filters/i }));
+    fireEvent.change(screen.getByLabelText('Roadblock filter'), { target: { value: 'shift-123' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Showing 1-1 of 1 logs')).toBeInTheDocument();
+      expect(screen.getByText('9876543210123')).toBeInTheDocument();
+      expect(screen.queryByText('1234567890123')).not.toBeInTheDocument();
     });
   });
 

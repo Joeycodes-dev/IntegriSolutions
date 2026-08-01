@@ -1,4 +1,5 @@
-import { niceTicks, type TrendSeries } from '../../lib/reportAnalytics';
+import { formatEvidenceTimestamp } from '../../lib/testEvidence';
+import { niceTicks, type RoadblockStat, type TrendSeries } from '../../lib/reportAnalytics';
 
 const CHART_W = 400;
 const CHART_H = 180;
@@ -260,7 +261,7 @@ export function ResultPieChart({ passed, failed }: ResultPieChartProps) {
 /* ------------------------------------------------------------------ */
 
 interface RoadblockBarChartProps {
-  stats: { name: string; total: number; failed: number; failureRate: number }[];
+  stats: RoadblockStat[];
   maxRows?: number;
 }
 
@@ -277,7 +278,7 @@ export function RoadblockBarChart({ stats, maxRows = 6 }: RoadblockBarChartProps
       {rows.map((row) => {
         const widthPct = Math.max(row.failed > 0 ? 4 : 0, (row.failed / maxFailed) * 100);
         return (
-          <div key={row.name} className="flex items-center gap-2">
+          <div key={row.key} className="flex items-center gap-2">
             <span className="w-[7.5rem] shrink-0 truncate text-right text-[0.6875rem] font-medium text-slate-600" title={row.name}>
               {row.name}
             </span>
@@ -285,6 +286,7 @@ export function RoadblockBarChart({ stats, maxRows = 6 }: RoadblockBarChartProps
               <div
                 className="flex h-full items-center rounded-md bg-rose-500/90 pl-1.5 transition-all duration-300"
                 style={{ width: `${widthPct}%` }}
+                title={`${row.name}: ${row.failed} failed of ${row.total} tests (${row.failureRate}%)${row.roadblockId ? `, ID ${row.roadblockId}` : ''}`}
               >
                 {row.failed > 0 && (
                   <span className="text-[0.625rem] font-bold text-white tabular-nums">{row.failed}</span>
@@ -300,6 +302,67 @@ export function RoadblockBarChart({ stats, maxRows = 6 }: RoadblockBarChartProps
       <p className="mt-1 text-[0.625rem] text-slate-400">
         Failed / total tests and failure rate per checkpoint, ranked by failures.
       </p>
+    </div>
+  );
+}
+
+function formatRoadblockWindow(row: RoadblockStat): string {
+  if (!row.shiftStartsAt || !row.shiftEndsAt) return 'Not recorded';
+  return `${formatEvidenceTimestamp(row.shiftStartsAt)} - ${formatEvidenceTimestamp(row.shiftEndsAt)}`;
+}
+
+export function RoadblockPerformanceTable({ stats }: { stats: RoadblockStat[] }) {
+  if (stats.length === 0) {
+    return <p className="py-8 text-center text-[0.75rem] text-slate-400">No roadblock data in this range</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-[850px] w-full text-left" aria-label="Roadblock accountability report">
+        <thead>
+          <tr className="border-b" style={{ borderColor: '#E2E8F0' }}>
+            {['ROADBLOCK / ID', 'STATION / SUPERVISOR', 'TESTS', 'FAILURES', 'FAILURE RATE', 'OFFICERS', 'AVG BAC', 'SHIFT WINDOW'].map((column) => (
+              <th key={column} className="px-3 py-2 text-[9px] font-bold tracking-[0.1em] text-slate-500">
+                {column}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {stats.map((row) => (
+            <tr key={row.key} className="border-b last:border-b-0" style={{ borderColor: '#E2E8F0' }}>
+              <td className="max-w-[190px] px-3 py-2.5">
+                <p className="truncate text-[0.75rem] font-bold text-slate-800" title={row.name}>{row.name}</p>
+                <p className="mt-0.5 truncate font-mono text-[10px] text-slate-500" title={row.roadblockId ?? undefined}>
+                  {row.roadblockId ?? 'No shift ID'}
+                </p>
+              </td>
+              <td className="max-w-[180px] px-3 py-2.5">
+                <p className="truncate text-[0.75rem] font-semibold text-slate-700">{row.station}</p>
+                <p className="mt-0.5 truncate text-[10px] text-slate-500" title={row.supervisor}>
+                  Supervisor: {row.supervisor}
+                </p>
+              </td>
+              <td className="px-3 py-2.5">
+                <p className="text-[0.8125rem] font-bold tabular-nums text-slate-800">{row.total}</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">{row.passed} passed</p>
+              </td>
+              <td className="px-3 py-2.5">
+                <p className="text-[0.8125rem] font-bold tabular-nums text-rose-600">{row.failed}</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">of {row.total}</p>
+              </td>
+              <td className="px-3 py-2.5">
+                <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold tabular-nums ${row.failureRate > 50 ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                  {row.failureRate}%
+                </span>
+              </td>
+              <td className="px-3 py-2.5 text-[0.75rem] font-semibold tabular-nums text-slate-700">{row.officerCount}</td>
+              <td className="px-3 py-2.5 font-mono text-[0.75rem] text-slate-700">{row.averageBac.toFixed(3)}</td>
+              <td className="max-w-[210px] px-3 py-2.5 text-[10px] leading-snug text-slate-600">{formatRoadblockWindow(row)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

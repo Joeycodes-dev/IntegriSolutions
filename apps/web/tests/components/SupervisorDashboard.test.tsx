@@ -137,7 +137,12 @@ describe('SupervisorDashboard', () => {
         bacReading: 0.08,
         result: 'fail' as const,
         createdAt: '2026-05-15T10:00:00Z',
-        location: JSON.stringify({ roadblock: 'Allandale Slip' }),
+         location: JSON.stringify({
+           roadblockId: 'shift-report-1',
+           roadblock: 'Allandale Slip',
+           station: 'Allandale SAPS',
+           supervisorName: 'Supervisor One'
+         }),
         hash: 'abc'
       }
     ]);
@@ -153,6 +158,7 @@ describe('SupervisorDashboard', () => {
     expect(screen.getByText('Filters')).toBeInTheDocument();
     expect(screen.getByText(/DUI Trends/i)).toBeInTheDocument();
     expect(screen.getByText('Result Breakdown')).toBeInTheDocument();
+    expect(screen.getByText('Roadblock Accountability')).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText(/Showing \d+ of \d+ record/i)).toBeInTheDocument();
@@ -160,6 +166,7 @@ describe('SupervisorDashboard', () => {
     await waitFor(() => {
       expect(screen.getByText(/Passed \(0\)/i)).toBeInTheDocument();
       expect(screen.getByText(/Failed \(1\)/i)).toBeInTheDocument();
+      expect(screen.getByText('shift-report-1')).toBeInTheDocument();
     });
   });
 

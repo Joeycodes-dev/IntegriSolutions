@@ -28,7 +28,7 @@ import {
   buildResultBreakdown,
   buildRoadblockStats,
   buildTrendSeries,
-  collectRoadblocks,
+  collectRoadblockOptions,
   dataSpanDateRange,
   defaultReportDateRange,
   filterTestsForReport,
@@ -45,7 +45,8 @@ import {
   OfficerLeaderboard,
   PeakHoursHeatmap,
   ResultPieChart,
-  RoadblockBarChart
+  RoadblockBarChart,
+  RoadblockPerformanceTable
 } from './ReportCharts';
 import { BORDER, NAVY, PAGE_BG, pageShell } from './supervisorStyles';
 
@@ -240,7 +241,7 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
     setRangeInitialized(true);
   }, [tests, loading, rangeInitialized]);
 
-  const roadblocks = useMemo(() => collectRoadblocks(tests), [tests]);
+  const roadblockOptions = useMemo(() => collectRoadblockOptions(tests), [tests]);
 
   const filtered = useMemo(
     () => filterTestsForReport(tests, filters),
@@ -400,9 +401,9 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
               onChange={(v) => updateFilter('roadblock', v)}
             >
               <option value="ALL">ALL</option>
-              {roadblocks.map((rb) => (
-                <option key={rb} value={rb}>
-                  {rb}
+              {roadblockOptions.map((roadblock) => (
+                <option key={roadblock.key} value={roadblock.key}>
+                  {roadblock.name}{roadblock.station !== '—' ? ` · ${roadblock.station}` : ''}
                 </option>
               ))}
             </SelectField>
@@ -553,6 +554,18 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
             </div>
           </SectionCard>
         </div>
+
+        <SectionCard
+          title="Roadblock Accountability"
+          subtitle="Stable shift IDs, deployment context, and outcomes for every checkpoint in the selected period"
+          icon={MapPin}
+        >
+          {loading ? (
+            <p className="py-8 text-center text-[0.75rem] text-slate-500">Loading roadblock report…</p>
+          ) : (
+            <RoadblockPerformanceTable stats={roadblockStats} />
+          )}
+        </SectionCard>
 
         {/* Peak hours + officer leaderboard */}
         <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2">

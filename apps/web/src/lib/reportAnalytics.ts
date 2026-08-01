@@ -10,6 +10,23 @@ export interface ReportFilters {
   roadblock: string;
 }
 
+export interface TestRoadblockContext {
+  key: string;
+  roadblockId: string | null;
+  name: string;
+  station: string;
+  supervisor: string;
+  shiftStartsAt: string | null;
+  shiftEndsAt: string | null;
+}
+
+export interface RoadblockOption {
+  key: string;
+  roadblockId: string | null;
+  name: string;
+  station: string;
+}
+
 export const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 
 export interface TrendSeries {
@@ -75,24 +92,61 @@ export function weekdayIndex(iso: string): number {
   return day === 0 ? 6 : day - 1;
 }
 
-export function getTestRoadblock(test: TestRecord): string {
+function firstText(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+export function getTestRoadblockContext(test: TestRecord): TestRoadblockContext {
   const parsed = parseTestLocation(test.location);
-  const value =
-    test.evidence?.roadblock ||
-    parsed.roadblock ||
-    parsed.station ||
-    test.evidence?.station ||
-    parsed.label ||
-    test.evidence?.locationLabel;
-  return value?.trim() || 'Unspecified';
+  const merged = { ...parsed, ...test.evidence };
+  const roadblockId = firstText(merged.roadblockId);
+  const name = firstText(merged.roadblock, merged.station, merged.label, merged.locationLabel) ?? 'Unspecified';
+  const station = firstText(merged.station) ?? '—';
+
+  return {
+    key: roadblockId ?? `legacy:${name.toLowerCase()}|${station.toLowerCase()}`,
+    roadblockId,
+    name,
+    station,
+    supervisor: firstText(merged.supervisorName, merged.supervisorEmail) ?? '—',
+    shiftStartsAt: firstText(merged.shiftStartsAt),
+    shiftEndsAt: firstText(merged.shiftEndsAt)
+  };
+}
+
+export function getTestRoadblock(test: TestRecord): string {
+  return getTestRoadblockContext(test).name;
+}
+
+export function getTestRoadblockKey(test: TestRecord): string {
+  return getTestRoadblockContext(test).key;
+}
+
+export function collectRoadblockOptions(tests: TestRecord[]): RoadblockOption[] {
+  const options = new Map<string, RoadblockOption>();
+  for (const test of tests) {
+    const context = getTestRoadblockContext(test);
+    if (!options.has(context.key)) {
+      options.set(context.key, {
+        key: context.key,
+        roadblockId: context.roadblockId,
+        name: context.name,
+        station: context.station
+      });
+    }
+  }
+  return Array.from(options.values()).sort(
+    (a, b) => a.name.localeCompare(b.name) || a.station.localeCompare(b.station)
+  );
 }
 
 export function collectRoadblocks(tests: TestRecord[]): string[] {
-  const set = new Set<string>();
-  for (const test of tests) {
-    set.add(getTestRoadblock(test));
-  }
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
+  return Array.from(new Set(collectRoadblockOptions(tests).map((option) => option.name))).sort((a, b) =>
+    a.localeCompare(b)
+  );
 }
 
 export function filterTestsForReport(tests: TestRecord[], filters: ReportFilters): TestRecord[] {
@@ -103,7 +157,12 @@ export function filterTestsForReport(tests: TestRecord[], filters: ReportFilters
     const created = new Date(test.createdAt).getTime();
     if (Number.isNaN(created) || created < fromMs || created > toMs) return false;
     if (filters.result !== 'all' && test.result !== filters.result) return false;
-    if (filters.roadblock !== 'ALL' && getTestRoadblock(test) !== filters.roadblock) {
+    const roadblock = getTestRoadblockContext(test);
+    if (
+      filters.roadblock !== 'ALL' &&
+      filters.roadblock !== roadblock.key &&
+      filters.roadblock !== roadblock.name
+    ) {
       return false;
     }
     return true;
@@ -328,29 +387,75 @@ export function buildPeriodDelta(current: TestRecord[], previous: TestRecord[]):
 }
 
 export interface RoadblockStat {
+  key: string;
+  roadblockId: string | null;
   name: string;
+  station: string;
+  supervisor: string;
+  shiftStartsAt: string | null;
+  shiftEndsAt: string | null;
   total: number;
+  passed: number;
   failed: number;
   failureRate: number;
+  officerCount: number;
+  averageBac: number;
 }
 
 export function buildRoadblockStats(tests: TestRecord[]): RoadblockStat[] {
-  const map = new Map<string, { total: number; failed: number }>();
+  const map = new Map<
+    string,
+    {
+      context: TestRoadblockContext;
+      total: number;
+      failed: number;
+      officers: Set<string>;
+      bacTotal: number;
+      bacCount: number;
+    }
+  >();
+
   for (const test of tests) {
-    const name = getTestRoadblock(test);
-    const bucket = map.get(name) ?? { total: 0, failed: 0 };
+    const context = getTestRoadblockContext(test);
+    const bucket =
+      map.get(context.key) ??
+      {
+        context,
+        total: 0,
+        failed: 0,
+        officers: new Set<string>(),
+        bacTotal: 0,
+        bacCount: 0
+      };
+
     bucket.total += 1;
     if (test.result === 'fail') bucket.failed += 1;
-    map.set(name, bucket);
+    if (Number.isFinite(test.bacReading)) {
+      bucket.bacTotal += test.bacReading;
+      bucket.bacCount += 1;
+    }
+    const officer = test.officerId != null ? String(test.officerId) : test.officerName?.trim();
+    if (officer) bucket.officers.add(officer);
+    map.set(context.key, bucket);
   }
+
   return Array.from(map.entries())
-    .map(([name, b]) => ({
-      name,
-      total: b.total,
-      failed: b.failed,
-      failureRate: b.total === 0 ? 0 : Math.round((b.failed / b.total) * 1000) / 10
+    .map(([key, bucket]) => ({
+      key,
+      roadblockId: bucket.context.roadblockId,
+      name: bucket.context.name,
+      station: bucket.context.station,
+      supervisor: bucket.context.supervisor,
+      shiftStartsAt: bucket.context.shiftStartsAt,
+      shiftEndsAt: bucket.context.shiftEndsAt,
+      total: bucket.total,
+      passed: bucket.total - bucket.failed,
+      failed: bucket.failed,
+      failureRate: bucket.total === 0 ? 0 : Math.round((bucket.failed / bucket.total) * 1000) / 10,
+      officerCount: bucket.officers.size,
+      averageBac: bucket.bacCount === 0 ? 0 : Math.round((bucket.bacTotal / bucket.bacCount) * 1000) / 1000
     }))
-    .sort((a, b) => b.failed - a.failed || b.total - a.total);
+    .sort((a, b) => b.failed - a.failed || b.total - a.total || a.name.localeCompare(b.name));
 }
 
 /** 7 weekday rows (Mon–Sun) x 24 hour columns. */
