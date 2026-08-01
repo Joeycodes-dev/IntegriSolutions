@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { LoginScreen } from './screens/LoginScreen';
 import { OfficerDashboardScreen } from './screens/OfficerDashboardScreen';
 import { OfficerReportsScreen } from './screens/OfficerReportsScreen';
+import { OfficerShiftsScreen } from './screens/OfficerShiftsScreen';
 import { AuditScreen } from './screens/AuditScreen';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { SyncProvider } from './lib/SyncContext';
@@ -15,6 +16,7 @@ type RootStackParamList = {
   Login: undefined;
   OfficerDashboard: undefined;
   OfficerReports: undefined;
+  OfficerShifts: undefined;
   Audit: undefined;
 };
 
@@ -43,6 +45,7 @@ function AppNavigator() {
             name="OfficerReports"
             component={OfficerReportsScreen}
           />
+          <Stack.Screen name="OfficerShifts" component={OfficerShiftsScreen} />
           <Stack.Screen name="Audit" component={AuditScreen} />
         </>
       ) : (

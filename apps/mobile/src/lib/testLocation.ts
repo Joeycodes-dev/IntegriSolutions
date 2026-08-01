@@ -2,13 +2,36 @@
 export interface TestLocationPayload {
   lat: number;
   lng: number;
+  roadblockId?: string;
   roadblock?: string;
   station?: string;
+  locationBounds?: {
+    centerLat: number;
+    centerLng: number;
+    radiusMeters: number;
+  };
+  supervisorEmail?: string;
+  supervisorName?: string;
+  shiftStartsAt?: string;
+  shiftEndsAt?: string;
   officerRank?: string;
   serviceNumber?: string;
   officerNotes?: string;
   label?: string;
   driverCategory?: string;
+}
+
+export interface RoadblockShiftSnapshot {
+  id: string;
+  roadblockName: string;
+  station: string;
+  supervisorEmail: string;
+  supervisorName: string | null;
+  startsAt: string;
+  endsAt: string;
+  centerLat: number | null;
+  centerLng: number | null;
+  radiusMeters: number | null;
 }
 
 /** Parse station/address from officer profile.region (plain text or JSON). */
@@ -38,6 +61,7 @@ export function buildTestLocation(params: {
   lng: number;
   roadblock: string;
   station: string;
+  roadblockShift?: RoadblockShiftSnapshot | null;
   officerRank: string;
   serviceNumber: string;
   officerNotes: string;
@@ -49,17 +73,36 @@ export function buildTestLocation(params: {
   const serviceNumber = params.serviceNumber.trim();
   const officerNotes = params.officerNotes.trim();
   const driverCategory = params.driverCategory.trim();
+  const shift = params.roadblockShift;
+  const shiftRoadblock = shift?.roadblockName.trim() || roadblock;
+  const shiftStation = shift?.station.trim() || station;
+  const hasBounds =
+    shift?.centerLat != null &&
+    shift.centerLng != null &&
+    shift.radiusMeters != null;
 
   return {
     lat: params.lat,
     lng: params.lng,
-    ...(roadblock ? { roadblock } : {}),
-    ...(station ? { station } : {}),
+    ...(shift ? { roadblockId: shift.id } : {}),
+    ...(shiftRoadblock ? { roadblock: shiftRoadblock } : {}),
+    ...(shiftStation ? { station: shiftStation } : {}),
+    ...(hasBounds ? {
+      locationBounds: {
+        centerLat: shift.centerLat as number,
+        centerLng: shift.centerLng as number,
+        radiusMeters: shift.radiusMeters as number
+      }
+    } : {}),
+    ...(shift?.supervisorEmail ? { supervisorEmail: shift.supervisorEmail } : {}),
+    ...(shift?.supervisorName ? { supervisorName: shift.supervisorName } : {}),
+    ...(shift?.startsAt ? { shiftStartsAt: shift.startsAt } : {}),
+    ...(shift?.endsAt ? { shiftEndsAt: shift.endsAt } : {}),
     ...(officerRank ? { officerRank } : {}),
     ...(serviceNumber ? { serviceNumber } : {}),
     ...(officerNotes ? { officerNotes } : {}),
     ...(driverCategory ? { driverCategory } : {}),
-    label: roadblock || station || undefined
+    label: shiftRoadblock || shiftStation || undefined
   };
 }
 

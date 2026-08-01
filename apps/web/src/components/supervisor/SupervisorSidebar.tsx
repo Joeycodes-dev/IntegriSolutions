@@ -3,6 +3,7 @@ import {
   ClipboardList,
   LayoutDashboard,
   LogOut,
+  MapPinned,
   Shield,
   User
 } from 'lucide-react';
@@ -15,6 +16,7 @@ const NAV_ITEMS: { id: SupervisorNavItem; label: string; icon: typeof LayoutDash
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'logs', label: 'Logs', icon: ClipboardList },
   { id: 'officers', label: 'Officers', icon: User },
+  { id: 'shifts', label: 'Shifts', icon: MapPinned },
   { id: 'reports', label: 'Reports', icon: BarChart3 }
 ];
 

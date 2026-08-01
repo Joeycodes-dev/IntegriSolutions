@@ -7,7 +7,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { styles } from './OfficerBottomNav.styles';
 import { colors } from '../styles/colors';
 
-export type OfficerTab = 'OfficerDashboard' | 'OfficerReports' | 'Audit';
+export type OfficerTab = 'OfficerDashboard' | 'OfficerReports' | 'OfficerShifts' | 'Audit';
 
 interface TabConfig {
   key: OfficerTab;
@@ -15,7 +15,7 @@ interface TabConfig {
   iconLib: 'feather' | 'ionicons';
   iconName: string;
   iconNameActive: string;
-  route: 'OfficerDashboard' | 'OfficerReports' | 'Audit';
+  route: 'OfficerDashboard' | 'OfficerReports' | 'OfficerShifts' | 'Audit';
 }
 
 const TABS: TabConfig[] = [
@@ -34,6 +34,14 @@ const TABS: TabConfig[] = [
     iconName: 'bar-chart-outline',
     iconNameActive: 'bar-chart',
     route: 'OfficerReports'
+  },
+  {
+    key: 'OfficerShifts',
+    label: 'Shifts',
+    iconLib: 'ionicons',
+    iconName: 'briefcase-outline',
+    iconNameActive: 'briefcase',
+    route: 'OfficerShifts'
   },
   {
     key: 'Audit',

@@ -4,13 +4,34 @@ export interface ParsedLocation {
   lat?: number;
   lng?: number;
   label?: string;
+  roadblockId?: string;
   roadblock?: string;
   officerNotes?: string;
   photoUrls?: string[];
+  locationBounds?: {
+    centerLat: number;
+    centerLng: number;
+    radiusMeters: number;
+  };
+  supervisorEmail?: string;
+  supervisorName?: string;
+  shiftStartsAt?: string;
+  shiftEndsAt?: string;
   officerRank?: string;
   serviceNumber?: string;
   station?: string;
   driverCategory?: string;
+}
+
+function extractLocationBounds(parsed: Record<string, unknown>): ParsedLocation['locationBounds'] {
+  const bounds = parsed.locationBounds;
+  if (!bounds || typeof bounds !== 'object' || Array.isArray(bounds)) return undefined;
+  const candidate = bounds as Record<string, unknown>;
+  const centerLat = typeof candidate.centerLat === 'number' ? candidate.centerLat : undefined;
+  const centerLng = typeof candidate.centerLng === 'number' ? candidate.centerLng : undefined;
+  const radiusMeters = typeof candidate.radiusMeters === 'number' ? candidate.radiusMeters : undefined;
+  if (centerLat == null || centerLng == null || radiusMeters == null) return undefined;
+  return { centerLat, centerLng, radiusMeters };
 }
 
 function extractParsedLocation(parsed: Record<string, unknown>): ParsedLocation {
@@ -23,11 +44,17 @@ function extractParsedLocation(parsed: Record<string, unknown>): ParsedLocation 
         : typeof parsed.address === 'string'
           ? parsed.address
           : undefined,
+    roadblockId: typeof parsed.roadblockId === 'string' ? parsed.roadblockId : undefined,
     roadblock: typeof parsed.roadblock === 'string' ? parsed.roadblock : undefined,
     officerNotes: typeof parsed.officerNotes === 'string' ? parsed.officerNotes : undefined,
     photoUrls: Array.isArray(parsed.photoUrls)
       ? parsed.photoUrls.filter((u): u is string => typeof u === 'string')
       : undefined,
+    locationBounds: extractLocationBounds(parsed),
+    supervisorEmail: typeof parsed.supervisorEmail === 'string' ? parsed.supervisorEmail : undefined,
+    supervisorName: typeof parsed.supervisorName === 'string' ? parsed.supervisorName : undefined,
+    shiftStartsAt: typeof parsed.shiftStartsAt === 'string' ? parsed.shiftStartsAt : undefined,
+    shiftEndsAt: typeof parsed.shiftEndsAt === 'string' ? parsed.shiftEndsAt : undefined,
     officerRank: typeof parsed.officerRank === 'string' ? parsed.officerRank : undefined,
     serviceNumber: typeof parsed.serviceNumber === 'string' ? parsed.serviceNumber : undefined,
     station: typeof parsed.station === 'string' ? parsed.station : undefined,
@@ -106,6 +133,11 @@ export function formatEvidenceTimestamp(iso: string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function formatShiftWindow(startsAt?: string, endsAt?: string): string {
+  if (!startsAt || !endsAt) return 'No shift window recorded';
+  return `${formatEvidenceTimestamp(startsAt)} - ${formatEvidenceTimestamp(endsAt)}`;
+}
+
 export function formatOfficerDisplay(name: string, rank?: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length < 2) return rank ? `${rank} ${name}` : name;
@@ -130,6 +162,7 @@ export function buildTestEvidence(test: TestRecord): TestEvidence {
   const station = merged.station?.trim() || merged.roadblock?.trim() || '—';
   const roadblock = merged.roadblock?.trim() || merged.station?.trim() || '—';
   const limit = merged.driverCategory?.includes('0.02') ? 0.02 : 0.05;
+  const bounds = merged.locationBounds;
 
   return {
     referenceId: formatReferenceId(test.id),
@@ -144,6 +177,7 @@ export function buildTestEvidence(test: TestRecord): TestEvidence {
     rank: merged.officerRank ?? 'Constable',
     station,
     timestamp: formatEvidenceTimestamp(test.createdAt),
+    roadblockId: merged.roadblockId ?? 'Not linked',
     roadblock,
     locationLabel:
       merged.label?.trim() ||
@@ -154,6 +188,11 @@ export function buildTestEvidence(test: TestRecord): TestEvidence {
       merged.lat != null && merged.lng != null
         ? `${merged.lat.toFixed(4)}, ${merged.lng.toFixed(4)}`
         : '—',
+    supervisor: merged.supervisorName?.trim() || merged.supervisorEmail?.trim() || 'No supervisor recorded',
+    shiftWindow: formatShiftWindow(merged.shiftStartsAt, merged.shiftEndsAt),
+    bounds: bounds
+      ? `${bounds.centerLat.toFixed(4)}, ${bounds.centerLng.toFixed(4)} within ${bounds.radiusMeters}m`
+      : 'No roadblock bounds recorded',
     officerNotes:
       merged.officerNotes?.trim() ||
       (test.result === 'fail'

@@ -91,6 +91,14 @@ describe('officerDisplay', () => {
     expect(deriveDutyStatus(active, 2)).toBe('On Patrol');
   });
 
+  it('prefers persisted duty status from the mobile app', () => {
+    const active = officer({ officerId: 3, status: 'Active' });
+    expect(deriveDutyStatus({ ...active, dutyStatus: 'Off Duty' }, 4)).toBe('Off Duty');
+    expect(deriveDutyStatus({ ...active, dutyStatus: 'Break' }, 4)).toBe('On Break');
+    expect(deriveDutyStatus({ ...active, dutyStatus: 'Checkpoint' }, 4)).toBe('On Duty');
+    expect(deriveDutyStatus({ ...active, dutyStatus: 'On Patrol' }, 0)).toBe('On Patrol');
+  });
+
   it('builds performance rows including invited officers', () => {
     const officers = [
       officer({ officerId: 1, status: 'Invited', firstName: 'Ivy', surname: 'Invite' }),

@@ -48,7 +48,20 @@ export function deriveDutyStatus(
   const status = officer.status.trim().toLowerCase();
   if (status === 'invited') return 'Invited';
   if (status !== 'active') return 'Inactive';
-  // Align with mobile duty pill: active officers are On Duty; On Patrol once they submit today.
+
+  // Prefer the officer's persisted duty status set from the mobile app.
+  switch (officer.dutyStatus) {
+    case 'On Patrol':
+      return 'On Patrol';
+    case 'Checkpoint':
+      return 'On Duty';
+    case 'Break':
+      return 'On Break';
+    case 'Off Duty':
+      return 'Off Duty';
+  }
+
+  // Fallback for officers without a persisted status yet.
   return testsToday > 0 ? 'On Patrol' : 'On Duty';
 }
 

@@ -22,6 +22,8 @@ interface Props {
   recentStops: RecentStop[];
   isSyncing: boolean;
   lastSyncedAt: Date | null;
+  initialDuty?: DutyStatus;
+  onDutyChange?: (next: DutyStatus) => void;
   onStartSession: () => void;
   onForceSync: () => void;
   onOpenReports: () => void;
@@ -29,6 +31,8 @@ interface Props {
 }
 
 type DutyStatus = 'on' | 'off' | 'break';
+
+const DUTY_CYCLE: Record<DutyStatus, DutyStatus> = { on: 'break', break: 'off', off: 'on' };
 
 interface RecentStop {
   id: string;
@@ -76,12 +80,14 @@ export function OfficerHome({
   recentStops,
   isSyncing,
   lastSyncedAt,
+  initialDuty = 'on',
+  onDutyChange,
   onStartSession,
   onForceSync,
   onOpenReports,
   onOpenAudit
 }: Props) {
-  const [duty, setDuty] = useState<DutyStatus>('on');
+  const [duty, setDuty] = useState<DutyStatus>(initialDuty);
 
   const todayStats = useMemo(() => {
     return {
@@ -116,8 +122,9 @@ export function OfficerHome({
           <Pressable
             style={[styles.dutyPill, { backgroundColor: dutyMeta.bg }]}
             onPress={() => {
-              const next: Record<DutyStatus, DutyStatus> = { on: 'break', break: 'off', off: 'on' };
-              setDuty(next[duty]);
+              const next = DUTY_CYCLE[duty];
+              setDuty(next);
+              onDutyChange?.(next);
             }}
           >
             <View style={[styles.dutyDot, { backgroundColor: dutyMeta.dot }]} />

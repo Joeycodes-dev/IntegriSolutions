@@ -188,6 +188,8 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
               <DetailField label="SERVICE NO" value={evidence.serviceNumber} />
               <DetailField label="RANK" value={evidence.rank} />
               <DetailField label="STATION" value={evidence.station} />
+              <DetailField label="ROADBLOCK ID" value={evidence.roadblockId} />
+              <DetailField label="SUPERVISOR" value={evidence.supervisor} />
             </div>
           </section>
 
@@ -267,6 +269,10 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
                 <p className="mt-0.5 font-semibold text-slate-800">{evidence.roadblock}</p>
               </div>
               <div>
+                <p className="text-[9px] font-bold tracking-[0.1em] text-slate-500">SHIFT WINDOW</p>
+                <p className="mt-0.5 font-semibold text-slate-800">{evidence.shiftWindow}</p>
+              </div>
+              <div>
                 <p className="text-[9px] font-bold tracking-[0.1em] text-slate-500">LOCATION</p>
                 <p className="mt-0.5 flex items-start gap-1 font-semibold text-slate-800">
                   <MapPin size={14} className="mt-0.5 shrink-0 text-blue-600" strokeWidth={2} />
@@ -278,6 +284,10 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
                 <p className="mt-0.5 font-mono text-[0.75rem] font-semibold text-slate-700">
                   {evidence.gps}
                 </p>
+              </div>
+              <div>
+                <p className="text-[9px] font-bold tracking-[0.1em] text-slate-500">BOUNDS</p>
+                <p className="mt-0.5 font-semibold text-slate-800">{evidence.bounds}</p>
               </div>
             </div>
           </section>

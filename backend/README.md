@@ -25,6 +25,8 @@ Admins are stored in `admin_users`. Supervisors are stored in `supervisor_users`
     - `migrations/20260729_supervisor_invitations.sql`
    - `migrations/20260728_evidence_annotations_audit.sql`  
      (creates `audit_logs`, `annotations`, `evidence`, and the `evidence` storage bucket)
+    - `migrations/20260731_shift_roadblock_operations.sql`  
+       (creates supervisor roadblock shifts and officer assignments)
 
 Note: **Test records cannot be updated or deleted** (WORM triggers). Account status is updated via:
 - `PATCH /api/admin/users/:id` (activate/deactivate supervisors & admins)

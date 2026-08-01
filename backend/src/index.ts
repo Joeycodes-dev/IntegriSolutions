@@ -18,6 +18,7 @@ import supervisorRoutes from './routes/supervisor';
 import evidenceRoutes from './routes/evidence';
 import invalidationsRoutes from './routes/invalidations';
 import scanRoutes from './routes/scan';
+import shiftsRoutes from './routes/shifts';
 import { apiLimiter, authLimiter, syncLimiter } from './middleware/rateLimiter';
 
 const app = express();
@@ -83,6 +84,7 @@ app.use('/api/supervisor', supervisorRoutes);
 app.use('/api/evidence', evidenceRoutes);
 app.use('/api/invalidations', invalidationsRoutes);
 app.use('/api/scan', scanRoutes);
+app.use('/api/shifts', shiftsRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });
@@ -98,6 +100,9 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 
 const server = app.listen(Number(port), '0.0.0.0', () => {
   const addr = server.address();
-  const host = typeof addr === 'string' ? addr : addr?.address;
-  console.log(`Backend API running on http://${host}:${port}`);
+  const boundHost = typeof addr === 'string' ? addr : addr?.address;
+  const displayHost = !boundHost || boundHost === '0.0.0.0' || boundHost === '::'
+    ? 'localhost'
+    : boundHost;
+  console.log(`Backend API running on http://${displayHost}:${port}`);
 });

@@ -65,6 +65,30 @@ describe('buildTestEvidence', () => {
     expect(evidence.rank).toBe('Constable');
     expect(evidence.locationLabel).toBe('N1 Midrand roadblock');
   });
+
+  it('maps inherited shift metadata into evidence review data', () => {
+    const evidence = buildTestEvidence({
+      ...baseTest,
+      location: JSON.stringify({
+        ...courtLocation,
+        roadblockId: 'shift-123',
+        supervisorEmail: 'supervisor@example.com',
+        supervisorName: 'Supervisor One',
+        shiftStartsAt: '2026-07-31T08:00:00.000Z',
+        shiftEndsAt: '2026-07-31T16:00:00.000Z',
+        locationBounds: {
+          centerLat: -26.15,
+          centerLng: 28.2,
+          radiusMeters: 500
+        }
+      })
+    });
+
+    expect(evidence.roadblockId).toBe('shift-123');
+    expect(evidence.supervisor).toBe('Supervisor One');
+    expect(evidence.shiftWindow).toContain('2026-07-31');
+    expect(evidence.bounds).toBe('-26.1500, 28.2000 within 500m');
+  });
 });
 
 describe('resolveEvidencePhotoUrls', () => {

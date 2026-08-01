@@ -26,6 +26,7 @@ import {
 } from "../lib/testLocation";
 import { saveLocally, syncPendingRecords } from "../services/sync";
 import { useSync } from "../lib/SyncContext";
+import { updateDutyStatus } from "../services/api";
 import {
   decryptLicensePayload,
   parseDecryptedLicensePayload,
@@ -35,6 +36,10 @@ import {
   scanDriverLicense,
   type DriverLicenseData,
 } from "../services/scanService";
+import {
+  getSelectedRoadblockShift,
+  isRoadblockShiftActive,
+} from "../services/shifts";
 import type { LocalTestRecord } from "../db/repository";
 import { OfficerBottomNav } from "../components/OfficerBottomNav";
 import { OfficerHome } from "../components/OfficerHome";
@@ -47,12 +52,27 @@ type RootStackParamList = {
   Home: undefined;
   OfficerDashboard: undefined;
   OfficerReports: undefined;
+  OfficerShifts: undefined;
   Audit: undefined;
 };
 
 type Props = NativeStackScreenProps<RootStackParamList, "OfficerDashboard">;
 
 type OfficerStep = "idle" | "scan" | "reading" | "saved";
+
+type DutyPillStatus = "on" | "off" | "break";
+
+function mapProfileDutyStatus(status: string | undefined): DutyPillStatus {
+  if (status === "Break") return "break";
+  if (status === "Off Duty") return "off";
+  return "on";
+}
+
+function dutyPillToApiStatus(pill: DutyPillStatus): string {
+  if (pill === "break") return "Break";
+  if (pill === "off") return "Off Duty";
+  return "On Patrol";
+}
 
 const DEV_BYPASS_UID_PREFIX = "local-";
 const DEV_LICENSE_PAYLOAD =
@@ -617,6 +637,23 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     null,
   );
   const [officerNotes, setOfficerNotes] = useState("");
+  const [duty, setDuty] = useState<DutyPillStatus>(() =>
+    mapProfileDutyStatus(profile?.dutyStatus),
+  );
+
+  const handleDutyChange = async (next: DutyPillStatus) => {
+    const previous = duty;
+    setDuty(next);
+    try {
+      await updateDutyStatus(dutyPillToApiStatus(next));
+    } catch (err) {
+      setDuty(previous);
+      Alert.alert(
+        "Status update failed",
+        err instanceof Error ? err.message : "Could not update duty status.",
+      );
+    }
+  };
 
   useFocusEffect(
     React.useCallback(() => {
@@ -840,6 +877,15 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
     setIsSaving(true);
     try {
+      const selectedShift = await getSelectedRoadblockShift();
+      if (!isRoadblockShiftActive(selectedShift)) {
+        Alert.alert(
+          "Select roadblock shift",
+          "Open Shifts and select an active roadblock before saving this test.",
+        );
+        return;
+      }
+
       const currentLocation = await getDeviceLocation();
       const isOver = reading >= bacLimit;
       const result = reading === 0 ? "pass" : isOver ? "fail" : "pass";
@@ -848,8 +894,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       const location = buildTestLocation({
         lat: currentLocation.lat,
         lng: currentLocation.lng,
-        roadblock: "",
-        station: stationFromProfileRegion(profile.region),
+        roadblock: selectedShift.roadblockName,
+        station: selectedShift.station || stationFromProfileRegion(profile.region),
+        roadblockShift: selectedShift,
         officerRank: "",
         serviceNumber: profile.badgeNumber,
         officerNotes,
@@ -980,6 +1027,8 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             recentStops={recentTests.map(formatRecentStop)}
             isSyncing={isSyncing}
             lastSyncedAt={lastSyncedAt}
+            initialDuty={duty}
+            onDutyChange={handleDutyChange}
             onStartSession={startScan}
             onForceSync={forceSync}
             onOpenReports={() => navigation.navigate("OfficerReports")}

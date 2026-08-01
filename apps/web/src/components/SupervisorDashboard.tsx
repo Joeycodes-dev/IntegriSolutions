@@ -7,6 +7,7 @@ import { SupervisorOverview } from './supervisor/SupervisorOverview';
 import { SupervisorLogs } from './supervisor/SupervisorLogs';
 import { SupervisorOfficers } from './supervisor/SupervisorOfficers';
 import { SupervisorReports } from './supervisor/SupervisorReports';
+import { SupervisorShifts } from './supervisor/SupervisorShifts';
 import { EvidenceReview } from './supervisor/EvidenceReview';
 
 export function SupervisorDashboard() {
@@ -51,6 +52,7 @@ export function SupervisorDashboard() {
         />
       )}
       {activeNav === 'officers' && <SupervisorOfficers tests={tests} />}
+      {activeNav === 'shifts' && <SupervisorShifts />}
       {activeNav === 'reports' && (
         <SupervisorReports tests={tests} loading={loading} error={error} />
       )}

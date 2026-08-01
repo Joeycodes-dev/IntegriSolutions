@@ -256,6 +256,31 @@ export async function updateFieldOfficer(
   });
 }
 
+export async function getRoadblockShifts() {
+  return request<import('../types').RoadblockShift[]>('/api/supervisor/shifts', {
+    headers: authHeaders()
+  });
+}
+
+export async function createRoadblockShift(payload: import('../types').CreateRoadblockShiftPayload) {
+  return request<import('../types').RoadblockShift>('/api/supervisor/shifts', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateRoadblockShift(
+  shiftId: string,
+  payload: { status?: import('../types').RoadblockShiftStatus; assignedOfficerIds?: number[] }
+) {
+  return request<import('../types').RoadblockShift>(`/api/supervisor/shifts/${shiftId}`, {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function getAuditLogs() {
   return request<import('../types').AuditLogEntry[]>('/api/admin/audit-logs', {
     headers: authHeaders()

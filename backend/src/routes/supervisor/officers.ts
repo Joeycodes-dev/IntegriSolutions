@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { ROLE_OFFICER } from '../../constants/roles';
+import { normalizeDutyStatus } from '../../constants/dutyStatus';
 import { requireSupervisor, type SupervisorRequest } from '../../middleware/requireSupervisor';
 import { writeAuditLog } from '../../utilities/auditLog';
 import { asyncHandler } from '../../asyncHandler';
@@ -86,6 +87,7 @@ function toFieldOfficer(row: Record<string, unknown>) {
     rank: String(row.province || 'Constable'),
     station: String(row.region || row.province || '—'),
     status: String(row.officer_employment_status || 'Active'),
+    dutyStatus: normalizeDutyStatus(row.duty_status),
     createdAt: String(row.created_at ?? '')
   };
 }

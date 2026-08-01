@@ -85,6 +85,13 @@ export async function createTest(payload: Record<string, unknown>) {
   });
 }
 
+export async function updateDutyStatus(status: string) {
+  return request<{ dutyStatus: string }>('/profile/duty-status', {
+    method: 'PATCH',
+    body: JSON.stringify({ status })
+  });
+}
+
 export async function syncRecords(records: Record<string, unknown>[]) {
   return request<{ synced: string[]; failed: { id: string; error: string }[]; duplicates: string[] }>('/sync', {
     method: 'POST',

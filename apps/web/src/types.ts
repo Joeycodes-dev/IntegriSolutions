@@ -2,7 +2,7 @@ export type UserRole = 'officer' | 'supervisor' | 'admin';
 
 export type AdminNavItem = 'users' | 'audit' | 'config';
 
-export type SupervisorNavItem = 'dashboard' | 'logs' | 'officers' | 'reports';
+export type SupervisorNavItem = 'dashboard' | 'logs' | 'officers' | 'shifts' | 'reports';
 
 export interface SystemConfigCard {
   id: string;
@@ -57,10 +57,20 @@ export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'outline';
 
 /** Optional evidence payload from mobile (may also be embedded in `location` JSON). */
 export interface TestEvidenceFields {
+  roadblockId?: string;
   roadblock?: string;
   locationLabel?: string;
   lat?: number;
   lng?: number;
+  locationBounds?: {
+    centerLat: number;
+    centerLng: number;
+    radiusMeters: number;
+  };
+  supervisorEmail?: string;
+  supervisorName?: string;
+  shiftStartsAt?: string;
+  shiftEndsAt?: string;
   officerRank?: string;
   serviceNumber?: string;
   station?: string;
@@ -97,6 +107,7 @@ export interface FieldOfficer {
   rank: string;
   station: string;
   status: string;
+  dutyStatus?: string;
   createdAt: string;
   invitationExpiresAt?: string;
   inviteEmailSent?: boolean;
@@ -104,8 +115,47 @@ export interface FieldOfficer {
   emailWarning?: string;
 }
 
+export type RoadblockShiftStatus = 'scheduled' | 'active' | 'closed' | 'cancelled';
+
+export interface RoadblockShift {
+  id: string;
+  roadblockName: string;
+  station: string;
+  supervisorEmail: string;
+  supervisorName: string | null;
+  startsAt: string;
+  endsAt: string;
+  status: RoadblockShiftStatus;
+  centerLat: number | null;
+  centerLng: number | null;
+  radiusMeters: number | null;
+  notes: string | null;
+  assignedOfficerIds: number[];
+  assignmentStatus?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateRoadblockShiftPayload {
+  roadblockName: string;
+  station: string;
+  startsAt: string;
+  endsAt: string;
+  centerLat?: number | null;
+  centerLng?: number | null;
+  radiusMeters?: number | null;
+  notes?: string | null;
+  assignedOfficerIds: number[];
+}
+
 /** Live duty/employment badge shown on the Officers roster. */
-export type OfficerDutyStatus = 'Invited' | 'On Patrol' | 'On Duty' | 'Inactive';
+export type OfficerDutyStatus =
+  | 'Invited'
+  | 'On Patrol'
+  | 'On Duty'
+  | 'On Break'
+  | 'Off Duty'
+  | 'Inactive';
 
 /** @deprecated Prefer OfficerDutyStatus */
 export type OfficerShiftStatus = OfficerDutyStatus;
@@ -121,9 +171,13 @@ export interface TestEvidence {
   rank: string;
   station: string;
   timestamp: string;
+  roadblockId: string;
   roadblock: string;
   locationLabel: string;
   gps: string;
+  supervisor: string;
+  shiftWindow: string;
+  bounds: string;
   officerNotes: string;
   photoUrls: string[];
 }

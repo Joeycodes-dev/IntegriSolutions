@@ -73,7 +73,7 @@ PORT=4000
 FRONTEND_URL=http://localhost:3000
 
 # apps/web/.env.local
-VITE_API_URL=http://localhost:4000
+VITE_API_BASE_URL=http://localhost:4000
 
 ```
 
@@ -101,6 +101,7 @@ In your Supabase project, open the **SQL Editor** and run these files **in order
 3. `backend/migrations/20260719_officer_invitations.sql`
 4. `backend/migrations/20260729_supervisor_invitations.sql`
 5. `backend/migrations/20260728_evidence_annotations_audit.sql` — `audit_logs`, `annotations`, `evidence` + storage bucket
+6. `backend/migrations/20260731_shift_roadblock_operations.sql` — supervisor roadblock shifts + officer assignments
 
 **Important:** DUI test records cannot be edited or deleted (WORM). Status updates use account APIs instead (`PATCH` portal users / field officers).
 
@@ -130,6 +131,10 @@ All endpoints except `/api/auth/login`, `/api/auth/register`, and invite accepta
 | `POST` | `/api/auth/supervisor-invite` | Accept supervisor invite + set password | Public |
 | `GET` | `/api/tests` | List enforcement test records | Authenticated |
 | `POST` | `/api/sync` | Sync offline officer captures | Officer |
+| `GET` | `/api/shifts/active` | List active roadblock shifts assigned to the signed-in officer | Officer |
+| `GET` | `/api/supervisor/shifts` | List roadblock shift assignments | Supervisor |
+| `POST` | `/api/supervisor/shifts` | Create a roadblock shift and assign officers | Supervisor |
+| `PATCH` | `/api/supervisor/shifts/:id` | Close/cancel/update roadblock shift assignments | Supervisor |
 | `PATCH` | `/api/admin/users/:id` | Update portal user status (not tests) | Admin |
 | `PATCH` | `/api/supervisor/officers/:id` | Update field officer status | Supervisor |
 | `DELETE` | `/api/admin/users/:id` | Remove portal user | Admin |

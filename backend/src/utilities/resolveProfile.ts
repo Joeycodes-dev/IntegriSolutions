@@ -21,6 +21,7 @@ interface OfficerRow {
   badge_number: string;
   officer_id_number: number;
   officer_employment_status: string;
+  duty_status?: string;
   province: string;
   region: string;
   officer_type_id: number;
@@ -79,8 +80,7 @@ function fromOfficerRow(row: OfficerRow, uid: string): ResolvedProfile {
       badgeNumber: row.badge_number,
       idNumber: String(row.officer_id_number),
       employmentStatus: row.officer_employment_status,
-      // duty_status column may not exist in some DB setups yet
-      dutyStatus: normalizeDutyStatus(undefined),
+      dutyStatus: normalizeDutyStatus(row.duty_status),
       province: row.province,
       region: row.region,
       officerTypeId: row.officer_type_id,
