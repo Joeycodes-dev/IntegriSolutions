@@ -22,11 +22,11 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12
   },
-  backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.surfaceHighlight,
+  iconBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: colors.primaryDark,
     alignItems: 'center',
     justifyContent: 'center'
   },

@@ -46,8 +46,8 @@ const TABS: TabConfig[] = [
   {
     key: 'Audit',
     label: 'Audit',
-    iconLib: 'feather',
-    iconName: 'shield',
+    iconLib: 'ionicons',
+    iconName: 'shield-outline',
     iconNameActive: 'shield',
     route: 'Audit'
   }

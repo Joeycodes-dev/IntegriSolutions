@@ -67,7 +67,7 @@ function severityColor(severity: string, outcome: string): string {
   return '#16a34a';
 }
 
-export function AuditScreen({ navigation }: Props) {
+export function AuditScreen(_props: Props) {
   const { profile, signOut } = useAuth();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -192,9 +192,9 @@ export function AuditScreen({ navigation }: Props) {
     <View style={styles.page}>
       <View style={styles.header}>
         <View style={styles.headerTitle}>
-          <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
-            <Feather name="arrow-left" size={20} color="#475569" />
-          </Pressable>
+          <View style={styles.iconBadge}>
+            <Feather name="shield" size={20} color="#fff" />
+          </View>
           <View>
             <Text style={styles.headerLabel}>DEVICE AUDIT TRAIL</Text>
             <Text style={styles.headerSubtitle}>

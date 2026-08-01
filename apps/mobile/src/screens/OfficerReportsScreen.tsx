@@ -43,7 +43,7 @@ function syncStatusLabel(status: string): { label: string; color: string; icon: 
   return { label: 'Unknown', color: '#64748b', icon: 'help-circle' };
 }
 
-export function OfficerReportsScreen({ navigation }: Props) {
+export function OfficerReportsScreen(_props: Props) {
   const { profile, signOut } = useAuth();
   const { pendingCount, failedCount, syncedCount } = useSync();
   const [tests, setTests] = useState<LocalTestRecord[]>([]);
@@ -175,9 +175,9 @@ export function OfficerReportsScreen({ navigation }: Props) {
     <View style={styles.page}>
       <View style={styles.header}>
         <View style={styles.headerTitle}>
-          <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
-            <Feather name="arrow-left" size={20} color="#475569" />
-          </Pressable>
+          <View style={styles.iconBadge}>
+            <Feather name="bar-chart-2" size={20} color="#fff" />
+          </View>
           <View>
             <Text style={styles.headerLabel}>MY REPORTS</Text>
             <Text style={styles.headerSubtitle}>{profile?.name} • {profile?.badgeNumber}</Text>
@@ -310,8 +310,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12
   },
-  backButton: {
-    padding: 8
+  iconBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#0D253F',
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   headerLabel: {
     fontSize: 12,

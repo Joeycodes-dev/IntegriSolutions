@@ -337,9 +337,9 @@ export async function insertAuditEvent(event: AuditEvent): Promise<void> {
 
 export async function getAllAuditEvents(limit = 500): Promise<AuditEvent[]> {
   const db = await getDB();
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 500;
   return db.getAllAsync<AuditEvent>(
-    `SELECT * FROM audit_events ORDER BY occurredAt DESC LIMIT ?`,
-    [limit]
+    `SELECT * FROM audit_events ORDER BY occurredAt DESC LIMIT ${safeLimit}`
   );
 }
 
@@ -348,9 +348,10 @@ export async function getAuditEventsByAction(
   limit = 500
 ): Promise<AuditEvent[]> {
   const db = await getDB();
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 500;
   return db.getAllAsync<AuditEvent>(
-    `SELECT * FROM audit_events WHERE action LIKE ? ORDER BY occurredAt DESC LIMIT ?`,
-    [`${actionPrefix}%`, limit]
+    `SELECT * FROM audit_events WHERE action LIKE ? ORDER BY occurredAt DESC LIMIT ${safeLimit}`,
+    [`${actionPrefix}%`]
   );
 }
 
