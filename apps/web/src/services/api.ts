@@ -350,6 +350,41 @@ export async function getEvidence(testId: string) {
   });
 }
 
+export async function getVerificationTokens(testIds: string[]) {
+  return request<import('../types').VerificationTokenRecord[]>('/api/supervisor/verification-tokens', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ testIds })
+  });
+}
+
+export async function getPublicVerification(token: string) {
+  const response = await fetch(`${API_BASE}/api/public/verify`, {
+    headers: {
+      'X-Verification-Token': token
+    }
+  });
+
+  const rawText = await response.text();
+  let payload: Record<string, unknown> = {};
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      payload = { error: rawText.slice(0, 500) };
+    }
+  }
+
+  if (!response.ok) {
+    const message =
+      (typeof payload.error === 'string' ? payload.error : null) ||
+      `Verification failed (${response.status} ${response.statusText})`;
+    throw new Error(message);
+  }
+
+  return payload as unknown as import('../types').PublicVerification;
+}
+
 export async function uploadEvidence(testId: string, file: File, notes?: string) {
   const token = getAccessToken();
   if (!token) throw new Error('Not authenticated');

@@ -34,6 +34,7 @@ IntegriSolutions/
 - **SHA-256 hashing** — every record is hashed at capture; the sync engine rejects anything that doesn't match
 - **WORM database** — PostgreSQL rules block all `UPDATE` and `DELETE` on enforcement records
 - **Court-ready exports** — supervisors can export individual test records as signed PDF evidence
+- **Court verification portal** — every exported PDF carries a QR code that opens a public, anonymous verification page (reference ID, hash status, capture + issuance timestamps, officer badge, redacted driver details)
 - **Full audit trail** — every access and action is logged with user ID and timestamp
 
 ---
@@ -74,6 +75,7 @@ FRONTEND_URL=http://localhost:3000
 
 # apps/web/.env.local
 VITE_API_BASE_URL=http://localhost:4000
+VITE_PUBLIC_WEB_URL=http://localhost:3000
 
 ```
 
@@ -102,6 +104,9 @@ In your Supabase project, open the **SQL Editor** and run these files **in order
 4. `backend/migrations/20260729_supervisor_invitations.sql`
 5. `backend/migrations/20260728_evidence_annotations_audit.sql` — `audit_logs`, `annotations`, `evidence` + storage bucket
 6. `backend/migrations/20260731_shift_roadblock_operations.sql` — supervisor roadblock shifts + officer assignments
+7. `backend/migrations/20260801_case_lifecycle.sql` — case lifecycle queues (`case_records`)
+8. `backend/migrations/20260802_evidence_categories.sql` — evidence photo categories
+9. `backend/migrations/20260802_court_verification.sql` — court verification tokens for PDF QR codes
 
 **Important:** DUI test records cannot be edited or deleted (WORM). Status updates use account APIs instead (`PATCH` portal users / field officers).
 
@@ -139,9 +144,24 @@ All endpoints except `/api/auth/login`, `/api/auth/register`, and invite accepta
 | `PATCH` | `/api/supervisor/officers/:id` | Update field officer status | Supervisor |
 | `DELETE` | `/api/admin/users/:id` | Remove portal user | Admin |
 | `POST` | `/api/supervisor/tests/:id` | Annotate case (approve/refer) | Supervisor |
+| `POST` | `/api/supervisor/verification-tokens` | Issue court verification tokens for PDF exports (body: `{ "testIds": [...] }`) | Supervisor |
+| `GET` | `/api/public/verify` | Anonymous court verification lookup (token in `X-Verification-Token` header) | Public |
 | `GET` | `/api/health` | Health check | Public |
 
 Test rows are **immutable** (no PUT/PATCH/DELETE on `/api/tests`).
+
+### Court verification portal
+
+Every evidence PDF export (single record or weekly report) now includes a QR code in the page
+header. Scanning it opens `/#/verify/<token>` on the web dashboard, bypassing portal login, and
+shows a strict allowlist: reference ID, SHA-256 hash status (recomputed server-side), capture
+timestamp, verification issuance timestamp, officer badge, and **redacted** driver name/licence.
+No raw PII, GPS, notes, annotations, or evidence URLs are exposed.
+
+- Each export receives fresh high-entropy tokens; only SHA-256 hashes of tokens are stored.
+- Tokens never expire but can be revoked by clearing `revoked_at` via the database.
+- Set `VITE_PUBLIC_WEB_URL` (web) to the public origin so scanned QRs resolve correctly.
+- The public page verifies the immutable test record — not the generated PDF bytes themselves.
 
 ---
 

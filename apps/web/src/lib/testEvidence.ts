@@ -103,14 +103,14 @@ export function formatReferenceId(testId: string): string {
   return `ARW-${mid}-${tail}`;
 }
 
-/** Court / PDF reference format, e.g. IS-2026-04-07-004 */
+/** Court / PDF reference format, e.g. IS-2026-04-07-004 (UTC — must match backend). */
 export function formatCourtReferenceId(testId: string, createdAt: string): string {
   const date = new Date(createdAt);
   if (Number.isNaN(date.getTime())) {
     return formatReferenceId(testId).replace(/^ARW/, 'IS');
   }
   const pad = (n: number) => String(n).padStart(2, '0');
-  const ymd = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const ymd = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
   const tail = testId.replace(/\D/g, '').slice(-3).padStart(3, '0') || '001';
   return `IS-${ymd}-${tail}`;
 }

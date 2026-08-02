@@ -23,3 +23,11 @@ export const syncLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+export const verifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  message: { error: 'Too many verification requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

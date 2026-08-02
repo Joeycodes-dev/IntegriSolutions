@@ -19,7 +19,8 @@ import evidenceRoutes from './routes/evidence';
 import invalidationsRoutes from './routes/invalidations';
 import scanRoutes from './routes/scan';
 import shiftsRoutes from './routes/shifts';
-import { apiLimiter, authLimiter, syncLimiter } from './middleware/rateLimiter';
+import publicVerificationRoutes from './routes/publicVerification';
+import { apiLimiter, authLimiter, syncLimiter, verifyLimiter } from './middleware/rateLimiter';
 
 const app = express();
 const port = process.env.PORT ?? '4000';
@@ -73,6 +74,8 @@ app.use((req, _res, next) => {
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
+
+app.use('/api/public', verifyLimiter, publicVerificationRoutes);
 
 app.use('/api', apiLimiter);
 app.use('/api/auth', authLimiter, authRoutes);

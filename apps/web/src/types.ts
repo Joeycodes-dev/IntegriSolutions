@@ -216,3 +216,30 @@ export interface CaseRecord {
   lastComment: string | null;
   caseUpdatedAt: string | null;
 }
+
+export type VerificationHashStatus = 'verified' | 'tampered' | 'unavailable';
+
+/** One opaque court verification token, issued per PDF export. */
+export interface VerificationTokenRecord {
+  testId: string;
+  token: string;
+  referenceId: string;
+  hash: string;
+  hashStatus: VerificationHashStatus;
+  timestamp: string;
+  officerBadge: string;
+  issuedAt: string;
+}
+
+/** Strict allowlist returned by the anonymous public verification endpoint. */
+export interface PublicVerification {
+  referenceId: string;
+  hashStatus: VerificationHashStatus;
+  timestamp: string;
+  issuedAt: string;
+  officerBadge: string;
+  driver: {
+    name: string;
+    id: string;
+  };
+}
