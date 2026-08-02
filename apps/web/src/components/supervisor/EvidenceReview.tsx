@@ -9,10 +9,12 @@ import {
   MapPin,
   ShieldAlert,
   ShieldCheck,
-  ShieldX
+  ShieldX,
+  PlayCircle
 } from 'lucide-react';
-import type { TestRecord } from '../../types';
+import type { CaseStatus, TestRecord } from '../../types';
 import { buildTestEvidence } from '../../lib/testEvidence';
+import { CASE_STATUS_LABELS, CASE_STATUS_STYLES, isCaseStatus } from '../../lib/caseStatus';
 import { annotateTest, getAnnotations, getEvidence, uploadEvidence, type Annotation, type EvidencePhoto } from '../../services/api';
 import { BORDER, NAVY, PAGE_BG, pageShell } from './supervisorStyles';
 
@@ -51,18 +53,33 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [annotationsLoading, setAnnotationsLoading] = useState(true);
   const [comment, setComment] = useState('');
-  const [submitting, setSubmitting] = useState<'approved' | 'referred' | null>(null);
+  const [submitting, setSubmitting] = useState<CaseStatus | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [evidencePhotos, setEvidencePhotos] = useState<EvidencePhoto[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const initialCaseStatus = useMemo<CaseStatus>(() => {
+    if (test && typeof test === 'object' && 'caseStatus' in test) {
+      const candidate = (test as TestRecord & { caseStatus?: unknown }).caseStatus;
+      if (typeof candidate === 'string' && isCaseStatus(candidate)) return candidate;
+    }
+    return 'new';
+  }, [test]);
+  const [caseStatus, setCaseStatus] = useState<CaseStatus>(initialCaseStatus);
 
   useEffect(() => {
     let cancelled = false;
     setAnnotationsLoading(true);
     getAnnotations(test.id)
-      .then((data) => { if (!cancelled) setAnnotations(data); })
+      .then((data) => {
+        if (cancelled) return;
+        setAnnotations(data);
+        const first = data[0];
+        if (first && isCaseStatus(first.status)) {
+          setCaseStatus(first.status);
+        }
+      })
       .catch(() => { if (!cancelled) setAnnotations([]); })
       .finally(() => { if (!cancelled) setAnnotationsLoading(false); });
     return () => { cancelled = true; };
@@ -103,7 +120,7 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
     }
   };
 
-  const handleAnnotate = async (status: 'approved' | 'referred') => {
+  const handleAnnotate = async (status: CaseStatus) => {
     setSubmitting(status);
     setSubmitError(null);
     try {
@@ -111,7 +128,8 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
         comment: comment.trim() || undefined,
         status
       });
-      setAnnotations((prev) => [created, ...prev]);
+      setAnnotations((prev) => [created as unknown as Annotation, ...prev]);
+      setCaseStatus(created.case_status);
       setComment('');
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Annotation failed');
@@ -133,9 +151,17 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
             <ArrowLeft size={18} strokeWidth={2} />
           </button>
           <div className="min-w-0">
-            <h1 className="text-lg font-bold leading-tight" style={{ color: NAVY }}>
-              Evidence Review
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg font-bold leading-tight" style={{ color: NAVY }}>
+                Evidence Review
+              </h1>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${CASE_STATUS_STYLES[caseStatus].badge}`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${CASE_STATUS_STYLES[caseStatus].dot}`} aria-hidden />
+                {CASE_STATUS_LABELS[caseStatus]}
+              </span>
+            </div>
             <p className="mt-0.5 text-[0.75rem] text-slate-500">
               Reference ID:{' '}
               <span className="font-mono font-medium text-slate-600">{evidence.referenceId}</span>
@@ -322,15 +348,30 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
               <p className="mb-2 text-[0.6875rem] font-medium text-rose-600">{submitError}</p>
             )}
 
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="mb-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {caseStatus === 'new' && (
+                <button
+                  type="button"
+                  onClick={() => void handleAnnotate('under_review')}
+                  disabled={submitting !== null}
+                  className="col-span-full inline-flex h-[38px] items-center justify-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 text-[0.75rem] font-bold text-violet-800 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {submitting === 'under_review' ? (
+                    <Loader2 size={15} strokeWidth={2} className="animate-spin" />
+                  ) : (
+                    <PlayCircle size={15} strokeWidth={2} />
+                  )}
+                  Start Review
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => void handleAnnotate('approved')}
+                onClick={() => void handleAnnotate('verified')}
                 disabled={submitting !== null}
                 className="inline-flex h-[38px] items-center justify-center gap-2 rounded-lg px-3 text-[0.75rem] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                 style={{ backgroundColor: NAVY }}
               >
-                {submitting === 'approved' ? (
+                {submitting === 'verified' ? (
                   <Loader2 size={15} strokeWidth={2} className="animate-spin" />
                 ) : (
                   <ShieldCheck size={15} strokeWidth={2} />
@@ -349,6 +390,32 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
                   <ShieldAlert size={15} strokeWidth={2} className="text-amber-700" />
                 )}
                 Flag for Investigation
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleAnnotate('invalidated')}
+                disabled={submitting !== null}
+                className="inline-flex h-[38px] items-center justify-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 text-[0.75rem] font-bold text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {submitting === 'invalidated' ? (
+                  <Loader2 size={15} strokeWidth={2} className="animate-spin text-rose-700" />
+                ) : (
+                  <ShieldX size={15} strokeWidth={2} />
+                )}
+                Mark Invalid
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleAnnotate('closed')}
+                disabled={submitting !== null}
+                className="inline-flex h-[38px] items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-[0.75rem] font-bold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {submitting === 'closed' ? (
+                  <Loader2 size={15} strokeWidth={2} className="animate-spin" />
+                ) : (
+                  <CheckCircle2 size={15} strokeWidth={2} />
+                )}
+                Close Case
               </button>
             </div>
           </section>

@@ -302,14 +302,32 @@ export interface Annotation {
   created_at: string;
 }
 
+export type CaseStatus = import('../types').CaseStatus;
+
+/** Annotation plus the updated lifecycle case status. */
+export type AnnotationResult = Annotation & { case_status: CaseStatus };
+
 export async function getAnnotations(testId: string) {
   return request<Annotation[]>(`/api/supervisor/tests/${testId}`, {
     headers: authHeaders()
   });
 }
 
-export async function annotateTest(testId: string, payload: { comment?: string; status: 'pending' | 'approved' | 'referred' }) {
-  return request<Annotation>(`/api/supervisor/tests/${testId}`, {
+export async function getCases(status?: CaseStatus | '') {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  const query = params.toString();
+  const path = query ? `/api/supervisor/cases?${query}` : '/api/supervisor/cases';
+  return request<import('../types').CaseRecord[]>(path, {
+    headers: authHeaders()
+  });
+}
+
+export async function annotateTest(
+  testId: string,
+  payload: { comment?: string; status: CaseStatus | 'pending' | 'approved' }
+) {
+  return request<AnnotationResult>(`/api/supervisor/tests/${testId}`, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify(payload)

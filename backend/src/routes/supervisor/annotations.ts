@@ -17,6 +17,35 @@ const serviceSupabase = createClient(
   }
 );
 
+const CASE_STATUSES = ['new', 'under_review', 'verified', 'referred', 'invalidated', 'closed'] as const;
+const ANNOTATION_STATUSES = [...CASE_STATUSES, 'pending', 'approved'] as const;
+type AnnotationStatus = typeof ANNOTATION_STATUSES[number];
+
+function isMissingCaseTable(error: { message?: string; code?: string } | null | undefined): boolean {
+  return !!error && (error.code === '42P01' || /case_records/i.test(error.message ?? ''));
+}
+
+async function upsertCaseRecord(
+  testId: string,
+  supervisorEmail: string,
+  status: string,
+  comment?: string
+): Promise<void> {
+  const { error } = await serviceSupabase.from('case_records').upsert(
+    {
+      test_id: testId,
+      case_status: status,
+      supervisor_email: supervisorEmail,
+      comment: comment?.trim() || null
+    },
+    { onConflict: 'test_id' }
+  );
+
+  if (error) {
+    console.error('[cases] failed to update case record:', error.message);
+  }
+}
+
 router.use(requireSupervisor);
 
 router.get('/:testId', async (req, res) => {
@@ -45,8 +74,10 @@ router.post('/:testId', asyncHandler(async (req, res) => {
   const testId = String(req.params.testId);
   const { comment, status } = req.body as { comment?: string; status?: string };
 
-  if (!status || !['pending', 'approved', 'referred'].includes(status)) {
-    return res.status(400).json({ error: 'Status must be one of: pending, approved, referred' });
+  if (!status || !(ANNOTATION_STATUSES as readonly string[]).includes(status)) {
+    return res.status(400).json({
+      error: `Status must be one of: ${ANNOTATION_STATUSES.join(', ')}`
+    });
   }
 
   const { data: testExists } = await serviceSupabase
@@ -73,13 +104,24 @@ router.post('/:testId', asyncHandler(async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 
+  const caseStatus = CASE_STATUSES.includes(status as (typeof CASE_STATUSES)[number])
+    ? status
+    : status === 'approved'
+      ? 'verified'
+      : 'under_review';
+
+  await upsertCaseRecord(testId, authReq.userEmail ?? 'unknown', caseStatus, comment);
+
   await writeAuditLog(
     authReq.userEmail ?? 'unknown',
     `Annotated test ${testId} as ${status}`,
     testId
   );
 
-  return res.status(201).json(inserted?.[0] ?? null);
+  return res.status(201).json({
+    ...(inserted?.[0] ?? null),
+    case_status: caseStatus
+  });
 }));
 
 export default router;

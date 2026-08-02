@@ -2,7 +2,7 @@ export type UserRole = 'officer' | 'supervisor' | 'admin';
 
 export type AdminNavItem = 'users' | 'audit' | 'config';
 
-export type SupervisorNavItem = 'dashboard' | 'logs' | 'officers' | 'shifts' | 'reports';
+export type SupervisorNavItem = 'dashboard' | 'logs' | 'cases' | 'officers' | 'shifts' | 'reports';
 
 export interface SystemConfigCard {
   id: string;
@@ -180,4 +180,25 @@ export interface TestEvidence {
   bounds: string;
   officerNotes: string;
   photoUrls: string[];
+}
+
+export type CaseStatus = 'new' | 'under_review' | 'verified' | 'referred' | 'invalidated' | 'closed';
+
+/** Test with its current lifecycle case state (from GET /api/supervisor/cases). */
+export interface CaseRecord {
+  id: string;
+  officerId: number | null;
+  officerName: string;
+  badgeNumber: string;
+  driverName: string;
+  driverId: string;
+  driverDob: string;
+  bacReading: number;
+  result: 'pass' | 'fail';
+  location: string;
+  createdAt: string;
+  caseStatus: CaseStatus;
+  supervisorEmail: string | null;
+  lastComment: string | null;
+  caseUpdatedAt: string | null;
 }

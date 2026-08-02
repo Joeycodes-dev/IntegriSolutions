@@ -85,6 +85,11 @@ describe('Annotations Routes', () => {
           }),
         };
       }
+      if (table === 'case_records') {
+        return {
+          upsert: jest.fn().mockResolvedValue({ data: null, error: null }),
+        };
+      }
       if (table === 'tests') {
         return {
           select: jest.fn().mockReturnValue({
@@ -134,7 +139,7 @@ describe('Annotations Routes', () => {
         .send({ comment: 'Test comment' });
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toBe('Status must be one of: pending, approved, referred');
+      expect(response.body.error).toBe('Status must be one of: new, under_review, verified, referred, invalidated, closed, pending, approved');
     });
 
     it('should return 400 when status is invalid', async () => {
@@ -144,7 +149,7 @@ describe('Annotations Routes', () => {
         .send({ status: 'invalid-status', comment: 'Test comment' });
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toBe('Status must be one of: pending, approved, referred');
+      expect(response.body.error).toBe('Status must be one of: new, under_review, verified, referred, invalidated, closed, pending, approved');
     });
 
     it('should return 404 when test does not exist', async () => {

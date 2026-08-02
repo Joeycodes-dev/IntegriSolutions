@@ -1,6 +1,7 @@
 import {
   BarChart3,
   ClipboardList,
+  FolderKanban,
   LayoutDashboard,
   LogOut,
   MapPinned,
@@ -14,6 +15,7 @@ const ACTIVE_ACCENT = '#38BDF8';
 
 const NAV_ITEMS: { id: SupervisorNavItem; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'cases', label: 'Cases', icon: FolderKanban },
   { id: 'logs', label: 'Logs', icon: ClipboardList },
   { id: 'officers', label: 'Officers', icon: User },
   { id: 'shifts', label: 'Shifts', icon: MapPinned },

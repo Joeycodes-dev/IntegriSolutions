@@ -24,8 +24,9 @@ const mockAnnotation = {
   test_id: 'test-123',
   supervisor_email: 'supervisor@example.com',
   comment: 'Verified and approved',
-  status: 'approved' as const,
-  created_at: '2026-05-30T12:00:00Z'
+  status: 'verified' as const,
+  created_at: '2026-05-30T12:00:00Z',
+  case_status: 'verified' as const
 };
 
 vi.mock('../../src/services/api', () => ({
@@ -125,15 +126,17 @@ describe('EvidenceReview', () => {
     await waitFor(() => {
       expect(api.annotateTest).toHaveBeenCalledWith('test-123', {
         comment: 'Test comment',
-        status: 'approved'
+        status: 'verified'
       });
+      expect(screen.getByText('Verified')).toBeInTheDocument();
     });
   });
 
   it('allows supervisor to refer test for investigation', async () => {
     (api.annotateTest as any).mockResolvedValue({
       ...mockAnnotation,
-      status: 'referred'
+      status: 'referred',
+      case_status: 'referred'
     });
 
     render(<EvidenceReview test={mockTest} onBack={mockOnBack} />);
@@ -148,6 +151,48 @@ describe('EvidenceReview', () => {
       expect(api.annotateTest).toHaveBeenCalledWith('test-123', {
         comment: 'Needs further review',
         status: 'referred'
+      });
+      expect(screen.getByText('Referred')).toBeInTheDocument();
+    });
+  });
+
+  it('allows supervisor to start review on a new case', async () => {
+    (api.annotateTest as any).mockResolvedValue({
+      ...mockAnnotation,
+      status: 'under_review',
+      case_status: 'under_review'
+    });
+
+    render(<EvidenceReview test={mockTest} onBack={mockOnBack} />);
+
+    const startButton = screen.getByRole('button', { name: /Start Review/i });
+    fireEvent.click(startButton);
+
+    await waitFor(() => {
+      expect(api.annotateTest).toHaveBeenCalledWith('test-123', {
+        comment: undefined,
+        status: 'under_review'
+      });
+      expect(screen.getAllByText('Under Review').length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it('allows supervisor to mark a case invalid and close it', async () => {
+    render(<EvidenceReview test={mockTest} onBack={mockOnBack} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Mark Invalid/i }));
+    await waitFor(() => {
+      expect(api.annotateTest).toHaveBeenCalledWith('test-123', {
+        comment: undefined,
+        status: 'invalidated'
+      });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Close Case/i }));
+    await waitFor(() => {
+      expect(api.annotateTest).toHaveBeenCalledWith('test-123', {
+        comment: undefined,
+        status: 'closed'
       });
     });
   });
