@@ -121,6 +121,11 @@ describe('Verification Token Issuance', () => {
           insert: jest.fn().mockResolvedValue({ data: null, error: null }),
         };
       }
+      if (table === 'system_settings') {
+        return {
+          select: jest.fn().mockResolvedValue({ data: [], error: null }),
+        };
+      }
       return {
         select: jest.fn().mockResolvedValue({ data: [], error: null }),
         insert: jest.fn().mockResolvedValue({ data: null, error: null }),
@@ -312,5 +317,182 @@ describe('Verification Token Issuance', () => {
       .send({ testIds: ['test-1'] });
 
     expect(response.status).toBe(401);
+  });
+
+  it('blocks all exports when PDF access is disabled', async () => {
+    mockServiceSupabase.from.mockImplementation((table: string) => {
+      if (table === 'admin_users' || table === 'officer_users') {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'supervisor_users') {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue({
+                data: [{ supervisor_id: 1, role_id: 2 }],
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'system_settings') {
+        return {
+          select: jest.fn().mockResolvedValue({
+            data: [{ key: 'export.pdf_access', value: 'disabled' }],
+            error: null,
+          }),
+        };
+      }
+      return {
+        select: jest.fn().mockResolvedValue({ data: [], error: null }),
+        insert: jest.fn().mockResolvedValue({ data: null, error: null }),
+      };
+    });
+
+    const response = await request(app)
+      .post('/api/supervisor/verification-tokens')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ testIds: ['test-1'] });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toContain('disabled');
+  });
+
+  it('blocks supervisors when PDF access is admin-only', async () => {
+    mockServiceSupabase.from.mockImplementation((table: string) => {
+      if (table === 'admin_users' || table === 'officer_users') {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'supervisor_users') {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue({
+                data: [{ supervisor_id: 1, role_id: 2 }],
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'system_settings') {
+        return {
+          select: jest.fn().mockResolvedValue({
+            data: [{ key: 'export.pdf_access', value: 'admin_only' }],
+            error: null,
+          }),
+        };
+      }
+      return {
+        select: jest.fn().mockResolvedValue({ data: [], error: null }),
+        insert: jest.fn().mockResolvedValue({ data: null, error: null }),
+      };
+    });
+
+    const response = await request(app)
+      .post('/api/supervisor/verification-tokens')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ testIds: ['test-1'] });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toContain('administrators');
+  });
+
+  it('allows admins when PDF access is admin-only', async () => {
+    (supabase.auth.getUser as jest.Mock).mockResolvedValue({
+      data: { user: { id: 'admin-1', email: 'admin@example.com' } },
+      error: null,
+    });
+    mockServiceSupabase.from.mockImplementation((table: string) => {
+      if (table === 'admin_users') {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue({
+                data: [{ admin_id: 1, role_id: 3 }],
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'officer_users' || table === 'supervisor_users') {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              limit: jest.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'system_settings') {
+        return {
+          select: jest.fn().mockResolvedValue({
+            data: [{ key: 'export.pdf_access', value: 'admin_only' }],
+            error: null,
+          }),
+        };
+      }
+      if (table === 'tests') {
+        return {
+          select: jest.fn().mockReturnValue({
+            in: jest.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'test-1',
+                  officer_id: 1,
+                  officer_name: 'Officer One',
+                  badge_number: 'B001',
+                  driver_name: 'Driver A',
+                  driver_id: 'DL001',
+                  driver_dob: '1990-01-01',
+                  bac_reading: 0.08,
+                  result: 'fail',
+                  location: '{}',
+                  hash: 'hash-1',
+                  created_at: '2026-05-30T10:00:00Z',
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'court_verification_tokens') {
+        return {
+          insert: jest.fn().mockResolvedValue({ data: null, error: null }),
+        };
+      }
+      if (table === 'audit_logs') {
+        return {
+          insert: jest.fn().mockResolvedValue({ data: null, error: null }),
+        };
+      }
+      return {
+        select: jest.fn().mockResolvedValue({ data: [], error: null }),
+        insert: jest.fn().mockResolvedValue({ data: null, error: null }),
+      };
+    });
+
+    const response = await request(app)
+      .post('/api/supervisor/verification-tokens')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ testIds: ['test-1'] });
+
+    expect(response.status).toBe(201);
+    expect(response.body[0].testId).toBe('test-1');
   });
 });

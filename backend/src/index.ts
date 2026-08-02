@@ -20,6 +20,7 @@ import invalidationsRoutes from './routes/invalidations';
 import scanRoutes from './routes/scan';
 import shiftsRoutes from './routes/shifts';
 import publicVerificationRoutes from './routes/publicVerification';
+import configRoutes from './routes/config';
 import { apiLimiter, authLimiter, syncLimiter, verifyLimiter } from './middleware/rateLimiter';
 
 const app = express();
@@ -88,6 +89,7 @@ app.use('/api/evidence', evidenceRoutes);
 app.use('/api/invalidations', invalidationsRoutes);
 app.use('/api/scan', scanRoutes);
 app.use('/api/shifts', shiftsRoutes);
+app.use('/api/config', configRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });

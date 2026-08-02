@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -22,11 +22,13 @@ import { generateId } from "../lib/id";
 import {
   DRIVER_CATEGORIES,
   buildTestLocation,
+  deriveDriverCategory,
   stationFromProfileRegion,
 } from "../lib/testLocation";
 import { saveLocally, syncPendingRecords } from "../services/sync";
 import { useSync } from "../lib/SyncContext";
-import { updateDutyStatus } from "../services/api";
+import { getRuntimeConfig, updateDutyStatus } from "../services/api";
+import type { RuntimeConfig } from "../types";
 import {
   decryptLicensePayload,
   parseDecryptedLicensePayload,
@@ -93,6 +95,7 @@ const DEV_LICENSE_PAYLOAD =
 const DEV_BAC_READING = "0.062";
 const DEFAULT_DRIVER_CATEGORY = DRIVER_CATEGORIES[0];
 const DEFAULT_BAC_LIMIT = 0.05;
+const DEFAULT_PROFESSIONAL_BAC_LIMIT = 0.02;
 
 const DEV_DRIVER_LICENSE: DriverLicenseData = {
   name: "Thabo",
@@ -651,6 +654,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     null,
   );
   const [officerNotes, setOfficerNotes] = useState("");
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(null);
   const [duty, setDuty] = useState<DutyPillStatus>(() =>
     mapProfileDutyStatus(profile?.dutyStatus),
   );
@@ -669,14 +673,37 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }
   };
 
+  const loadRuntimeConfig = useCallback(() => {
+    getRuntimeConfig()
+      .then((config) => setRuntimeConfig(config))
+      .catch(() => {
+        // Offline or unconfigured: keep the last known policy (or defaults).
+      });
+  }, []);
+
   useFocusEffect(
     React.useCallback(() => {
       void refreshCounts();
+      loadRuntimeConfig();
       return undefined;
-    }, [refreshCounts]),
+    }, [refreshCounts, loadRuntimeConfig]),
   );
 
-  const bacLimit = DEFAULT_BAC_LIMIT;
+  const effectiveCategoryKey = scannedData
+    ? deriveDriverCategory(scannedData.licenseCodes)
+    : "general";
+
+  const bacLimit = useMemo(() => {
+    if (!runtimeConfig) {
+      return effectiveCategoryKey === "professional"
+        ? DEFAULT_PROFESSIONAL_BAC_LIMIT
+        : DEFAULT_BAC_LIMIT;
+    }
+    return (
+      runtimeConfig.bacLimits.find((limit) => limit.key === effectiveCategoryKey)
+        ?.limitG100ml ?? DEFAULT_BAC_LIMIT
+    );
+  }, [runtimeConfig, effectiveCategoryKey]);
 
   const resetSessionState = () => {
     setHasPermission(null);
@@ -928,7 +955,12 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       }
 
       const currentLocation = await getDeviceLocation();
-      const isOver = reading >= bacLimit;
+      const categoryKey = deriveDriverCategory(scannedData.licenseCodes);
+      const limitSetting = runtimeConfig?.bacLimits.find(
+        (limit) => limit.key === categoryKey,
+      );
+      const effectiveLimit = limitSetting?.limitG100ml ?? bacLimit;
+      const isOver = reading >= effectiveLimit;
       const result = reading === 0 ? "pass" : isOver ? "fail" : "pass";
       const id = generateId();
 
@@ -941,7 +973,12 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         officerRank: "",
         serviceNumber: profile.badgeNumber,
         officerNotes,
-        driverCategory: DEFAULT_DRIVER_CATEGORY,
+        driverCategory: limitSetting
+          ? `${limitSetting.label} (limit ${limitSetting.limitG100ml.toFixed(2)}g/100ml)`
+          : DEFAULT_DRIVER_CATEGORY,
+        driverCategoryKey: categoryKey,
+        bacLimitG100ml: limitSetting?.limitG100ml,
+        bacLimitMg1000ml: limitSetting?.limitMg1000ml,
       });
 
       await saveLocally({

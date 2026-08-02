@@ -1,9 +1,10 @@
 import { jsPDF } from 'jspdf';
 import * as QRCode from 'qrcode';
-import type { TestRecord, VerificationTokenRecord } from '../types';
+import type { RuntimeConfig, TestRecord, VerificationTokenRecord } from '../types';
 import { buildTestEvidence, formatDriverCategoryForReport, resolveEvidencePhotoUrls } from './testEvidence';
 import { buildVerificationUrl } from './verificationRoute';
-import { getAnnotations, getEvidence, getVerificationTokens, type Annotation, type EvidencePhoto } from '../services/api';
+import { DEFAULT_RUNTIME_CONFIG } from './runtimeConfig';
+import { getAnnotations, getEvidence, getRuntimeConfig, getVerificationTokens, type Annotation, type EvidencePhoto } from '../services/api';
 
 type RGB = [number, number, number];
 
@@ -133,13 +134,24 @@ async function drawVerificationQr(doc: jsPDF, verification: VerificationTokenRec
   doc.text(`Issued ${formatUtcDate(verification.issuedAt)}`, QR_X + QR_SIZE / 2, QR_Y + QR_SIZE + 7, { align: 'center' });
 }
 
+function drawWatermark(doc: jsPDF, text: string | null) {
+  if (!text) return;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(34);
+  doc.setTextColor(200, 206, 214);
+  doc.text(text, PAGE_W / 2, PAGE_H / 2, { align: 'center', angle: 45 });
+}
+
 /** Header band with reference ID and QR; returns the y position after the divider. */
 async function drawPageHeader(
   doc: jsPDF,
   refId: string,
-  verification: VerificationTokenRecord
+  verification: VerificationTokenRecord,
+  watermarkText: string | null
 ): Promise<number> {
   let y = MARGIN + 2;
+
+  drawWatermark(doc, watermarkText);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
@@ -173,10 +185,12 @@ async function renderEvidencePage(
   doc: jsPDF,
   test: TestRecord,
   ctx: PageContext,
-  verification: VerificationTokenRecord
+  verification: VerificationTokenRecord,
+  runtime: RuntimeConfig
 ): Promise<void> {
   const evidence = buildTestEvidence(test);
   const refId = verification.referenceId;
+  const watermarkText = runtime.export.pdfWatermarkEnabled ? runtime.export.pdfWatermarkText : null;
   const resultLabel = test.result === 'fail' ? 'FAILED' : 'PASSED';
   const resultColor = test.result === 'fail' ? RED : GREEN;
 
@@ -197,10 +211,10 @@ async function renderEvidencePage(
     drawFooter(doc, ctx.currentPage);
     doc.addPage();
     ctx.currentPage += 1;
-    return drawPageHeader(doc, refId, verification);
+    return drawPageHeader(doc, refId, verification, watermarkText);
   };
 
-  let y = await drawPageHeader(doc, refId, verification);
+  let y = await drawPageHeader(doc, refId, verification, watermarkText);
 
   y = await ensureSpace(y, 40);
   y = sectionTitle(doc, y, 'Driver Information');
@@ -404,7 +418,10 @@ export async function generateEvidencePdf(
   test: TestRecord,
   filename?: string
 ): Promise<void> {
-  const records = await getVerificationTokens([test.id]);
+  const [records, runtime] = await Promise.all([
+    getVerificationTokens([test.id]),
+    getRuntimeConfig().catch(() => DEFAULT_RUNTIME_CONFIG)
+  ]);
   const verification = records.find((record) => record.testId === test.id) ?? records[0];
   if (!verification) {
     throw new Error('Failed to prepare the court verification link for this record.');
@@ -412,7 +429,7 @@ export async function generateEvidencePdf(
 
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const ctx: PageContext = { currentPage: 1 };
-  await renderEvidencePage(doc, test, ctx, verification);
+  await renderEvidencePage(doc, test, ctx, verification, runtime);
   doc.save(filename ?? `integriscan-${verification.referenceId}.pdf`);
 }
 
@@ -428,7 +445,10 @@ export async function generateWeeklyEvidencePdf(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );
 
-  const records = await getVerificationTokens(sorted.map((test) => test.id));
+  const [records, runtime] = await Promise.all([
+    getVerificationTokens(sorted.map((test) => test.id)),
+    getRuntimeConfig().catch(() => DEFAULT_RUNTIME_CONFIG)
+  ]);
   const byTestId = new Map(records.map((record) => [record.testId, record]));
   for (const test of sorted) {
     if (!byTestId.has(test.id)) {
@@ -444,7 +464,7 @@ export async function generateWeeklyEvidencePdf(
       doc.addPage();
       ctx.currentPage += 1;
     }
-    await renderEvidencePage(doc, sorted[i], ctx, byTestId.get(sorted[i].id)!);
+    await renderEvidencePage(doc, sorted[i], ctx, byTestId.get(sorted[i].id)!, runtime);
   }
 
   const from = range?.from ?? 'report';

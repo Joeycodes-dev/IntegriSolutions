@@ -9,7 +9,8 @@ vi.mock('qrcode', () => ({ toDataURL: vi.fn() }));
 vi.mock('../../src/services/api', () => ({
   getAnnotations: vi.fn(),
   getEvidence: vi.fn(),
-  getVerificationTokens: vi.fn()
+  getVerificationTokens: vi.fn(),
+  getRuntimeConfig: vi.fn()
 }));
 
 import * as QRCode from 'qrcode';
@@ -17,8 +18,8 @@ import {
   generateEvidencePdf,
   generateWeeklyEvidencePdf
 } from '../../src/lib/generateEvidencePdf';
-import { getAnnotations, getEvidence, getVerificationTokens } from '../../src/services/api';
-import type { TestRecord, VerificationTokenRecord } from '../../src/types';
+import { getAnnotations, getEvidence, getRuntimeConfig, getVerificationTokens } from '../../src/services/api';
+import type { RuntimeConfig, TestRecord, VerificationTokenRecord } from '../../src/types';
 
 class FakeDoc {
   addPage = vi.fn();
@@ -61,6 +62,25 @@ const verification: VerificationTokenRecord = {
   issuedAt: '2026-05-30T12:00:00Z'
 };
 
+const runtimeConfig: RuntimeConfig = {
+  auth: { sessionTimeoutMinutes: 30 },
+  export: {
+    pdfWatermarkEnabled: true,
+    pdfWatermarkText: 'IntegriScan Court Evidence',
+    pdfAccess: 'admin_supervisor'
+  },
+  alerts: {
+    integrityFlagCount: 1,
+    failureRateChangePoints: 1,
+    roadblockMinimumTests: 3,
+    avgFailingBacMultiple: 2
+  },
+  bacLimits: [
+    { key: 'general', label: 'General Driver', limitG100ml: 0.05, limitMg1000ml: 0.24 },
+    { key: 'professional', label: 'Professional Driver', limitG100ml: 0.02, limitMg1000ml: 0.1 }
+  ]
+};
+
 describe('generateEvidencePdf', () => {
   let doc: FakeDoc;
 
@@ -72,6 +92,7 @@ describe('generateEvidencePdf', () => {
     });
     (getAnnotations as any).mockResolvedValue([]);
     (getEvidence as any).mockResolvedValue([]);
+    (getRuntimeConfig as any).mockResolvedValue(runtimeConfig);
     (QRCode.toDataURL as any).mockResolvedValue('data:image/png;base64,FAKEQR');
   });
 
@@ -167,6 +188,33 @@ describe('generateEvidencePdf', () => {
     const evidenceHeadings = doc.text.mock.calls.filter(([value]) => value === 'Evidence');
     expect(evidenceHeadings).toHaveLength(1);
   });
+
+  it('draws the configured watermark when enabled', async () => {
+    (getVerificationTokens as any).mockResolvedValue([verification]);
+
+    await generateEvidencePdf(baseTest);
+
+    expect(getRuntimeConfig).toHaveBeenCalled();
+    const watermarkCalls = doc.text.mock.calls.filter(
+      ([value, _x, _y, opts]) => value === 'IntegriScan Court Evidence' && opts?.angle === 45
+    );
+    expect(watermarkCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('omits the watermark when disabled', async () => {
+    (getVerificationTokens as any).mockResolvedValue([verification]);
+    (getRuntimeConfig as any).mockResolvedValue({
+      ...runtimeConfig,
+      export: { ...runtimeConfig.export, pdfWatermarkEnabled: false }
+    });
+
+    await generateEvidencePdf(baseTest);
+
+    const watermarkCalls = doc.text.mock.calls.filter(
+      ([value]) => value === 'IntegriScan Court Evidence'
+    );
+    expect(watermarkCalls).toHaveLength(0);
+  });
 });
 
 describe('generateWeeklyEvidencePdf', () => {
@@ -180,6 +228,7 @@ describe('generateWeeklyEvidencePdf', () => {
     });
     (getAnnotations as any).mockResolvedValue([]);
     (getEvidence as any).mockResolvedValue([]);
+    (getRuntimeConfig as any).mockResolvedValue(runtimeConfig);
     (QRCode.toDataURL as any).mockResolvedValue('data:image/png;base64,FAKEQR');
   });
 

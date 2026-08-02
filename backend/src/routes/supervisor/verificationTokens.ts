@@ -7,6 +7,9 @@ import { hashData } from '../../utilities/hash';
 import { getTestHashValidity } from '../../utilities/testIntegrity';
 import { formatCourtReferenceId } from '../../utilities/courtReference';
 import { writeAuditLog } from '../../utilities/auditLog';
+import { resolveRoleByEmail } from '../../utilities/resolveProfile';
+import { ROLE_ADMIN } from '../../constants/roles';
+import { loadRawSettings, buildRuntimeConfig } from '../../config/systemSettings';
 
 const router = Router();
 
@@ -26,12 +29,40 @@ const MAX_BATCH = 50;
 router.use(requireSupervisor);
 
 /**
+ * Enforces the administrator-configured PDF export access policy.
+ * Court verification tokens are the server-side gate for all PDF exports.
+ */
+async function enforcePdfAccess(req: SupervisorRequest, res: import('express').Response): Promise<boolean> {
+  const raw = await loadRawSettings();
+  const runtime = buildRuntimeConfig(raw);
+  const policy = runtime.export.pdfAccess;
+
+  if (policy === 'disabled') {
+    res.status(403).json({ error: 'PDF export is disabled by the administrator.' });
+    return false;
+  }
+  if (policy === 'admin_only') {
+    const resolved = await resolveRoleByEmail(req.userEmail ?? '');
+    if (!resolved || resolved.roleId !== ROLE_ADMIN) {
+      res.status(403).json({ error: 'PDF export is restricted to administrators.' });
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Issues one fresh, high-entropy verification token per requested test.
  * Tokens are returned once, stored only as SHA-256 hashes, and never expire
  * (court PDFs must stay verifiable) unless explicitly revoked.
  */
 router.post('/', asyncHandler(async (req, res) => {
   const authReq = req as unknown as SupervisorRequest;
+
+  if (!(await enforcePdfAccess(authReq, res))) {
+    return;
+  }
+
   const body = req.body as { testIds?: unknown };
 
   const testIds = Array.isArray(body.testIds)

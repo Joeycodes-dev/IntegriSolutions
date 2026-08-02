@@ -17,6 +17,8 @@ import {
   Users
 } from 'lucide-react';
 import { generateWeeklyEvidencePdf } from '../../lib/generateEvidencePdf';
+import { usePdfAccess } from '../../lib/pdfAccess';
+import { useRuntimeConfig } from '../../lib/runtimeConfig';
 import type { TestRecord } from '../../types';
 import {
   buildBacDistribution,
@@ -223,6 +225,8 @@ const INSIGHT_STYLES: Record<InsightTone, { icon: typeof Info; chip: string; ico
 /* ---------------- Main component ---------------- */
 
 export function SupervisorReports({ tests, loading, error = null }: SupervisorReportsProps) {
+  const runtimeConfig = useRuntimeConfig();
+  const pdfAccess = usePdfAccess();
   const defaults = defaultReportDateRange();
   const [filters, setFilters] = useState<ReportFilters>({
     from: defaults.from,
@@ -276,8 +280,17 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
   const categories = useMemo(() => buildDriverCategorySplit(filtered), [filtered]);
 
   const insights = useMemo(
-    () => generateInsights({ metrics, delta, roadblocks: roadblockStats, heatmap, officers: officerStats, categories }),
-    [metrics, delta, roadblockStats, heatmap, officerStats, categories]
+    () =>
+      generateInsights(
+        { metrics, delta, roadblocks: roadblockStats, heatmap, officers: officerStats, categories },
+        {
+          integrityFlagCount: runtimeConfig?.alerts.integrityFlagCount,
+          failureRateChangePoints: runtimeConfig?.alerts.failureRateChangePoints,
+          roadblockMinimumTests: runtimeConfig?.alerts.roadblockMinimumTests,
+          avgFailingBacMultiple: runtimeConfig?.alerts.avgFailingBacMultiple
+        }
+      ),
+    [metrics, delta, roadblockStats, heatmap, officerStats, categories, runtimeConfig]
   );
 
   const daySpan = useMemo(() => {
@@ -298,6 +311,14 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
 
   const handleGeneratePdf = async () => {
     setPdfError(null);
+    if (!pdfAccess.allowed) {
+      setPdfError(
+        pdfAccess.policy === 'disabled'
+          ? 'PDF export is disabled by the administrator.'
+          : 'PDF export is restricted to administrators.'
+      );
+      return;
+    }
     if (filtered.length === 0) {
       setPdfError('No records match the selected filters.');
       return;
@@ -358,7 +379,14 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
         <button
           type="button"
           onClick={() => void handleGeneratePdf()}
-          disabled={generatingPdf || loading}
+          disabled={generatingPdf || loading || !pdfAccess.allowed}
+          title={
+            pdfAccess.allowed
+              ? undefined
+              : pdfAccess.policy === 'disabled'
+                ? 'PDF export is disabled by the administrator.'
+                : 'PDF export is restricted to administrators.'
+          }
           className="h-[34px] shrink-0 cursor-pointer rounded-lg px-4 text-[0.75rem] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
           style={{ backgroundColor: NAVY }}
         >

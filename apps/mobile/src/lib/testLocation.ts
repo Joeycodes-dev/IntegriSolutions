@@ -19,6 +19,10 @@ export interface TestLocationPayload {
   officerNotes?: string;
   label?: string;
   driverCategory?: string;
+  driverCategoryKey?: string;
+  bacLimitG100ml?: number;
+  bacLimitMg1000ml?: number;
+  settingsRevision?: number;
 }
 
 export interface RoadblockShiftSnapshot {
@@ -66,6 +70,10 @@ export function buildTestLocation(params: {
   serviceNumber: string;
   officerNotes: string;
   driverCategory: string;
+  driverCategoryKey?: string;
+  bacLimitG100ml?: number;
+  bacLimitMg1000ml?: number;
+  settingsRevision?: number;
 }): TestLocationPayload {
   const roadblock = params.roadblock.trim();
   const station = params.station.trim();
@@ -102,8 +110,22 @@ export function buildTestLocation(params: {
     ...(serviceNumber ? { serviceNumber } : {}),
     ...(officerNotes ? { officerNotes } : {}),
     ...(driverCategory ? { driverCategory } : {}),
+    ...(params.driverCategoryKey ? { driverCategoryKey: params.driverCategoryKey } : {}),
+    ...(params.bacLimitG100ml != null ? { bacLimitG100ml: params.bacLimitG100ml } : {}),
+    ...(params.bacLimitMg1000ml != null ? { bacLimitMg1000ml: params.bacLimitMg1000ml } : {}),
+    ...(params.settingsRevision != null ? { settingsRevision: params.settingsRevision } : {}),
     label: shiftRoadblock || shiftStation || undefined
   };
+}
+
+/**
+ * Derives the driver category from licence barcode codes.
+ * Professional indicators: a "P" (professional driving permit) or heavy-vehicle
+ * codes (C, C1, EC, EC1, G) recorded on the licence.
+ */
+export function deriveDriverCategory(licenseCodes?: string): 'general' | 'professional' {
+  const codes = (licenseCodes ?? '').toUpperCase();
+  return /(?:^|[\s,;])(?:P|C|C1|EC|EC1|G)(?:[\s,;]|$)/.test(codes) ? 'professional' : 'general';
 }
 
 export const DRIVER_CATEGORIES = [

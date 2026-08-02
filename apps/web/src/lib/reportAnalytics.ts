@@ -571,9 +571,12 @@ export function buildDriverCategorySplit(tests: TestRecord[]): DriverCategorySpl
     generalFailed: 0
   };
   for (const test of tests) {
-    const category =
-      test.evidence?.driverCategory ?? parseTestLocation(test.location).driverCategory ?? '';
-    const isProfessional = category.includes('0.02');
+    const parsed = parseTestLocation(test.location);
+    const merged = { ...parsed, ...test.evidence };
+    const categoryKey = merged.driverCategoryKey ?? '';
+    const category = merged.driverCategory ?? '';
+    const isProfessional =
+      categoryKey === 'professional' || (!categoryKey && category.includes('0.02'));
     if (isProfessional) {
       split.professional += 1;
       if (test.result === 'fail') split.professionalFailed += 1;
@@ -593,6 +596,20 @@ export interface ReportInsight {
   detail: string;
 }
 
+export interface AlertThresholds {
+  integrityFlagCount: number;
+  failureRateChangePoints: number;
+  roadblockMinimumTests: number;
+  avgFailingBacMultiple: number;
+}
+
+export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
+  integrityFlagCount: 1,
+  failureRateChangePoints: 1,
+  roadblockMinimumTests: 3,
+  avgFailingBacMultiple: 2
+};
+
 interface InsightInput {
   metrics: ReportKeyMetrics;
   delta: PeriodDelta;
@@ -602,12 +619,15 @@ interface InsightInput {
   categories: DriverCategorySplit;
 }
 
-/** Auto-generated supervisory insights, ordered by importance. */
-export function generateInsights(input: InsightInput): ReportInsight[] {
+/** Auto-generated supervisory insights, ordered by importance. Thresholds come from admin configuration. */
+export function generateInsights(
+  input: InsightInput,
+  thresholds: AlertThresholds = DEFAULT_ALERT_THRESHOLDS
+): ReportInsight[] {
   const { metrics, delta, roadblocks, heatmap, officers, categories } = input;
   const insights: ReportInsight[] = [];
 
-  if (metrics.integrityFlags > 0) {
+  if (metrics.integrityFlags >= thresholds.integrityFlagCount) {
     insights.push({
       tone: 'critical',
       title: `${metrics.integrityFlags} record${metrics.integrityFlags === 1 ? '' : 's'} failed integrity verification`,
@@ -615,7 +635,7 @@ export function generateInsights(input: InsightInput): ReportInsight[] {
     });
   }
 
-  if (delta.failureRatePts != null && Math.abs(delta.failureRatePts) >= 1) {
+  if (delta.failureRatePts != null && Math.abs(delta.failureRatePts) >= thresholds.failureRateChangePoints) {
     const rising = delta.failureRatePts > 0;
     insights.push({
       tone: rising ? 'warning' : 'positive',
@@ -636,7 +656,7 @@ export function generateInsights(input: InsightInput): ReportInsight[] {
     });
   }
 
-  const riskiest = roadblocks.find((r) => r.total >= 3 && r.failed > 0);
+  const riskiest = roadblocks.find((r) => r.total >= thresholds.roadblockMinimumTests && r.failed > 0);
   if (riskiest) {
     insights.push({
       tone: 'warning',
@@ -665,7 +685,7 @@ export function generateInsights(input: InsightInput): ReportInsight[] {
   if (metrics.avgBacOfFailures > 0) {
     const multiple = Math.round((metrics.avgBacOfFailures / 0.05) * 10) / 10;
     insights.push({
-      tone: multiple >= 2 ? 'critical' : 'info',
+      tone: multiple >= thresholds.avgFailingBacMultiple ? 'critical' : 'info',
       title: `Average failing BAC is ${metrics.avgBacOfFailures.toFixed(3)} g/100ml`,
       detail: `That is ${multiple}× the general legal limit (0.05 g/100ml).`
     });

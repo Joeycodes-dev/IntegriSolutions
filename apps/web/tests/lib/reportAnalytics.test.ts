@@ -7,6 +7,7 @@ import {
   collectRoadblockOptions,
   dataSpanDateRange,
   filterTestsForReport,
+  generateInsights,
   niceTicks,
   parseLocalDate,
   weekdayIndex
@@ -176,5 +177,36 @@ describe('reportAnalytics', () => {
     const ticks = niceTicks(7, 5);
     expect(ticks[0]).toBe(0);
     expect(ticks[ticks.length - 1]).toBeGreaterThanOrEqual(7);
+  });
+
+  it('raises integrity alerts at the configured threshold', () => {
+    const makeInput = (integrityFlags: number) => ({
+      metrics: {
+        total: 2,
+        failed: 1,
+        failureRate: 50,
+        avgBacOfFailures: 0,
+        activeOfficers: 1,
+        integrityFlags,
+        peakDayLabel: null
+      },
+      delta: { failureRatePts: 0, volumePct: 0 },
+      roadblocks: [],
+      heatmap: { fails: [], totals: [], maxFail: 0, peak: null },
+      officers: [],
+      categories: { professional: 0, general: 1, professionalFailed: 0, generalFailed: 0 }
+    });
+    const raised = {
+      integrityFlagCount: 5,
+      failureRateChangePoints: 1,
+      roadblockMinimumTests: 3,
+      avgFailingBacMultiple: 2
+    };
+
+    const atDefault = generateInsights(makeInput(1));
+    expect(atDefault.some((insight) => insight.tone === 'critical')).toBe(true);
+
+    const atRaised = generateInsights(makeInput(2), raised);
+    expect(atRaised.some((insight) => insight.tone === 'critical')).toBe(false);
   });
 });

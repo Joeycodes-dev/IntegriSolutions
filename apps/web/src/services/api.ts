@@ -6,8 +6,10 @@ if (!import.meta.env.VITE_API_BASE_URL) {
   console.warn('VITE_API_BASE_URL is not defined; falling back to http://localhost:4000');
 }
 
-function emitAuthExpired(message: string) {
-  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { message } }));
+function emitAuthExpired(message: string, token: string | null) {
+  window.dispatchEvent(
+    new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { message, token } })
+  );
 }
 
 function isExpiredTokenResponse(status: number, message: string): boolean {
@@ -16,6 +18,7 @@ function isExpiredTokenResponse(status: number, message: string): boolean {
 
 async function request<T>(path: string, options: RequestInit = {}) {
   const { headers: optionHeaders, ...rest } = options;
+  const sentToken = getAccessToken();
   const response = await fetch(`${API_BASE}${path}`, {
     ...rest,
     headers: {
@@ -41,7 +44,7 @@ async function request<T>(path: string, options: RequestInit = {}) {
       (rawText ? rawText.slice(0, 300) : null) ||
       `Request failed (${response.status} ${response.statusText})`;
     if (isExpiredTokenResponse(response.status, message)) {
-      emitAuthExpired(message);
+      emitAuthExpired(message, sentToken);
     }
     throw new Error(message);
   }
@@ -287,8 +290,25 @@ export async function getAuditLogs() {
   });
 }
 
-export async function getSystemSettings() {
-  return request<{ cards: import('../types').SystemConfigCard[] }>('/api/admin/settings', {
+export async function getAdminConfig() {
+  return request<import('../types').AdminConfig>('/api/admin/settings', {
+    headers: authHeaders()
+  });
+}
+
+export async function updateAdminConfig(
+  expectedRevision: number,
+  values: Record<string, unknown>
+) {
+  return request<import('../types').AdminConfig>('/api/admin/settings', {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify({ expectedRevision, values })
+  });
+}
+
+export async function getRuntimeConfig() {
+  return request<import('../types').RuntimeConfig>('/api/config/runtime', {
     headers: authHeaders()
   });
 }
@@ -414,7 +434,7 @@ export async function uploadEvidence(testId: string, file: File, notes?: string)
       (typeof payload.error === 'string' ? payload.error : null) ||
       `Upload failed (${response.status} ${response.statusText})`;
     if (isExpiredTokenResponse(response.status, message)) {
-      emitAuthExpired(message);
+      emitAuthExpired(message, token);
     }
     throw new Error(message);
   }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { generateEvidencePdf } from '../../lib/generateEvidencePdf';
+import { usePdfAccess } from '../../lib/pdfAccess';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -57,6 +58,7 @@ function caseStatusFromAnnotation(status: string): CaseStatus | null {
 
 export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
   const evidence = useMemo(() => buildTestEvidence(test), [test]);
+  const pdfAccess = usePdfAccess();
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [annotationsLoading, setAnnotationsLoading] = useState(true);
@@ -183,7 +185,14 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
         <button
           type="button"
           onClick={() => void handleGeneratePdf()}
-          disabled={generatingPdf}
+          disabled={generatingPdf || !pdfAccess.allowed}
+          title={
+            pdfAccess.allowed
+              ? undefined
+              : pdfAccess.policy === 'disabled'
+                ? 'PDF export is disabled by the administrator.'
+                : 'PDF export is restricted to administrators.'
+          }
           className="inline-flex h-[34px] shrink-0 items-center gap-2 rounded-lg px-3.5 text-[0.75rem] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
           style={{ backgroundColor: NAVY }}
         >

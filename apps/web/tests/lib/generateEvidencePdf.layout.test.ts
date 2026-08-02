@@ -41,12 +41,32 @@ vi.mock('qrcode', () => ({
 vi.mock('../../src/services/api', () => ({
   getAnnotations: vi.fn(),
   getEvidence: vi.fn(),
-  getVerificationTokens: vi.fn()
+  getVerificationTokens: vi.fn(),
+  getRuntimeConfig: vi.fn()
 }));
 
 import { generateEvidencePdf } from '../../src/lib/generateEvidencePdf';
-import { getAnnotations, getEvidence, getVerificationTokens } from '../../src/services/api';
-import type { TestRecord, VerificationTokenRecord } from '../../src/types';
+import { getAnnotations, getEvidence, getRuntimeConfig, getVerificationTokens } from '../../src/services/api';
+import type { RuntimeConfig, TestRecord, VerificationTokenRecord } from '../../src/types';
+
+const runtimeConfig: RuntimeConfig = {
+  auth: { sessionTimeoutMinutes: 30 },
+  export: {
+    pdfWatermarkEnabled: true,
+    pdfWatermarkText: 'IntegriScan Court Evidence',
+    pdfAccess: 'admin_supervisor'
+  },
+  alerts: {
+    integrityFlagCount: 1,
+    failureRateChangePoints: 1,
+    roadblockMinimumTests: 3,
+    avgFailingBacMultiple: 2
+  },
+  bacLimits: [
+    { key: 'general', label: 'General Driver', limitG100ml: 0.05, limitMg1000ml: 0.24 },
+    { key: 'professional', label: 'Professional Driver', limitG100ml: 0.02, limitMg1000ml: 0.1 }
+  ]
+};
 
 const verification: VerificationTokenRecord = {
   testId: 'test-123',
@@ -97,6 +117,7 @@ describe('PDF layout (real jsPDF engine)', () => {
     (getAnnotations as any).mockResolvedValue([]);
     (getEvidence as any).mockResolvedValue([]);
     (getVerificationTokens as any).mockResolvedValue([verification]);
+    (getRuntimeConfig as any).mockResolvedValue(runtimeConfig);
   });
 
   afterEach(() => {

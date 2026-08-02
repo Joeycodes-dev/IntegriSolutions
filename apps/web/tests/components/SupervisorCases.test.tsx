@@ -62,7 +62,25 @@ vi.mock('../../src/services/api', () => ({
   getAnnotations: vi.fn(),
   getEvidence: vi.fn(),
   annotateTest: vi.fn(),
-  uploadEvidence: vi.fn()
+  uploadEvidence: vi.fn(),
+  getRuntimeConfig: vi.fn().mockResolvedValue({
+    auth: { sessionTimeoutMinutes: 30 },
+    export: {
+      pdfWatermarkEnabled: true,
+      pdfWatermarkText: 'IntegriScan Court Evidence',
+      pdfAccess: 'admin_supervisor'
+    },
+    alerts: {
+      integrityFlagCount: 1,
+      failureRateChangePoints: 1,
+      roadblockMinimumTests: 3,
+      avgFailingBacMultiple: 2
+    },
+    bacLimits: [
+      { key: 'general', label: 'General Driver', limitG100ml: 0.05, limitMg1000ml: 0.24 },
+      { key: 'professional', label: 'Professional Driver', limitG100ml: 0.02, limitMg1000ml: 0.1 }
+    ]
+  })
 }));
 
 describe('SupervisorCases', () => {

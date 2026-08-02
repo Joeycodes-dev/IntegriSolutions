@@ -3,6 +3,15 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { AuthProvider, useAuth } from '../../src/lib/AuthContext';
 import { AUTH_EXPIRED_EVENT } from '../../src/services/api';
 
+vi.mock('../../src/services/api', () => ({
+  AUTH_EXPIRED_EVENT: 'integriscan:auth-expired',
+  getAccessToken: vi.fn(() => localStorage.getItem('backend_access_token')),
+  setAccessToken: vi.fn((token: string) => localStorage.setItem('backend_access_token', token)),
+  clearAccessToken: vi.fn(() => localStorage.removeItem('backend_access_token')),
+  getProfile: vi.fn(),
+  getRuntimeConfig: vi.fn(() => Promise.reject(new Error('offline')))
+}));
+
 const mockProfile = {
   uid: 'abc-123',
   officerId: 1,

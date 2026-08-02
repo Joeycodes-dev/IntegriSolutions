@@ -35,6 +35,7 @@ IntegriSolutions/
 - **WORM database** — PostgreSQL rules block all `UPDATE` and `DELETE` on enforcement records
 - **Court-ready exports** — supervisors can export individual test records as signed PDF evidence
 - **Court verification portal** — every exported PDF carries a QR code that opens a public, anonymous verification page (reference ID, hash status, capture + issuance timestamps, officer badge, redacted driver details)
+- **Editable admin configuration** — administrators edit session timeout, PDF export access and watermarking, dashboard alert thresholds, and BAC limits per driver category; changes are revisioned and audited
 - **Full audit trail** — every access and action is logged with user ID and timestamp
 
 ---
@@ -107,6 +108,7 @@ In your Supabase project, open the **SQL Editor** and run these files **in order
 7. `backend/migrations/20260801_case_lifecycle.sql` — case lifecycle queues (`case_records`)
 8. `backend/migrations/20260802_evidence_categories.sql` — evidence photo categories
 9. `backend/migrations/20260802_court_verification.sql` — court verification tokens for PDF QR codes
+10. `backend/migrations/20260803_admin_configuration.sql` — editable admin configuration registry (session timeout, export governance, alert thresholds, BAC limits)
 
 **Important:** DUI test records cannot be edited or deleted (WORM). Status updates use account APIs instead (`PATCH` portal users / field officers).
 
@@ -144,6 +146,9 @@ All endpoints except `/api/auth/login`, `/api/auth/register`, and invite accepta
 | `PATCH` | `/api/supervisor/officers/:id` | Update field officer status | Supervisor |
 | `DELETE` | `/api/admin/users/:id` | Remove portal user | Admin |
 | `POST` | `/api/supervisor/tests/:id` | Annotate case (approve/refer) | Supervisor |
+| `GET` | `/api/admin/settings` | Read the typed admin configuration (session timeout, export governance, alert thresholds, BAC limits) | Admin |
+| `PATCH` | `/api/admin/settings` | Update settings (body: `{ "expectedRevision": n, "values": { "<key>": <value> } }`) | Admin |
+| `GET` | `/api/config/runtime` | Role-safe runtime settings for web and mobile clients | Authenticated |
 | `POST` | `/api/supervisor/verification-tokens` | Issue court verification tokens for PDF exports (body: `{ "testIds": [...] }`) | Supervisor |
 | `GET` | `/api/public/verify` | Anonymous court verification lookup (token in `X-Verification-Token` header) | Public |
 | `GET` | `/api/health` | Health check | Public |
@@ -216,7 +221,12 @@ All changes to `feature/[name]` and `main` go through a **Pull Request**.
 
 ## Legal Alcohol Limits (South Africa)
 
-The system automatically classifies results against these thresholds:
+Limits are editable by administrators (System Configuration → BAC Limits) and are applied to
+**future captures only**. Officers' driver category is derived from the scanned licence
+(professional driving permit or heavy-vehicle codes), and each captured record stores the
+effective limit used at capture time.
+
+Defaults:
 
 | Driver Type | Blood (g/100ml) | Breath (mg/1000ml) |
 |-------------|----------------|-------------------|

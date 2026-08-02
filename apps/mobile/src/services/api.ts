@@ -92,6 +92,10 @@ export async function updateDutyStatus(status: string) {
   });
 }
 
+export async function getRuntimeConfig() {
+  return request<import('../types').RuntimeConfig>('/config/runtime');
+}
+
 export async function syncRecords(records: Record<string, unknown>[]) {
   return request<{ synced: string[]; failed: { id: string; error: string }[]; duplicates: string[] }>('/sync', {
     method: 'POST',

@@ -1,8 +1,12 @@
-import { createContext, useContext, useEffect, useState } from 'react';
-import { AUTH_EXPIRED_EVENT, clearAccessToken, getAccessToken, getProfile, setAccessToken } from '../services/api';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { AUTH_EXPIRED_EVENT, clearAccessToken, getAccessToken, getProfile, getRuntimeConfig, setAccessToken } from '../services/api';
 import type { UserProfile } from '../types';
 
 const PROFILE_STORAGE_KEY = 'local_auth_profile';
+const LAST_ACTIVITY_KEY = 'integriscan:last_activity';
+const IDLE_CHECK_MS = 15_000;
+const DEFAULT_SESSION_TIMEOUT_MINUTES = 30;
+const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'scroll'] as const;
 
 function loadLocalProfile(): UserProfile | null {
   const stored = localStorage.getItem(PROFILE_STORAGE_KEY);
@@ -37,13 +41,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionTimeoutMinutes, setSessionTimeoutMinutes] = useState(DEFAULT_SESSION_TIMEOUT_MINUTES);
+  const lastActivityRef = useRef<number>(Date.now());
+  const idleTimerRef = useRef<number | null>(null);
 
   const clearAuthState = () => {
     clearAccessToken();
     clearLocalProfile();
+    try {
+      localStorage.removeItem(LAST_ACTIVITY_KEY);
+    } catch {
+      // ignore storage failures
+    }
     setUser(null);
     setProfile(null);
   };
+
+  const touchActivity = useCallback(() => {
+    lastActivityRef.current = Date.now();
+    try {
+      localStorage.setItem(LAST_ACTIVITY_KEY, String(lastActivityRef.current));
+    } catch {
+      // ignore storage failures
+    }
+  }, []);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -77,7 +98,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const handleAuthExpired = () => {
+    const handleAuthExpired = (event: Event) => {
+      // Ignore events from requests that were sent with a different token
+      // (e.g. a stale background request resolving after a fresh sign-in).
+      const detail = (event as CustomEvent).detail as
+        | { message?: string; token?: string | null }
+        | undefined;
+      if (detail?.token != null && detail.token !== getAccessToken()) return;
       clearAuthState();
     };
 
@@ -86,6 +113,87 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
     };
   }, []);
+
+  // Sign out in other tabs when the token is cleared here.
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'backend_access_token' && !event.newValue) {
+        clearAuthState();
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  // Fetch the administrator-configured idle timeout (web portal only).
+  useEffect(() => {
+    if (!user) {
+      setSessionTimeoutMinutes(DEFAULT_SESSION_TIMEOUT_MINUTES);
+      return;
+    }
+    let cancelled = false;
+    getRuntimeConfig()
+      .then((config) => {
+        if (!cancelled) {
+          setSessionTimeoutMinutes(config.auth.sessionTimeoutMinutes);
+        }
+      })
+      .catch(() => {
+        // Offline or unconfigured: keep the default idle timeout.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  // Idle inactivity enforcement. The timeout is client-side inactivity only;
+  // it is independent of Supabase JWT expiry and applies to the web portal only.
+  useEffect(() => {
+    if (!user) return;
+
+    try {
+      const stored = Number(localStorage.getItem(LAST_ACTIVITY_KEY) ?? '0');
+      if (stored > lastActivityRef.current) lastActivityRef.current = stored;
+    } catch {
+      // ignore storage failures
+    }
+    touchActivity();
+
+    let throttled = false;
+    const onActivity = () => {
+      if (throttled) return;
+      throttled = true;
+      setTimeout(() => {
+        throttled = false;
+      }, 2000);
+      touchActivity();
+    };
+    const onFocus = () => {
+      touchActivity();
+    };
+
+    ACTIVITY_EVENTS.forEach((event) => window.addEventListener(event, onActivity));
+    window.addEventListener('focus', onFocus);
+
+    const checkIdle = () => {
+      const idleMs = Date.now() - lastActivityRef.current;
+      if (sessionTimeoutMinutes > 0 && idleMs >= sessionTimeoutMinutes * 60_000) {
+        clearAuthState();
+      }
+    };
+    idleTimerRef.current = window.setInterval(checkIdle, IDLE_CHECK_MS);
+
+    return () => {
+      ACTIVITY_EVENTS.forEach((event) => window.removeEventListener(event, onActivity));
+      window.removeEventListener('focus', onFocus);
+      if (idleTimerRef.current != null) {
+        window.clearInterval(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+    };
+  }, [user, sessionTimeoutMinutes]);
 
   const signIn = (profileData: UserProfile, token: string) => {
     setAccessToken(token);

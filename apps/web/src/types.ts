@@ -4,11 +4,36 @@ export type AdminNavItem = 'users' | 'audit' | 'config';
 
 export type SupervisorNavItem = 'dashboard' | 'logs' | 'cases' | 'officers' | 'shifts' | 'reports';
 
-export interface SystemConfigCard {
-  id: string;
-  title: string;
-  lines: string[];
+export type PdfAccessPolicy = 'admin_only' | 'admin_supervisor' | 'disabled';
+
+export interface BacLimitSetting {
+  key: 'general' | 'professional';
+  label: string;
+  limitG100ml: number;
+  limitMg1000ml: number;
 }
+
+export interface AdminConfig {
+  revision: number;
+  updatedAt: string;
+  updatedBy: string | null;
+  auth: { sessionTimeoutMinutes: number };
+  export: {
+    pdfWatermarkEnabled: boolean;
+    pdfWatermarkText: string;
+    pdfAccess: PdfAccessPolicy;
+  };
+  alerts: {
+    integrityFlagCount: number;
+    failureRateChangePoints: number;
+    roadblockMinimumTests: number;
+    avgFailingBacMultiple: number;
+  };
+  bacLimits: BacLimitSetting[];
+}
+
+/** Role-safe runtime settings served to authenticated clients. */
+export type RuntimeConfig = Omit<AdminConfig, 'revision' | 'updatedAt' | 'updatedBy'>;
 
 export interface AuditLogEntry {
   id: number;
@@ -75,6 +100,10 @@ export interface TestEvidenceFields {
   serviceNumber?: string;
   station?: string;
   driverCategory?: string;
+  driverCategoryKey?: string;
+  bacLimitG100ml?: number;
+  bacLimitMg1000ml?: number;
+  settingsRevision?: number;
   officerNotes?: string;
   photoUrls?: string[];
 }

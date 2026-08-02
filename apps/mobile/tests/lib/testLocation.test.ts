@@ -1,5 +1,6 @@
 import {
   buildTestLocation,
+  deriveDriverCategory,
   stationFromProfileRegion,
   DRIVER_CATEGORIES
 } from '../../src/lib/testLocation';
@@ -78,5 +79,51 @@ describe('testLocation helpers', () => {
         radiusMeters: 500
       }
     });
+  });
+
+  it('snapshots the effective BAC policy for the captured record', () => {
+    const location = buildTestLocation({
+      lat: -26.1,
+      lng: 28.05,
+      roadblock: 'N1 Midrand',
+      station: 'Midrand Station',
+      officerRank: 'Constable',
+      serviceNumber: 'SAP123',
+      officerNotes: '',
+      driverCategory: 'Professional Driver (limit 0.03g/100ml)',
+      driverCategoryKey: 'professional',
+      bacLimitG100ml: 0.03,
+      bacLimitMg1000ml: 0.12
+    });
+
+    expect(location).toMatchObject({
+      driverCategory: 'Professional Driver (limit 0.03g/100ml)',
+      driverCategoryKey: 'professional',
+      bacLimitG100ml: 0.03,
+      bacLimitMg1000ml: 0.12
+    });
+  });
+});
+
+describe('deriveDriverCategory', () => {
+  it('classifies general licence codes as general', () => {
+    expect(deriveDriverCategory('B')).toBe('general');
+    expect(deriveDriverCategory('A B')).toBe('general');
+    expect(deriveDriverCategory('EB')).toBe('general');
+    expect(deriveDriverCategory('')).toBe('general');
+  });
+
+  it('classifies professional driving permit and heavy-vehicle codes as professional', () => {
+    expect(deriveDriverCategory('P')).toBe('professional');
+    expect(deriveDriverCategory('B, C')).toBe('professional');
+    expect(deriveDriverCategory('C1')).toBe('professional');
+    expect(deriveDriverCategory('EC')).toBe('professional');
+    expect(deriveDriverCategory('EC1')).toBe('professional');
+    expect(deriveDriverCategory('G')).toBe('professional');
+  });
+
+  it('is case-insensitive', () => {
+    expect(deriveDriverCategory('b, c')).toBe('professional');
+    expect(deriveDriverCategory('b')).toBe('general');
   });
 });

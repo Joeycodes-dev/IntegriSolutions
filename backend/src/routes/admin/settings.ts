@@ -1,96 +1,53 @@
 import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
-import { requireAdmin } from '../../middleware/requireAdmin';
+import { requireAdmin, type AdminRequest } from '../../middleware/requireAdmin';
+import { asyncHandler } from '../../asyncHandler';
+import {
+  getAdminConfig,
+  updateAdminSettings,
+  SettingsValidationError,
+  SettingsConflictError
+} from '../../config/systemSettings';
 
 const router = Router();
 
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
-
-interface ConfigCard {
-  id: string;
-  title: string;
-  lines: string[];
-}
-
-function defaultSettingsMap(): Record<string, string> {
-  return {
-    'auth.mfa_policy': 'Required for Supervisor and Admin roles.',
-    'auth.session_timeout': process.env.SESSION_TIMEOUT_LABEL ?? '30 minutes inactive.',
-    'retention.evidence_days': process.env.EVIDENCE_RETENTION_DAYS
-      ? `${process.env.EVIDENCE_RETENTION_DAYS} days.`
-      : '90 days.',
-    'retention.audit_days': process.env.AUDIT_RETENTION_DAYS
-      ? `${process.env.AUDIT_RETENTION_DAYS} days.`
-      : '365 days.',
-    'export.pdf_watermark': process.env.PDF_WATERMARK_ENABLED === 'false' ? 'Disabled.' : 'Enabled.',
-    'export.excel_access': process.env.EXCEL_EXPORT_ACCESS ?? 'Admin only.',
-    'environment.mode': process.env.APP_MODE ?? 'IntegriScan',
-    'environment.region': process.env.APP_REGION ?? 'ZA-JHB-01'
-  };
-}
-
-function buildCards(settings: Record<string, string>): ConfigCard[] {
-  return [
-    {
-      id: 'authentication',
-      title: 'Authentication Policy',
-      lines: [
-        `MFA: ${settings['auth.mfa_policy']}`,
-        `Session timeout: ${settings['auth.session_timeout']}`
-      ]
-    },
-    {
-      id: 'retention',
-      title: 'Data Retention',
-      lines: [
-        `Evidence retention: ${settings['retention.evidence_days']}`,
-        `Audit retention: ${settings['retention.audit_days']}`
-      ]
-    },
-    {
-      id: 'export',
-      title: 'Export Controls',
-      lines: [
-        `PDF export watermark: ${settings['export.pdf_watermark']}`,
-        `Excel export access: ${settings['export.excel_access']}`
-      ]
-    },
-    {
-      id: 'environment',
-      title: 'Environment',
-      lines: [
-        `Mode: ${settings['environment.mode']}`,
-        `Region: ${settings['environment.region']}`
-      ]
-    }
-  ];
-}
-
 router.use(requireAdmin);
 
-router.get('/', async (_req, res) => {
-  const settings = defaultSettingsMap();
+router.get('/', asyncHandler(async (_req, res) => {
+  return res.json(await getAdminConfig());
+}));
 
-  const { data, error } = await serviceSupabase.from('system_settings').select('key, value');
+router.patch('/', asyncHandler(async (req, res) => {
+  const authReq = req as unknown as AdminRequest;
+  const body = (req.body ?? {}) as { expectedRevision?: unknown; values?: unknown };
 
-  if (!error && data) {
-    for (const row of data) {
-      settings[String(row.key)] = String(row.value);
-    }
-  } else if (error && !error.message.includes('system_settings') && error.code !== '42P01') {
-    return res.status(500).json({ error: error.message });
+  const expectedRevision = Number(body.expectedRevision);
+  if (!Number.isInteger(expectedRevision) || expectedRevision < 1) {
+    return res.status(400).json({ error: 'expectedRevision must be a positive integer' });
   }
 
-  return res.json({ cards: buildCards(settings) });
-});
+  if (!body.values || typeof body.values !== 'object' || Array.isArray(body.values)) {
+    return res.status(400).json({ error: 'values must be an object of setting key/value pairs' });
+  }
+
+  try {
+    const config = await updateAdminSettings(
+      authReq.userEmail ?? 'unknown',
+      expectedRevision,
+      body.values as Record<string, unknown>
+    );
+    return res.json(config);
+  } catch (err) {
+    if (err instanceof SettingsValidationError) {
+      return res.status(400).json({ error: err.message });
+    }
+    if (err instanceof SettingsConflictError) {
+      return res.status(409).json({
+        error: err.message,
+        currentRevision: err.currentRevision
+      });
+    }
+    throw err;
+  }
+}));
 
 export default router;

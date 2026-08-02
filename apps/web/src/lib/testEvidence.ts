@@ -21,6 +21,10 @@ export interface ParsedLocation {
   serviceNumber?: string;
   station?: string;
   driverCategory?: string;
+  driverCategoryKey?: string;
+  bacLimitG100ml?: number;
+  bacLimitMg1000ml?: number;
+  settingsRevision?: number;
 }
 
 function extractLocationBounds(parsed: Record<string, unknown>): ParsedLocation['locationBounds'] {
@@ -59,7 +63,13 @@ function extractParsedLocation(parsed: Record<string, unknown>): ParsedLocation 
     serviceNumber: typeof parsed.serviceNumber === 'string' ? parsed.serviceNumber : undefined,
     station: typeof parsed.station === 'string' ? parsed.station : undefined,
     driverCategory:
-      typeof parsed.driverCategory === 'string' ? parsed.driverCategory : undefined
+      typeof parsed.driverCategory === 'string' ? parsed.driverCategory : undefined,
+    driverCategoryKey:
+      typeof parsed.driverCategoryKey === 'string' ? parsed.driverCategoryKey : undefined,
+    bacLimitG100ml: typeof parsed.bacLimitG100ml === 'number' ? parsed.bacLimitG100ml : undefined,
+    bacLimitMg1000ml: typeof parsed.bacLimitMg1000ml === 'number' ? parsed.bacLimitMg1000ml : undefined,
+    settingsRevision:
+      typeof parsed.settingsRevision === 'number' ? parsed.settingsRevision : undefined
   };
 }
 
