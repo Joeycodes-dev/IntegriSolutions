@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import type { CaseStatus, TestRecord } from '../../types';
 import { buildTestEvidence } from '../../lib/testEvidence';
+import { evidenceCategoryLabel } from '../../types';
 import { CASE_STATUS_LABELS, CASE_STATUS_STYLES, isCaseStatus } from '../../lib/caseStatus';
 import { annotateTest, getAnnotations, getEvidence, uploadEvidence, type Annotation, type EvidencePhoto } from '../../services/api';
 import { BORDER, NAVY, PAGE_BG, pageShell } from './supervisorStyles';
@@ -47,6 +48,13 @@ function statusColor(status: string): { bg: string; border: string; text: string
   return { bg: '#f8fafc', border: '#e2e8f0', text: '#475569' };
 }
 
+function caseStatusFromAnnotation(status: string): CaseStatus | null {
+  if (isCaseStatus(status)) return status;
+  if (status === 'approved') return 'verified';
+  if (status === 'pending') return 'under_review';
+  return null;
+}
+
 export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
   const evidence = useMemo(() => buildTestEvidence(test), [test]);
   const [generatingPdf, setGeneratingPdf] = useState(false);
@@ -69,6 +77,10 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
   const [caseStatus, setCaseStatus] = useState<CaseStatus>(initialCaseStatus);
 
   useEffect(() => {
+    setCaseStatus(initialCaseStatus);
+  }, [initialCaseStatus]);
+
+  useEffect(() => {
     let cancelled = false;
     setAnnotationsLoading(true);
     getAnnotations(test.id)
@@ -76,9 +88,8 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
         if (cancelled) return;
         setAnnotations(data);
         const first = data[0];
-        if (first && isCaseStatus(first.status)) {
-          setCaseStatus(first.status);
-        }
+        const annotationStatus = first ? caseStatusFromAnnotation(first.status) : null;
+        if (annotationStatus) setCaseStatus(annotationStatus);
       })
       .catch(() => { if (!cancelled) setAnnotations([]); })
       .finally(() => { if (!cancelled) setAnnotationsLoading(false); });
@@ -252,10 +263,10 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
               <p className="mb-2 text-[0.6875rem] font-medium text-rose-600">{uploadError}</p>
             )}
             <div className="grid grid-cols-2 gap-2">
-              {evidencePhotos.slice(0, 4).map((photo) => (
+              {evidencePhotos.slice(0, 5).map((photo) => (
                 <div
                   key={photo.id}
-                  className="aspect-[4/3] overflow-hidden rounded-lg border bg-slate-100"
+                  className="overflow-hidden rounded-lg border bg-slate-100"
                   style={{ borderColor: BORDER }}
                 >
                   <img
@@ -263,6 +274,11 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
                     alt={`Evidence ${photo.id}`}
                     className="h-full w-full object-cover"
                   />
+                  <div className="border-t bg-white px-2 py-1" style={{ borderColor: BORDER }}>
+                    <p className="truncate text-[10px] font-bold text-slate-600">
+                      {evidenceCategoryLabel(photo.category)}
+                    </p>
+                  </div>
                 </div>
               ))}
               {evidencePhotos.length === 0 && (

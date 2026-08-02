@@ -4,6 +4,11 @@ import type { TestLocationPayload } from '../lib/testLocation';
 import { syncRecords, uploadEvidencePhoto } from './api';
 import { logAuditEvent } from './audit';
 import { getAccessToken } from './auth';
+import {
+  getPendingAttachments,
+  insertEvidenceAttachment,
+  updateAttachmentSyncStatus
+} from '../db/repository';
 
 export { generateId } from '../lib/id';
 export type { TestLocationPayload } from '../lib/testLocation';
@@ -58,6 +63,11 @@ export async function saveLocally(params: {
   result: string;
   location: TestLocationPayload;
   photoUri?: string | null;
+  attachments?: Array<{
+    id: string;
+    category: string;
+    uri: string;
+  }>;
   originalTestId?: string | null;
 }): Promise<LocalTestRecord> {
   const protectedDriverId = protectIdentifier(params.driverId);
@@ -103,6 +113,29 @@ export async function saveLocally(params: {
   };
 
   await insertTest(record);
+
+  const attachments = [...(params.attachments ?? [])];
+  if (params.photoUri && !attachments.some((attachment) => attachment.uri === params.photoUri)) {
+    attachments.push({
+      id: `${record.id}-legacy-vehicle`,
+      category: 'vehicle',
+      uri: params.photoUri
+    });
+  }
+
+  for (const attachment of attachments) {
+    await insertEvidenceAttachment({
+      id: attachment.id,
+      testId: record.id,
+      category: attachment.category,
+      uri: attachment.uri,
+      syncStatus: 'pending_sync',
+      retryCount: 0,
+      createdAt: new Date().toISOString(),
+      syncedAt: null
+    });
+  }
+
   await logAuditEvent({
     action: 'test.saved',
     outcome: 'success',
@@ -122,20 +155,79 @@ export async function saveLocally(params: {
   });
   return record;
 }
-
 export async function syncPendingRecords(officerId?: number | null): Promise<{
   synced: string[];
   failed: { id: string; error: string }[];
+  attachmentResults: {
+    testId: string;
+    attachmentId: string;
+    category: string;
+    status: 'synced' | 'pending' | 'failed';
+    error?: string;
+  }[];
 }> {
   const token = await getAccessToken();
   if (!token) {
-    return { synced: [], failed: [] };
+    return { synced: [], failed: [], attachmentResults: [] };
   }
 
   const pending = await getPendingSync(officerId);
+  const attachmentResults: Awaited<ReturnType<typeof syncPendingRecords>>['attachmentResults'] = [];
+  const processedAttachmentTestIds = new Set<string>();
+
+  const uploadAttachmentsFor = async (testId: string) => {
+    processedAttachmentTestIds.add(testId);
+    const attachments = await getPendingAttachments();
+    const owned = attachments.filter((attachment) => attachment.testId === testId);
+
+    for (const attachment of owned) {
+      try {
+        await uploadEvidencePhoto(testId, attachment.uri, attachment.category);
+        await updateAttachmentSyncStatus(attachment.id, 'synced', new Date().toISOString());
+        attachmentResults.push({
+          testId,
+          attachmentId: attachment.id,
+          category: attachment.category,
+          status: 'synced'
+        });
+        if (__DEV__) {
+          console.log(`[sync] uploaded ${attachment.category} photo for test ${testId}`);
+        }
+      } catch (photoError) {
+        const message = photoError instanceof Error ? photoError.message : 'Photo upload failed';
+        if (attachment.retryCount >= 4) {
+          await updateAttachmentSyncStatus(attachment.id, 'failed');
+          attachmentResults.push({
+            testId,
+            attachmentId: attachment.id,
+            category: attachment.category,
+            status: 'failed',
+            error: message
+          });
+        } else {
+          await updateAttachmentSyncStatus(attachment.id, 'pending_sync');
+          attachmentResults.push({
+            testId,
+            attachmentId: attachment.id,
+            category: attachment.category,
+            status: 'pending',
+            error: message
+          });
+        }
+        if (__DEV__) {
+          console.warn(`[sync] photo upload deferred for test ${testId} (${attachment.category}):`, message);
+        }
+      }
+    }
+  };
 
   if (pending.length === 0) {
-    return { synced: [], failed: [] };
+    const orphanAttachments = await getPendingAttachments();
+    const orphanTestIds = Array.from(new Set(orphanAttachments.map((attachment) => attachment.testId)));
+    for (const testId of orphanTestIds) {
+      await uploadAttachmentsFor(testId);
+    }
+    return { synced: [], failed: [], attachmentResults };
   }
 
   const records = pending.map((record) => ({
@@ -162,25 +254,22 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
     for (const id of response.synced) {
       await updateSyncStatus(id, 'synced', new Date().toISOString());
       syncedIds.push(id);
-
-      const record = pending.find((r) => r.id === id);
-      if (record?.photoUri) {
-        try {
-          await uploadEvidencePhoto(id, record.photoUri);
-          if (__DEV__) {
-            console.log(`[sync] uploaded photo for test ${id}`);
-          }
-        } catch (photoError) {
-          if (__DEV__) {
-            console.warn(`[sync] photo upload deferred for test ${id}:`, photoError);
-          }
-        }
-      }
+      await uploadAttachmentsFor(id);
     }
 
     for (const id of response.duplicates) {
       await updateSyncStatus(id, 'synced', new Date().toISOString());
       syncedIds.push(id);
+      await uploadAttachmentsFor(id);
+    }
+
+    const failedTestIds = new Set(response.failed.map((failure) => failure.id));
+    const pendingTestIds = new Set(pending.map((record) => record.id));
+    const remainingAttachments = await getPendingAttachments();
+    const orphanTestIds = Array.from(new Set(remainingAttachments.map((attachment) => attachment.testId)))
+      .filter((testId) => !pendingTestIds.has(testId) && !failedTestIds.has(testId) && !processedAttachmentTestIds.has(testId));
+    for (const testId of orphanTestIds) {
+      await uploadAttachmentsFor(testId);
     }
 
     for (const failure of response.failed) {
@@ -205,11 +294,12 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
         synced: syncedIds.length,
         duplicates: response.duplicates.length,
         failed: failedIds.length,
+        attachments: attachmentResults.length,
         failedIds: failedIds.map((f) => ({ id: f.id, error: f.error }))
       }
     });
 
-    return { synced: syncedIds, failed: failedIds };
+    return { synced: syncedIds, failed: failedIds, attachmentResults };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const failedIds: { id: string; error: string }[] = [];
@@ -235,6 +325,6 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
         error: message
       }
     });
-    return { synced: [], failed: failedIds };
+    return { synced: [], failed: failedIds, attachmentResults: [] };
   }
 }

@@ -99,11 +99,19 @@ export async function syncRecords(records: Record<string, unknown>[]) {
   });
 }
 
-export async function uploadEvidencePhoto(testId: string, photoUri: string) {
+export async function uploadEvidencePhoto(
+  testId: string,
+  photoUri: string,
+  category?: string
+) {
   const token = await getAccessToken();
   const url = `${API_BASE_URL}/evidence/${testId}`;
 
   const formData = new FormData();
+
+  if (category) {
+    formData.append('category', category);
+  }
 
   if (Platform.OS === 'web') {
     const imageResponse = await fetch(photoUri);

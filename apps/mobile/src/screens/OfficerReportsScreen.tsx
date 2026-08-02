@@ -15,8 +15,15 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../lib/AuthContext';
 import { useSync } from '../lib/SyncContext';
-import { getAllTests, type LocalTestRecord } from '../db/repository';
+import {
+  getAllTests,
+  getAttachmentsByTest,
+  resetAttachmentToPending,
+  type LocalTestRecord,
+  type LocalEvidenceAttachment
+} from '../db/repository';
 import { invalidateTest } from '../services/api';
+import { evidenceCategoryLabel } from '../lib/evidenceCategories';
 import { OfficerBottomNav } from '../components/OfficerBottomNav';
 
 type RootStackParamList = {
@@ -43,10 +50,48 @@ function syncStatusLabel(status: string): { label: string; color: string; icon: 
   return { label: 'Unknown', color: '#64748b', icon: 'help-circle' };
 }
 
+function AttachmentRow({
+  attachment,
+  onRetry
+}: {
+  attachment: LocalEvidenceAttachment;
+  onRetry: (attachment: LocalEvidenceAttachment) => void;
+}) {
+  const info = syncStatusLabel(attachment.syncStatus);
+  return (
+    <View style={styles.attachmentRow}>
+      <View style={styles.attachmentRowText}>
+        <Text style={styles.attachmentRowLabel}>{evidenceCategoryLabel(attachment.category)}</Text>
+        <View style={styles.attachmentRowStatus}>
+          <Feather name={info.icon as any} size={12} color={info.color} />
+          <Text style={[styles.attachmentRowStatusText, { color: info.color }]}>
+            {info.label}
+          </Text>
+          {attachment.syncStatus === 'failed' && (
+            <Text style={styles.attachmentRowRetries}>
+              ({attachment.retryCount} retries)
+            </Text>
+          )}
+        </View>
+      </View>
+      {attachment.syncStatus === 'failed' && (
+        <Pressable
+          style={styles.attachmentRetryButton}
+          onPress={() => onRetry(attachment)}
+        >
+          <Feather name="refresh-cw" size={13} color="#4338ca" />
+          <Text style={styles.attachmentRetryText}>RETRY</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
 export function OfficerReportsScreen(_props: Props) {
   const { profile, signOut } = useAuth();
   const { pendingCount, failedCount, syncedCount } = useSync();
   const [tests, setTests] = useState<LocalTestRecord[]>([]);
+  const [attachmentsByTest, setAttachmentsByTest] = useState<Record<string, LocalEvidenceAttachment[]>>({});
   const [loading, setLoading] = useState(true);
   const [invalidateModalVisible, setInvalidateModalVisible] = useState(false);
   const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
@@ -62,10 +107,34 @@ export function OfficerReportsScreen(_props: Props) {
     try {
       const data = await getAllTests(profile?.officerId ?? null);
       setTests(data);
+      const map: Record<string, LocalEvidenceAttachment[]> = {};
+      for (const test of data) {
+        map[test.id] = await getAttachmentsByTest(test.id);
+      }
+      setAttachmentsByTest(map);
     } catch (error) {
       console.error('Failed to load tests:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAttachmentRetry = async (attachment: LocalEvidenceAttachment) => {
+    try {
+      await resetAttachmentToPending(attachment.id);
+      setAttachmentsByTest((prev) => ({
+        ...prev,
+        [attachment.testId]: (prev[attachment.testId] ?? []).map((item) =>
+          item.id === attachment.id ? { ...item, syncStatus: 'pending_sync' as const } : item
+        )
+      }));
+      Alert.alert(
+        'Attachment queued',
+        `${evidenceCategoryLabel(attachment.category)} will retry on the next sync.`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Retry failed';
+      Alert.alert('Retry failed', message);
     }
   };
 
@@ -157,6 +226,19 @@ export function OfficerReportsScreen(_props: Props) {
             <Text style={styles.syncedAt}>· {formatTimestamp(item.syncedAt)}</Text>
           )}
         </View>
+
+        {(attachmentsByTest[item.id] ?? []).length > 0 && (
+          <View style={styles.attachmentSection}>
+            <Text style={styles.attachmentSectionTitle}>EVIDENCE BUNDLE</Text>
+            {(attachmentsByTest[item.id] ?? []).map((attachment) => (
+              <AttachmentRow
+                key={attachment.id}
+                attachment={attachment}
+                onRetry={handleAttachmentRetry}
+              />
+            ))}
+          </View>
+        )}
 
         {item.syncStatus === 'synced' && (
           <Pressable
@@ -476,6 +558,64 @@ const styles = StyleSheet.create({
   syncedAt: {
     fontSize: 11,
     color: '#94a3b8'
+  },
+  attachmentSection: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    gap: 8
+  },
+  attachmentSectionTitle: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748b',
+    letterSpacing: 1
+  },
+  attachmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10
+  },
+  attachmentRowText: {
+    flex: 1
+  },
+  attachmentRowLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0f172a'
+  },
+  attachmentRowStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 2
+  },
+  attachmentRowStatusText: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  attachmentRowRetries: {
+    fontSize: 10,
+    color: '#94a3b8'
+  },
+  attachmentRetryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe'
+  },
+  attachmentRetryText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#4338ca',
+    letterSpacing: 0.5
   },
   invalidateButton: {
     flexDirection: 'row',

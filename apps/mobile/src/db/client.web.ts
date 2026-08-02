@@ -43,10 +43,22 @@ type AuditEvent = {
   metadata: string | null;
 };
 
+type LocalEvidenceAttachment = {
+  id: string;
+  testId: string;
+  category: string;
+  uri: string;
+  syncStatus: SyncStatus;
+  retryCount: number;
+  createdAt: string;
+  syncedAt: string | null;
+};
+
 type WebDbState = {
   tests: LocalTestRecord[];
   drafts: LocalDraft[];
   audit_events: AuditEvent[];
+  evidence_attachments: LocalEvidenceAttachment[];
 };
 
 type CountRow = { count: number };
@@ -55,22 +67,23 @@ const STORAGE_KEY = "integiscan-web-db";
 
 function loadState(): WebDbState {
   if (typeof window === "undefined") {
-    return { tests: [], drafts: [], audit_events: [] };
+    return { tests: [], drafts: [], audit_events: [], evidence_attachments: [] };
   }
 
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      return { tests: [], drafts: [], audit_events: [] };
+      return { tests: [], drafts: [], audit_events: [], evidence_attachments: [] };
     }
     const parsed = JSON.parse(raw) as Partial<WebDbState>;
     return {
       tests: Array.isArray(parsed.tests) ? parsed.tests : [],
       drafts: Array.isArray(parsed.drafts) ? parsed.drafts : [],
       audit_events: Array.isArray(parsed.audit_events) ? parsed.audit_events : [],
+      evidence_attachments: Array.isArray(parsed.evidence_attachments) ? parsed.evidence_attachments : [],
     };
   } catch {
-    return { tests: [], drafts: [], audit_events: [] };
+    return { tests: [], drafts: [], audit_events: [], evidence_attachments: [] };
   }
 }
 
@@ -252,6 +265,66 @@ const webDb = {
       state.audit_events.unshift(event);
       saveState(state);
     }
+
+    if (sql.startsWith("INSERT INTO evidence_attachments")) {
+      const attachment = {
+        id: params[0] as string,
+        testId: params[1] as string,
+        category: params[2] as string,
+        uri: params[3] as string,
+        syncStatus: params[4] as SyncStatus,
+        retryCount: Number(params[5] ?? 0),
+        createdAt: params[6] as string,
+        syncedAt: (params[7] as string | null) ?? null,
+      } satisfies LocalEvidenceAttachment;
+      state.evidence_attachments = state.evidence_attachments.filter((item) => item.id !== attachment.id);
+      state.evidence_attachments.push(attachment);
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("UPDATE evidence_attachments SET syncStatus = ?, syncedAt = ?, retryCount = 0 WHERE id = ?")) {
+      const [syncStatus, syncedAt, id] = params as [SyncStatus, string, string];
+      state.evidence_attachments = state.evidence_attachments.map((item) =>
+        item.id === id ? { ...item, syncStatus, syncedAt, retryCount: 0 } : item,
+      );
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("UPDATE evidence_attachments SET syncStatus = ?, retryCount = retryCount + 1 WHERE id = ?")) {
+      const [syncStatus, id] = params as [SyncStatus, string];
+      state.evidence_attachments = state.evidence_attachments.map((item) =>
+        item.id === id
+          ? { ...item, syncStatus, retryCount: item.retryCount + 1 }
+          : item,
+      );
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("UPDATE evidence_attachments SET syncStatus = 'pending_sync', retryCount = 0 WHERE id = ?")) {
+      const [id] = params as [string];
+      state.evidence_attachments = state.evidence_attachments.map((item) =>
+        item.id === id ? { ...item, syncStatus: "pending_sync", retryCount: 0 } : item,
+      );
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("UPDATE evidence_attachments SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed'")) {
+      state.evidence_attachments = state.evidence_attachments.map((item) =>
+        item.syncStatus === "failed" ? { ...item, syncStatus: "pending_sync" } : item,
+      );
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("DELETE FROM evidence_attachments WHERE id = ?")) {
+      const [id] = params as [string];
+      state.evidence_attachments = state.evidence_attachments.filter((item) => item.id !== id);
+      saveState(state);
+    }
   },
 
   async getAllAsync<T>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -341,6 +414,25 @@ const webDb = {
         .filter((item) => item.action.startsWith(startsWith))
         .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
         .slice(0, limit) as T[];
+    }
+
+    if (sql.includes("FROM evidence_attachments WHERE testId = ? ORDER BY createdAt ASC")) {
+      const [testId] = params as [string];
+      return state.evidence_attachments
+        .filter((item) => item.testId === testId)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt)) as T[];
+    }
+
+    if (sql.includes("FROM evidence_attachments WHERE syncStatus = 'pending_sync'")) {
+      return state.evidence_attachments
+        .filter((item) => item.syncStatus === "pending_sync")
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt)) as T[];
+    }
+
+    if (sql.includes("FROM evidence_attachments WHERE syncStatus = 'failed'")) {
+      return state.evidence_attachments
+        .filter((item) => item.syncStatus === "failed")
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt)) as T[];
     }
 
     return [];

@@ -41,7 +41,7 @@ export function SupervisorCases() {
 
   const loadCases = useCallback(async () => {
     try {
-      const data = await getCases(statusFilter === 'ALL' ? '' : statusFilter);
+      const data = await getCases();
       setCases(data);
       setError(null);
     } catch (err) {
@@ -50,7 +50,7 @@ export function SupervisorCases() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter]);
+  }, []);
 
   useEffect(() => {
     void loadCases();
@@ -72,21 +72,25 @@ export function SupervisorCases() {
 
   const filteredCases = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return cases;
     return cases.filter(
       (entry) =>
+        (statusFilter === 'ALL' || entry.caseStatus === statusFilter) &&
+        (!q ||
         entry.driverName.toLowerCase().includes(q) ||
         entry.officerName.toLowerCase().includes(q) ||
         entry.driverId.toLowerCase().includes(q) ||
-        entry.id.toLowerCase().includes(q)
+        entry.id.toLowerCase().includes(q))
     );
-  }, [cases, search]);
+  }, [cases, search, statusFilter]);
 
   if (selectedCase) {
     return (
       <EvidenceReview
         test={selectedCase as TestRecord}
-        onBack={() => setSelectedCase(null)}
+        onBack={() => {
+          setSelectedCase(null);
+          void loadCases();
+        }}
       />
     );
   }

@@ -184,6 +184,20 @@ export interface TestEvidence {
 
 export type CaseStatus = 'new' | 'under_review' | 'verified' | 'referred' | 'invalidated' | 'closed';
 
+export const EVIDENCE_CATEGORY_LABELS: Record<string, string> = {
+  licence_front: 'Licence Front',
+  breathalyser_screen: 'Breathalyser Screen',
+  vehicle: 'Vehicle',
+  scene_note: 'Officer Scene Note',
+  signature_witness: 'Signature / Witness'
+};
+
+export function evidenceCategoryLabel(category: unknown): string {
+  return typeof category === 'string' && EVIDENCE_CATEGORY_LABELS[category]
+    ? EVIDENCE_CATEGORY_LABELS[category]
+    : 'General';
+}
+
 /** Test with its current lifecycle case state (from GET /api/supervisor/cases). */
 export interface CaseRecord {
   id: string;

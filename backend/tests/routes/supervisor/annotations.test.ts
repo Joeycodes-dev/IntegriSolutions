@@ -214,5 +214,15 @@ describe('Annotations Routes', () => {
       expect(response.body).toHaveProperty('id');
       expect(response.body).toHaveProperty('test_id', 'test-123');
     });
+
+    it('should accept a lifecycle status and return the case status', async () => {
+      const response = await request(app)
+        .post('/api/supervisor/tests/test-123')
+        .set('Authorization', 'Bearer valid-token')
+        .send({ status: 'invalidated', comment: 'Evidence was compromised' });
+
+      expect(response.status).toBe(201);
+      expect(response.body).toHaveProperty('case_status', 'invalidated');
+    });
   });
 });

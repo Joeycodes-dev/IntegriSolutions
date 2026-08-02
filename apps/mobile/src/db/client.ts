@@ -56,6 +56,20 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_events(action);
   CREATE INDEX IF NOT EXISTS idx_audit_officer ON audit_events(officerId);
 
+  CREATE TABLE IF NOT EXISTS evidence_attachments (
+    id TEXT PRIMARY KEY NOT NULL,
+    testId TEXT NOT NULL,
+    category TEXT NOT NULL,
+    uri TEXT NOT NULL,
+    syncStatus TEXT NOT NULL DEFAULT 'pending_sync',
+    retryCount INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT NOT NULL,
+    syncedAt TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_attachments_test ON evidence_attachments(testId);
+  CREATE INDEX IF NOT EXISTS idx_attachments_sync ON evidence_attachments(syncStatus);
+
   CREATE TRIGGER IF NOT EXISTS audit_no_update
   BEFORE UPDATE ON audit_events
   BEGIN

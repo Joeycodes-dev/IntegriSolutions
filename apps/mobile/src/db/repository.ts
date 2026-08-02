@@ -50,6 +50,17 @@ export interface LocalTestRecord {
   originalTestId: string | null;
 }
 
+export interface LocalEvidenceAttachment {
+  id: string;
+  testId: string;
+  category: string;
+  uri: string;
+  syncStatus: SyncStatus;
+  retryCount: number;
+  createdAt: string;
+  syncedAt: string | null;
+}
+
 export interface LocalDraft {
   id: string;
   officerId: number | null;
@@ -282,6 +293,85 @@ export async function insertDraft(draft: LocalDraft): Promise<void> {
     `INSERT INTO drafts (id, officerId, driverData, step, createdAt) VALUES (?, ?, ?, ?, ?)`,
     [draft.id, draft.officerId, draft.driverData, draft.step, draft.createdAt]
   );
+}
+
+export async function insertEvidenceAttachment(attachment: LocalEvidenceAttachment): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `INSERT INTO evidence_attachments (id, testId, category, uri, syncStatus, retryCount, createdAt, syncedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      attachment.id,
+      attachment.testId,
+      attachment.category,
+      attachment.uri,
+      attachment.syncStatus,
+      attachment.retryCount,
+      attachment.createdAt,
+      attachment.syncedAt
+    ]
+  );
+}
+
+export async function getAttachmentsByTest(testId: string): Promise<LocalEvidenceAttachment[]> {
+  const db = await getDB();
+  return db.getAllAsync<LocalEvidenceAttachment>(
+    `SELECT * FROM evidence_attachments WHERE testId = ? ORDER BY createdAt ASC`,
+    [testId]
+  );
+}
+
+export async function getPendingAttachments(): Promise<LocalEvidenceAttachment[]> {
+  const db = await getDB();
+  return db.getAllAsync<LocalEvidenceAttachment>(
+    `SELECT * FROM evidence_attachments WHERE syncStatus = 'pending_sync' ORDER BY createdAt ASC`
+  );
+}
+
+export async function getFailedAttachments(): Promise<LocalEvidenceAttachment[]> {
+  const db = await getDB();
+  return db.getAllAsync<LocalEvidenceAttachment>(
+    `SELECT * FROM evidence_attachments WHERE syncStatus = 'failed' ORDER BY createdAt ASC`
+  );
+}
+
+export async function updateAttachmentSyncStatus(
+  id: string,
+  syncStatus: SyncStatus,
+  syncedAt?: string
+): Promise<void> {
+  const db = await getDB();
+  if (syncStatus === 'synced' && syncedAt) {
+    await db.runAsync(
+      `UPDATE evidence_attachments SET syncStatus = ?, syncedAt = ?, retryCount = 0 WHERE id = ?`,
+      [syncStatus, syncedAt, id]
+    );
+  } else {
+    await db.runAsync(
+      `UPDATE evidence_attachments SET syncStatus = ?, retryCount = retryCount + 1 WHERE id = ?`,
+      [syncStatus, id]
+    );
+  }
+}
+
+export async function resetAttachmentToPending(id: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `UPDATE evidence_attachments SET syncStatus = 'pending_sync', retryCount = 0 WHERE id = ?`,
+    [id]
+  );
+}
+
+export async function resetFailedAttachmentsToPending(): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `UPDATE evidence_attachments SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed'`
+  );
+}
+
+export async function deleteAttachment(id: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(`DELETE FROM evidence_attachments WHERE id = ?`, [id]);
 }
 
 export async function updateDraft(id: string, driverData: string, step: 'scan' | 'reading'): Promise<void> {

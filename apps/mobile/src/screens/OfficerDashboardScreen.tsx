@@ -43,6 +43,11 @@ import {
 import type { LocalTestRecord } from "../db/repository";
 import { OfficerBottomNav } from "../components/OfficerBottomNav";
 import { OfficerHome } from "../components/OfficerHome";
+import {
+  EVIDENCE_CATEGORIES,
+  EVIDENCE_CATEGORY_LABELS,
+  type EvidenceCategory,
+} from "../lib/evidenceCategories";
 
 import { styles } from "./OfficerDashboardScreen.styles";
 import { colors } from "../styles/colors";
@@ -61,6 +66,14 @@ type Props = NativeStackScreenProps<RootStackParamList, "OfficerDashboard">;
 type OfficerStep = "idle" | "scan" | "reading" | "saved";
 
 type DutyPillStatus = "on" | "off" | "break";
+
+type CapturedAttachment = {
+  id: string;
+  category: EvidenceCategory;
+  uri: string;
+};
+
+type AttachmentMap = Partial<Record<EvidenceCategory, CapturedAttachment>>;
 
 function mapProfileDutyStatus(status: string | undefined): DutyPillStatus {
   if (status === "Break") return "break";
@@ -628,6 +641,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [bacReading, setBacReading] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<AttachmentMap>({});
   const [lastSavedTestId, setLastSavedTestId] = useState<string | null>(null);
   const [lastSavedDriver, setLastSavedDriver] =
     useState<DriverLicenseData | null>(null);
@@ -673,6 +687,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setBarcodeScanned(false);
     setBacReading("");
     setPhotoUri(null);
+    setAttachments({});
     setAutoWorkflow(false);
     setOcrDebug(null);
   };
@@ -769,6 +784,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }
 
     setPhotoUri(image.uri);
+    setAttachments((prev) => ({
+      ...prev,
+      licence_front: { id: generateId(), category: "licence_front", uri: image.uri },
+    }));
     setBarcodeScanned(true);
     setLicensePayload(null);
     setDecryptError(null);
@@ -809,12 +828,12 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setAutoWorkflow(false);
   };
 
-  const takePhoto = async () => {
+  const captureAttachment = async (category: EvidenceCategory) => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted") {
       Alert.alert(
         "Camera access denied",
-        "Please allow camera access to take evidence photos.",
+        `Please allow camera access to capture the ${EVIDENCE_CATEGORY_LABELS[category]} photo.`,
       );
       return;
     }
@@ -825,8 +844,29 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       allowsEditing: false,
     });
 
-    if (!result.canceled && result.assets[0]) {
-      setPhotoUri(result.assets[0].uri);
+    const image = result.assets?.[0];
+    if (result.canceled || !image) return;
+
+    setAttachments((prev) => ({
+      ...prev,
+      [category]: { id: generateId(), category, uri: image.uri },
+    }));
+    if (!photoUri) {
+      setPhotoUri(image.uri);
+    }
+  };
+
+  const removeAttachment = (category: EvidenceCategory) => {
+    const current = attachments[category];
+    setAttachments((prev) => {
+      const next = { ...prev };
+      delete next[category];
+      return next;
+    });
+    if (current?.uri === photoUri) {
+      const nextPhoto = Object.values(attachments)
+        .find((attachment) => attachment.category !== category)?.uri ?? null;
+      setPhotoUri(nextPhoto);
     }
   };
 
@@ -836,6 +876,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setScannedData(lastSavedDriver);
     setBacReading("");
     setPhotoUri(null);
+    setAttachments({});
     setIsRetest(true);
     setAutoWorkflow(false);
     setOcrDebug(null);
@@ -916,6 +957,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         result,
         location,
         photoUri,
+        attachments: Object.values(attachments).filter(
+          (attachment): attachment is CapturedAttachment => !!attachment,
+        ),
         originalTestId: isRetest ? lastSavedTestId : null,
       });
 
@@ -1308,23 +1352,49 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             </View>
 
             <View style={styles.evidenceSection}>
-              <Text style={styles.overline}>Evidence Photo (optional)</Text>
-              {photoUri ? (
-                <View style={styles.photoPreview}>
-                  <Image source={{ uri: photoUri }} style={styles.photoImage} />
-                  <Pressable
-                    style={styles.photoRemove}
-                    onPress={() => setPhotoUri(null)}
-                  >
-                    <Feather name="x" size={14} color={colors.background} />
-                  </Pressable>
-                </View>
-              ) : (
-                <Pressable style={styles.photoButton} onPress={takePhoto}>
-                  <Feather name="camera" size={18} color={colors.background} />
-                  <Text style={styles.photoButtonText}>TAKE PHOTO</Text>
-                </Pressable>
-              )}
+              <Text style={styles.overline}>Evidence Bundle (optional)</Text>
+              <Text style={styles.evidenceHint}>
+                Capture up to five categorized photos — each uploads and
+                retries independently after the test syncs.
+              </Text>
+              <View style={styles.attachmentGrid}>
+                {EVIDENCE_CATEGORIES.map((category) => {
+                  const captured = attachments[category];
+                  return (
+                    <View key={category} style={styles.attachmentTile}>
+                      <Text style={styles.attachmentLabel}>
+                        {EVIDENCE_CATEGORY_LABELS[category]}
+                      </Text>
+                      {captured ? (
+                        <View style={styles.attachmentPreview}>
+                          <Image
+                            source={{ uri: captured.uri }}
+                            style={styles.attachmentImage}
+                          />
+                          <Pressable
+                            style={styles.attachmentRemove}
+                            onPress={() => removeAttachment(category)}
+                            accessibilityLabel={`Remove ${EVIDENCE_CATEGORY_LABELS[category]}`}
+                          >
+                            <Feather name="x" size={14} color={colors.background} />
+                          </Pressable>
+                        </View>
+                      ) : (
+                        <Pressable
+                          style={styles.attachmentButton}
+                          onPress={() => captureAttachment(category)}
+                          accessibilityLabel={`Capture ${EVIDENCE_CATEGORY_LABELS[category]}`}
+                        >
+                          <Feather name="camera" size={20} color={colors.primaryDark} />
+                          <Text style={styles.attachmentButtonText}>
+                            CAPTURE
+                          </Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
             </View>
 
             <View style={styles.actionRow}>

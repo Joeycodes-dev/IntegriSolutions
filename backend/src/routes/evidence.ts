@@ -32,6 +32,19 @@ const upload = multer({
 
 const BUCKET = 'evidence';
 
+const EVIDENCE_CATEGORIES = [
+  'licence_front',
+  'breathalyser_screen',
+  'vehicle',
+  'scene_note',
+  'signature_witness'
+] as const;
+
+function normalizeCategory(value: unknown): string {
+  const candidate = typeof value === 'string' ? value.trim() : '';
+  return (EVIDENCE_CATEGORIES as readonly string[]).includes(candidate) ? candidate : 'vehicle';
+}
+
 router.get('/:testId', requireAuth, async (req, res) => {
   const testId = String(req.params.testId);
 
@@ -57,6 +70,7 @@ router.post('/:testId', requireAuth, upload.single('photo'), asyncHandler(async 
   const authReq = req as AuthRequest;
   const testId = String(req.params.testId);
   const notes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
+  const category = normalizeCategory(req.body?.category);
 
   const reqWithFile = req as typeof req & { file?: Express.Multer.File };
   const file = reqWithFile.file;
@@ -76,7 +90,7 @@ router.post('/:testId', requireAuth, upload.single('photo'), asyncHandler(async 
   }
 
   const ext = file.originalname.split('.').pop() || 'jpg';
-  const filePath = `${testId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const filePath = `${testId}/${category}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
   const { error: uploadError } = await serviceSupabase.storage
     .from(BUCKET)
@@ -101,7 +115,8 @@ router.post('/:testId', requireAuth, upload.single('photo'), asyncHandler(async 
       test_id: testId,
       photo_url: photoUrl,
       notes: notes || null,
-      uploaded_by: authReq.userEmail ?? 'unknown'
+      uploaded_by: authReq.userEmail ?? 'unknown',
+      category
     }])
     .select('*');
 
@@ -112,7 +127,7 @@ router.post('/:testId', requireAuth, upload.single('photo'), asyncHandler(async 
 
   await writeAuditLog(
     authReq.userEmail ?? 'unknown',
-    `Uploaded evidence photo for test ${testId}`,
+    `Uploaded ${category} evidence photo for test ${testId}`,
     testId
   );
 

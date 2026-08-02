@@ -503,6 +503,68 @@ export const styles = StyleSheet.create({
   evidenceSection: {
     marginBottom: 20
   },
+  evidenceHint: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.textSecondary
+  },
+  attachmentGrid: {
+    marginTop: 12,
+    gap: 10
+  },
+  attachmentTile: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: colors.background,
+    padding: 10
+  },
+  attachmentLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: 8
+  },
+  attachmentButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.borderHighlight,
+    backgroundColor: colors.surfaceHighlight,
+    borderStyle: 'dashed'
+  },
+  attachmentButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primaryDark,
+    letterSpacing: 0.5
+  },
+  attachmentPreview: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    position: 'relative'
+  },
+  attachmentImage: {
+    width: '100%',
+    height: 140,
+    borderRadius: 14
+  },
+  attachmentRemove: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.overlay,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
   photoButton: {
     marginTop: 12,
     flexDirection: 'row',

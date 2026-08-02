@@ -2,6 +2,13 @@
 -- Supervisors work cases from queues: new → under_review → verified/referred/invalidated → closed.
 -- tests rows stay immutable (WORM); the current case state lives here instead.
 
+-- Existing annotations are the lifecycle history. Expand their legacy check
+-- constraint so new lifecycle actions can be recorded without changing tests.
+ALTER TABLE annotations DROP CONSTRAINT IF EXISTS annotations_status_check;
+ALTER TABLE annotations ADD CONSTRAINT annotations_status_check CHECK (
+  status IN ('pending', 'approved', 'new', 'under_review', 'verified', 'referred', 'invalidated', 'closed')
+);
+
 CREATE TABLE IF NOT EXISTS case_records (
   test_id TEXT PRIMARY KEY REFERENCES tests (id) ON DELETE CASCADE,
   case_status TEXT NOT NULL DEFAULT 'new' CHECK (

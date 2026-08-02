@@ -93,7 +93,7 @@ describe('SupervisorCases', () => {
     expect(screen.getAllByText('Verified').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('filters the queue by case status via the API', async () => {
+  it('filters the queue by case status while keeping global counts loaded', async () => {
     render(<SupervisorCases />);
 
     await waitFor(() => {
@@ -103,7 +103,9 @@ describe('SupervisorCases', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Verified/ }));
 
     await waitFor(() => {
-      expect(api.getCases).toHaveBeenCalledWith('verified');
+      expect(api.getCases).toHaveBeenCalledWith();
+      expect(screen.getByText('Charlie Brown')).toBeInTheDocument();
+      expect(screen.queryByText('Jane Smith')).not.toBeInTheDocument();
     });
   });
 

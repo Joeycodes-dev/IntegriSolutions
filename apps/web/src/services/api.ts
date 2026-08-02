@@ -340,6 +340,7 @@ export interface EvidencePhoto {
   photo_url: string;
   notes: string | null;
   uploaded_by: string;
+  category: string | null;
   created_at: string;
 }
 
