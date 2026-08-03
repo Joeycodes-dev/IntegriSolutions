@@ -3,7 +3,7 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://integriscan-yddjv.ondigitalocean.app/api"
+        "EXPO_PUBLIC_API_BASE_URL": "https://integriscan-backend-seyjs.ondigitalocean.app/api"
       },
       "android": {
         "buildType": "apk"

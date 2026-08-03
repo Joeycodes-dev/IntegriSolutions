@@ -31,6 +31,8 @@ You can build an Android APK that installs directly on devices and does not requ
 
 4. Download and install the APK from the build URL shown in the terminal.
 
+NOTE: Just use: npx eas-cli build --platform android --profile preview --non-interactive --no-wait
+
 Optional local APK build (requires Android SDK, Java, and local native toolchain):
 `npm run apk:local`
 
