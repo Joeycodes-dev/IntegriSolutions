@@ -52,9 +52,9 @@ If Resend is not configured or email delivery fails, the account profile + invit
 
 ## OCR
 
-`POST /api/scan` uses Google Cloud Vision as the primary OCR engine when configured, then falls back to the local Tesseract pipeline if Vision is unavailable, times out, errors, or returns low-confidence structured fields.
+`POST /api/scan` currently uses the local Tesseract pipeline as the primary OCR engine. Google Cloud Vision remains available in the route but is temporarily disabled while its billing account is repaired.
 
-Configure one of the following:
+When re-enabling Google Vision, configure one of the following:
 
 - `GOOGLE_APPLICATION_CREDENTIALS` + `GOOGLE_CLOUD_PROJECT_ID` for a service-account JSON file.
 - `GOOGLE_CLOUD_VISION_CREDENTIALS_BASE64` for base64-encoded service-account JSON in hosted environments that reject raw JSON values.
@@ -62,4 +62,4 @@ Configure one of the following:
 - `GOOGLE_CLOUD_CLIENT_EMAIL`, `GOOGLE_CLOUD_PRIVATE_KEY`, and `GOOGLE_CLOUD_PROJECT_ID` for split service-account values.
 - `GOOGLE_CLOUD_VISION_API_KEY` for API-key mode.
 
-If none are set, scanning continues with Tesseract only.
+When Google Vision is re-enabled, the configured credentials will restore the Vision-first scan flow with Tesseract fallback.

@@ -81,6 +81,30 @@ describe('testLocation helpers', () => {
     });
   });
 
+  it('leaves roadblock metadata empty for individual tests', () => {
+    const location = buildTestLocation({
+      lat: -26.1,
+      lng: 28.05,
+      roadblock: '',
+      station: '',
+      roadblockShift: null,
+      officerRank: '',
+      serviceNumber: 'SAP123',
+      officerNotes: '',
+      driverCategory: DRIVER_CATEGORIES[0]
+    });
+
+    expect(location).toMatchObject({
+      lat: -26.1,
+      lng: 28.05,
+      serviceNumber: 'SAP123'
+    });
+    expect(location.roadblockId).toBeUndefined();
+    expect(location.roadblock).toBeUndefined();
+    expect(location.station).toBeUndefined();
+    expect(location.label).toBeUndefined();
+  });
+
   it('snapshots the effective BAC policy for the captured record', () => {
     const location = buildTestLocation({
       lat: -26.1,

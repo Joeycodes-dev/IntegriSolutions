@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Search } from 'lucide-react';
 import type { CaseRecord, CaseStatus, TestRecord } from '../../types';
 import { getCases } from '../../services/api';
-import { formatReferenceId, parseTestLocation } from '../../lib/testEvidence';
+import { formatCaptureContext, formatReferenceId } from '../../lib/testEvidence';
 import { CASE_STATUSES, CASE_STATUS_LABELS, CASE_STATUS_STYLES, formatCaseTimestamp } from '../../lib/caseStatus';
 import { BORDER, NAVY, PAGE_BG, pageContent, pageShell } from './supervisorStyles';
 import { EvidenceReview } from './EvidenceReview';
@@ -26,9 +26,8 @@ function formatTimestamp(iso: string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function roadblockLabel(location: string | Record<string, unknown> | undefined): string {
-  const parsed = parseTestLocation(location);
-  return parsed.roadblock || parsed.station || parsed.label || '—';
+function captureContextLabel(location: string | Record<string, unknown> | undefined): string {
+  return formatCaptureContext(location);
 }
 
 export function SupervisorCases() {
@@ -177,7 +176,7 @@ export function SupervisorCases() {
               <table className="min-w-full text-left">
                 <thead>
                   <tr className="border-b" style={{ borderColor: BORDER }}>
-                    {['CASE ID', 'DRIVER', 'OFFICER', 'RESULT', 'READING', 'ROADBLOCK', 'CAPTURED', 'STATUS', 'LAST UPDATE'].map((col) => (
+                    {['CASE ID', 'DRIVER', 'OFFICER', 'RESULT', 'READING', 'CAPTURE CONTEXT', 'CAPTURED', 'STATUS', 'LAST UPDATE'].map((col) => (
                       <th
                         key={col}
                         className="px-4 py-2.5 text-[10px] font-bold tracking-[0.1em] text-slate-500"
@@ -226,8 +225,8 @@ export function SupervisorCases() {
                         {entry.bacReading.toFixed(2)}
                       </td>
                       <td className="max-w-[180px] px-4 py-2.5">
-                        <p className="truncate text-[0.75rem] text-slate-600" title={roadblockLabel(entry.location)}>
-                          {roadblockLabel(entry.location)}
+                        <p className="truncate text-[0.75rem] text-slate-600" title={captureContextLabel(entry.location)}>
+                          {captureContextLabel(entry.location)}
                         </p>
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5 text-[0.75rem] text-slate-600">

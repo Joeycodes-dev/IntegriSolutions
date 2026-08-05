@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Filter, Search, ShieldAlert, X } from 'lucide-react';
 import type { TestRecord } from '../../types';
 import { getTests, type TestFilters } from '../../services/api';
-import { parseTestLocation } from '../../lib/testEvidence';
+import {
+  INDIVIDUAL_TEST_LABEL,
+  NO_ROADBLOCK_LINK_LABEL,
+  parseTestLocation
+} from '../../lib/testEvidence';
 import { collectRoadblockOptions, getTestRoadblockContext } from '../../lib/reportAnalytics';
 import { BORDER, NAVY, PAGE_BG, pageContent, pageShell } from './supervisorStyles';
 
@@ -10,7 +14,6 @@ interface SupervisorLogsProps {
   tests: TestRecord[];
   loading: boolean;
   error: string | null;
-  onSelectTest: (test: TestRecord) => void;
 }
 
 function formatTimestamp(iso: string): string {
@@ -48,7 +51,7 @@ const RESULT_OPTIONS = [
 
 const PAGE_SIZE = 10;
 
-export function SupervisorLogs({ tests, loading: _loading, error: _error, onSelectTest }: SupervisorLogsProps) {
+export function SupervisorLogs({ tests, loading: _loading, error: _error }: SupervisorLogsProps) {
   const [search, setSearch] = useState('');
   const [resultFilter, setResultFilter] = useState<'' | 'pass' | 'fail'>('');
   const [officerFilter, setOfficerFilter] = useState('');
@@ -153,7 +156,7 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
             Live Test Logs
           </h1>
           <p className="mt-0.5 text-[0.75rem] text-slate-500">
-            Search and inspect every recorded test event
+            View-only register of every recorded test event
           </p>
         </div>
 
@@ -245,16 +248,16 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
             </div>
 
             <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold tracking-[0.1em] text-slate-500">ROADBLOCK</span>
+              <span className="text-[10px] font-bold tracking-[0.1em] text-slate-500">CAPTURE CONTEXT</span>
               <div className="relative">
                 <select
-                  aria-label="Roadblock filter"
+                  aria-label="Capture context filter"
                   value={roadblockFilter}
                   onChange={(e) => setRoadblockFilter(e.target.value)}
                   className="h-[30px] min-w-[220px] appearance-none rounded-md border bg-white pl-2.5 pr-7 text-[0.75rem] text-slate-800 outline-none transition focus:border-[#0D2137]/35 focus:ring-1 focus:ring-[#0D2137]/10"
                   style={{ borderColor: BORDER }}
                 >
-                  <option value="">All Roadblocks</option>
+                  <option value="">All Capture Contexts</option>
                   {roadblockOptions.map((option) => (
                     <option key={option.key} value={option.key}>
                       {option.name}{option.station !== '—' ? ` · ${option.station}` : ''}
@@ -317,7 +320,7 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
               <table className="min-w-full text-left">
                 <thead>
                   <tr className="border-b" style={{ borderColor: BORDER }}>
-                    {['TIMESTAMP', 'OFFICER', 'ROADBLOCK', 'DRIVER LICENCE', 'RESULT', 'READING', 'GPS', 'INTEGRITY'].map((col) => (
+                    {['TIMESTAMP', 'OFFICER', 'CAPTURE CONTEXT', 'DRIVER LICENCE', 'RESULT', 'READING', 'GPS', 'INTEGRITY'].map((col) => (
                       <th
                         key={col}
                         className="px-4 py-2.5 text-[10px] font-bold tracking-[0.1em] text-slate-500"
@@ -337,23 +340,15 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
                   ) : (
                     paginatedTests.map((test) => {
                       const failed = test.result === 'fail';
-                      const roadblock = getTestRoadblockContext(test);
-                      const roadblockName = roadblock.name === 'Unspecified' ? 'Not linked' : roadblock.name;
+                      const captureContext = getTestRoadblockContext(test);
+                      const captureName = captureContext.captureType === 'individual'
+                        ? INDIVIDUAL_TEST_LABEL
+                        : captureContext.name;
+                      const captureDetails = captureContext.captureType === 'individual'
+                        ? `${captureContext.station !== '—' ? `Station ${captureContext.station} · ` : ''}${NO_ROADBLOCK_LINK_LABEL}`
+                        : `${captureContext.station !== '—' ? `${captureContext.station} · ` : ''}ID ${captureContext.roadblockId ?? '—'}`;
                       return (
-                        <tr
-                          key={test.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => onSelectTest(test)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              onSelectTest(test);
-                            }
-                          }}
-                          className="cursor-pointer border-b transition last:border-b-0 hover:bg-slate-50"
-                          style={{ borderColor: BORDER }}
-                        >
+                        <tr key={test.id} className="border-b last:border-b-0" style={{ borderColor: BORDER }}>
                           <td className="whitespace-nowrap px-4 py-2.5 text-[0.8125rem] text-slate-700">
                             {formatTimestamp(test.createdAt)}
                           </td>
@@ -361,12 +356,11 @@ export function SupervisorLogs({ tests, loading: _loading, error: _error, onSele
                             {formatOfficerName(test.officerName)}
                           </td>
                           <td className="min-w-[190px] px-4 py-2.5">
-                            <p className="max-w-[220px] truncate text-[0.8125rem] font-semibold text-slate-800" title={roadblockName}>
-                              {roadblockName}
+                            <p className="max-w-[220px] truncate text-[0.8125rem] font-semibold text-slate-800" title={captureName}>
+                              {captureName}
                             </p>
-                            <p className="mt-0.5 truncate text-[10px] text-slate-500" title={roadblock.roadblockId ?? undefined}>
-                              {roadblock.station !== '—' ? `${roadblock.station} · ` : ''}
-                              <span className="font-mono">ID {roadblock.roadblockId ?? '—'}</span>
+                            <p className="mt-0.5 truncate text-[10px] text-slate-500" title={captureDetails}>
+                              {captureDetails}
                             </p>
                           </td>
                           <td className="px-4 py-2.5 font-mono text-[0.8125rem] text-slate-700">

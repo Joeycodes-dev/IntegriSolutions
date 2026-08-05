@@ -8,6 +8,8 @@ import {
   dataSpanDateRange,
   filterTestsForReport,
   generateInsights,
+  getTestRoadblockContext,
+  INDIVIDUAL_TESTS_KEY,
   niceTicks,
   parseLocalDate,
   weekdayIndex
@@ -127,6 +129,45 @@ describe('reportAnalytics', () => {
       officerCount: 2
     });
     expect(options.map((option) => option.key)).toEqual(['shift-1', 'shift-2']);
+  });
+
+  it('separates individual tests from roadblock contexts', () => {
+    const individual: TestRecord = {
+      ...sample[0],
+      id: 'individual-1',
+      location: JSON.stringify({ station: 'Midrand SAPS' })
+    };
+
+    const context = getTestRoadblockContext(individual);
+    const stats = buildRoadblockStats([individual]);
+    const options = collectRoadblockOptions([individual]);
+    const filtered = filterTestsForReport([individual], {
+      from: '2026-05-12',
+      to: '2026-05-12',
+      result: 'all',
+      roadblock: INDIVIDUAL_TESTS_KEY
+    });
+
+    expect(context).toMatchObject({
+      key: INDIVIDUAL_TESTS_KEY,
+      captureType: 'individual',
+      name: 'Individual tests',
+      station: 'Midrand SAPS',
+      roadblockId: null
+    });
+    expect(stats[0]).toMatchObject({
+      captureType: 'individual',
+      name: 'Individual tests',
+      roadblockId: null
+    });
+    expect(options).toEqual([
+      expect.objectContaining({
+        key: INDIVIDUAL_TESTS_KEY,
+        name: 'Individual tests',
+        station: 'All stations'
+      })
+    ]);
+    expect(filtered).toEqual([individual]);
   });
 
   it('builds weekly trend buckets', () => {

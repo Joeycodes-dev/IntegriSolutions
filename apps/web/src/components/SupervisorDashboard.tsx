@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { useSupervisorTests } from '../hooks/useSupervisorTests';
-import type { SupervisorNavItem, TestRecord } from '../types';
+import type { SupervisorNavItem } from '../types';
 import { SupervisorSidebar } from './supervisor/SupervisorSidebar';
 import { SupervisorOverview } from './supervisor/SupervisorOverview';
 import { SupervisorLogs } from './supervisor/SupervisorLogs';
@@ -9,17 +9,14 @@ import { SupervisorOfficers } from './supervisor/SupervisorOfficers';
 import { SupervisorReports } from './supervisor/SupervisorReports';
 import { SupervisorShifts } from './supervisor/SupervisorShifts';
 import { SupervisorCases } from './supervisor/SupervisorCases';
-import { EvidenceReview } from './supervisor/EvidenceReview';
 
 export function SupervisorDashboard() {
   const { signOut } = useAuth();
   const [activeNav, setActiveNav] = useState<SupervisorNavItem>('dashboard');
-  const [selectedTest, setSelectedTest] = useState<TestRecord | null>(null);
   const { tests, loading, error, metrics, streamConnected, lastEventAt } = useSupervisorTests();
 
   const handleNavigate = (item: SupervisorNavItem) => {
     setActiveNav(item);
-    setSelectedTest(null);
   };
 
   return (
@@ -41,15 +38,11 @@ export function SupervisorDashboard() {
           tests={tests}
         />
       )}
-      {activeNav === 'logs' && selectedTest && (
-        <EvidenceReview test={selectedTest} onBack={() => setSelectedTest(null)} />
-      )}
-      {activeNav === 'logs' && !selectedTest && (
+      {activeNav === 'logs' && (
         <SupervisorLogs
           tests={tests}
           loading={loading}
           error={error}
-          onSelectTest={setSelectedTest}
         />
       )}
       {activeNav === 'cases' && <SupervisorCases />}

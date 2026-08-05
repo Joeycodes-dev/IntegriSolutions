@@ -1,4 +1,10 @@
-import { parseTestLocation } from './testEvidence';
+import {
+  getTestCaptureType,
+  INDIVIDUAL_TESTS_LABEL,
+  ROADBLOCK_TEST_LABEL,
+  parseTestLocation,
+  type TestCaptureType
+} from './testEvidence';
 import type { TestRecord } from '../types';
 
 export type ReportResultFilter = 'all' | 'pass' | 'fail';
@@ -12,6 +18,7 @@ export interface ReportFilters {
 
 export interface TestRoadblockContext {
   key: string;
+  captureType: TestCaptureType;
   roadblockId: string | null;
   name: string;
   station: string;
@@ -26,6 +33,8 @@ export interface RoadblockOption {
   name: string;
   station: string;
 }
+
+export const INDIVIDUAL_TESTS_KEY = 'individual-tests';
 
 export const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 
@@ -102,12 +111,18 @@ function firstText(...values: unknown[]): string | null {
 export function getTestRoadblockContext(test: TestRecord): TestRoadblockContext {
   const parsed = parseTestLocation(test.location);
   const merged = { ...parsed, ...test.evidence };
+  const captureType = getTestCaptureType(test);
   const roadblockId = firstText(merged.roadblockId);
-  const name = firstText(merged.roadblock, merged.station, merged.label, merged.locationLabel) ?? 'Unspecified';
+  const name = captureType === 'individual'
+    ? INDIVIDUAL_TESTS_LABEL
+    : firstText(merged.roadblock) ?? ROADBLOCK_TEST_LABEL;
   const station = firstText(merged.station) ?? '—';
 
   return {
-    key: roadblockId ?? `legacy:${name.toLowerCase()}|${station.toLowerCase()}`,
+    key: captureType === 'individual'
+      ? INDIVIDUAL_TESTS_KEY
+      : roadblockId ?? `legacy:${name.toLowerCase()}|${station.toLowerCase()}`,
+    captureType,
     roadblockId,
     name,
     station,
@@ -134,7 +149,7 @@ export function collectRoadblockOptions(tests: TestRecord[]): RoadblockOption[] 
         key: context.key,
         roadblockId: context.roadblockId,
         name: context.name,
-        station: context.station
+        station: context.captureType === 'individual' ? 'All stations' : context.station
       });
     }
   }
@@ -388,6 +403,7 @@ export function buildPeriodDelta(current: TestRecord[], previous: TestRecord[]):
 
 export interface RoadblockStat {
   key: string;
+  captureType: TestCaptureType;
   roadblockId: string | null;
   name: string;
   station: string;
@@ -442,6 +458,7 @@ export function buildRoadblockStats(tests: TestRecord[]): RoadblockStat[] {
   return Array.from(map.entries())
     .map(([key, bucket]) => ({
       key,
+      captureType: bucket.context.captureType,
       roadblockId: bucket.context.roadblockId,
       name: bucket.context.name,
       station: bucket.context.station,
@@ -656,7 +673,9 @@ export function generateInsights(
     });
   }
 
-  const riskiest = roadblocks.find((r) => r.total >= thresholds.roadblockMinimumTests && r.failed > 0);
+  const riskiest = roadblocks.find(
+    (r) => r.captureType === 'roadblock' && r.total >= thresholds.roadblockMinimumTests && r.failed > 0
+  );
   if (riskiest) {
     insights.push({
       tone: 'warning',

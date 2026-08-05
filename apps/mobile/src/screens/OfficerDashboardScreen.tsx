@@ -945,14 +945,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
     setIsSaving(true);
     try {
-      const selectedShift = await getSelectedRoadblockShift();
-      if (!isRoadblockShiftActive(selectedShift)) {
-        Alert.alert(
-          "Select roadblock shift",
-          "Open Shifts and select an active roadblock before saving this test.",
-        );
-        return;
-      }
+      const storedShift = await getSelectedRoadblockShift();
+      const selectedShift = isRoadblockShiftActive(storedShift)
+        ? storedShift
+        : null;
 
       const currentLocation = await getDeviceLocation();
       const categoryKey = deriveDriverCategory(scannedData.licenseCodes);
@@ -967,8 +963,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       const location = buildTestLocation({
         lat: currentLocation.lat,
         lng: currentLocation.lng,
-        roadblock: selectedShift.roadblockName,
-        station: selectedShift.station || stationFromProfileRegion(profile.region),
+        roadblock: selectedShift?.roadblockName ?? "",
+        station:
+          selectedShift?.station || stationFromProfileRegion(profile.region),
         roadblockShift: selectedShift,
         officerRank: "",
         serviceNumber: profile.badgeNumber,

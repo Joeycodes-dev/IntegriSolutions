@@ -106,7 +106,7 @@ describe('SupervisorDashboard', () => {
     expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('shows logs view with test records when navigating', async () => {
+  it('shows logs as a read-only view when navigating', async () => {
     vi.spyOn(api, 'getTests').mockResolvedValue([
       {
         id: 'test-1',
@@ -135,12 +135,8 @@ describe('SupervisorDashboard', () => {
     expect(row).toBeTruthy();
     fireEvent.click(row!);
 
-    await waitFor(() => {
-      expect(screen.getByText('Evidence Review')).toBeInTheDocument();
-    });
-
-    expect(screen.getByText('Driver & Incident Details')).toBeInTheDocument();
-    expect(screen.getByText('Generate Court PDF')).toBeInTheDocument();
+    expect(row).not.toHaveAttribute('role', 'button');
+    expect(screen.queryByText('Evidence Review')).not.toBeInTheDocument();
   });
 
   it('shows reports view with filters and charts', async () => {
@@ -176,7 +172,7 @@ describe('SupervisorDashboard', () => {
     expect(screen.getByText('Filters')).toBeInTheDocument();
     expect(screen.getByText(/DUI Trends/i)).toBeInTheDocument();
     expect(screen.getByText('Result Breakdown')).toBeInTheDocument();
-    expect(screen.getByText('Roadblock Accountability')).toBeInTheDocument();
+    expect(screen.getByText('Capture Context Accountability')).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText(/Showing \d+ of \d+ record/i)).toBeInTheDocument();

@@ -234,7 +234,7 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
               <DetailField label="SERVICE NO" value={evidence.serviceNumber} />
               <DetailField label="RANK" value={evidence.rank} />
               <DetailField label="STATION" value={evidence.station} />
-              <DetailField label="ROADBLOCK ID" value={evidence.roadblockId} />
+              <DetailField label="ROADBLOCK LINK" value={evidence.roadblockId} />
               <DetailField label="SUPERVISOR" value={evidence.supervisor} />
             </div>
           </section>
@@ -316,7 +316,7 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
                 <p className="mt-0.5 font-semibold text-slate-800">{evidence.timestamp}</p>
               </div>
               <div>
-                <p className="text-[9px] font-bold tracking-[0.1em] text-slate-500">ROADBLOCK</p>
+                <p className="text-[9px] font-bold tracking-[0.1em] text-slate-500">CAPTURE CONTEXT</p>
                 <p className="mt-0.5 font-semibold text-slate-800">{evidence.roadblock}</p>
               </div>
               <div>

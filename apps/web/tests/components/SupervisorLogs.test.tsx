@@ -73,8 +73,6 @@ vi.mock('../../src/services/api', () => ({
 }));
 
 describe('SupervisorLogs', () => {
-  const mockOnSelectTest = vi.fn();
-
   beforeEach(() => {
     vi.clearAllMocks();
     (api.getTests as any).mockResolvedValue(mockTests);
@@ -91,7 +89,6 @@ describe('SupervisorLogs', () => {
         tests={mockTests}
         loading={false}
         error={null}
-        onSelectTest={mockOnSelectTest}
       />
     );
 
@@ -111,7 +108,6 @@ describe('SupervisorLogs', () => {
         tests={mockTests}
         loading={false}
         error={null}
-        onSelectTest={mockOnSelectTest}
       />
     );
 
@@ -130,18 +126,22 @@ describe('SupervisorLogs', () => {
         tests={mockTests}
         loading={false}
         error={null}
-        onSelectTest={mockOnSelectTest}
       />
     );
 
     vi.advanceTimersByTime(400);
 
     await waitFor(() => {
-      expect(screen.getByText('ROADBLOCK')).toBeInTheDocument();
+      expect(screen.getByText('CAPTURE CONTEXT')).toBeInTheDocument();
       expect(screen.getByText('N1 Midrand Roadblock')).toBeInTheDocument();
       const row = screen.getByText('N1 Midrand Roadblock').closest('tr');
       expect(row?.textContent).toContain('Midrand SAPS');
       expect(row?.textContent).toContain('ID shift-123');
+      const individualLabels = screen.getAllByText('Individual test');
+      expect(individualLabels).toHaveLength(2);
+      individualLabels.forEach((label) => {
+        expect(label.closest('tr')?.textContent).toContain('No roadblock linked');
+      });
     });
   });
 
@@ -151,7 +151,6 @@ describe('SupervisorLogs', () => {
         tests={mockTests}
         loading={false}
         error={null}
-        onSelectTest={mockOnSelectTest}
       />
     );
 
@@ -173,7 +172,6 @@ describe('SupervisorLogs', () => {
         tests={mockTests}
         loading={false}
         error={null}
-        onSelectTest={mockOnSelectTest}
       />
     );
 
@@ -197,7 +195,6 @@ describe('SupervisorLogs', () => {
         tests={mockTests}
         loading={false}
         error={null}
-        onSelectTest={mockOnSelectTest}
       />
     );
 
@@ -217,19 +214,18 @@ describe('SupervisorLogs', () => {
     });
   });
 
-  it('filters visible logs by roadblock assignment', async () => {
+  it('filters visible logs by capture context', async () => {
     render(
       <SupervisorLogs
         tests={mockTests}
         loading={false}
         error={null}
-        onSelectTest={mockOnSelectTest}
       />
     );
 
     vi.advanceTimersByTime(400);
     fireEvent.click(screen.getByRole('button', { name: /Filters/i }));
-    fireEvent.change(screen.getByLabelText('Roadblock filter'), { target: { value: 'shift-123' } });
+    fireEvent.change(screen.getByLabelText('Capture context filter'), { target: { value: 'shift-123' } });
 
     await waitFor(() => {
       expect(screen.getByText('Showing 1-1 of 1 logs')).toBeInTheDocument();
@@ -238,13 +234,12 @@ describe('SupervisorLogs', () => {
     });
   });
 
-  it('calls onSelectTest when a row is clicked', async () => {
+  it('keeps log rows read only', async () => {
     render(
       <SupervisorLogs
         tests={mockTests}
         loading={false}
         error={null}
-        onSelectTest={mockOnSelectTest}
       />
     );
 
@@ -257,7 +252,8 @@ describe('SupervisorLogs', () => {
     const row = screen.getByText('9876543210123').closest('tr');
     fireEvent.click(row!);
 
-    expect(mockOnSelectTest).toHaveBeenCalledWith(mockTests[0]);
+    expect(row).not.toHaveAttribute('role', 'button');
+    expect(screen.queryByText('Evidence Review')).not.toBeInTheDocument();
   });
 
   it('paginates logs and navigates between pages', async () => {
@@ -269,7 +265,6 @@ describe('SupervisorLogs', () => {
         tests={manyLogs}
         loading={false}
         error={null}
-        onSelectTest={mockOnSelectTest}
       />
     );
 
@@ -301,7 +296,6 @@ describe('SupervisorLogs', () => {
         tests={[]}
         loading={true}
         error={null}
-        onSelectTest={mockOnSelectTest}
       />
     );
 
@@ -316,7 +310,6 @@ describe('SupervisorLogs', () => {
         tests={[]}
         loading={false}
         error={null}
-        onSelectTest={mockOnSelectTest}
       />
     );
 

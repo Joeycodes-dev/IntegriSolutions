@@ -89,6 +89,22 @@ describe('buildTestEvidence', () => {
     expect(evidence.shiftWindow).toContain('2026-07-31');
     expect(evidence.bounds).toBe('-26.1500, 28.2000 within 500m');
   });
+
+  it('labels an individual test without a roadblock link', () => {
+    const evidence = buildTestEvidence({
+      ...baseTest,
+      location: JSON.stringify({
+        lat: -26.2041,
+        lng: 28.0473,
+        station: 'Midrand SAPS'
+      })
+    });
+
+    expect(evidence.roadblock).toBe('Individual test (no roadblock)');
+    expect(evidence.roadblockId).toBe('No roadblock linked');
+    expect(evidence.station).toBe('Midrand SAPS');
+    expect(evidence.locationLabel).toBe('Midrand SAPS');
+  });
 });
 
 describe('resolveEvidencePhotoUrls', () => {

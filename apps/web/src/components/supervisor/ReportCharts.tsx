@@ -269,12 +269,12 @@ interface RoadblockBarChartProps {
 export function RoadblockBarChart({ stats, maxRows = 6 }: RoadblockBarChartProps) {
   const rows = stats.slice(0, maxRows);
   if (rows.length === 0) {
-    return <p className="w-full py-8 text-center text-[0.75rem] text-slate-400">No roadblock data in this range</p>;
+    return <p className="w-full py-8 text-center text-[0.75rem] text-slate-400">No capture context data in this range</p>;
   }
   const maxFailed = Math.max(1, ...rows.map((r) => r.failed));
 
   return (
-    <div className="flex w-full flex-col gap-2" role="img" aria-label="Failures by roadblock bar chart">
+    <div className="flex w-full flex-col gap-2" role="img" aria-label="Failures by capture context bar chart">
       {rows.map((row) => {
         const widthPct = Math.max(row.failed > 0 ? 4 : 0, (row.failed / maxFailed) * 100);
         return (
@@ -300,28 +300,29 @@ export function RoadblockBarChart({ stats, maxRows = 6 }: RoadblockBarChartProps
         );
       })}
       <p className="mt-1 text-[0.625rem] text-slate-400">
-        Failed / total tests and failure rate per checkpoint, ranked by failures.
+        Failed / total tests and failure rate per roadblock or individual capture, ranked by failures.
       </p>
     </div>
   );
 }
 
 function formatRoadblockWindow(row: RoadblockStat): string {
+  if (row.captureType === 'individual') return 'Not applicable';
   if (!row.shiftStartsAt || !row.shiftEndsAt) return 'Not recorded';
   return `${formatEvidenceTimestamp(row.shiftStartsAt)} - ${formatEvidenceTimestamp(row.shiftEndsAt)}`;
 }
 
 export function RoadblockPerformanceTable({ stats }: { stats: RoadblockStat[] }) {
   if (stats.length === 0) {
-    return <p className="py-8 text-center text-[0.75rem] text-slate-400">No roadblock data in this range</p>;
+    return <p className="py-8 text-center text-[0.75rem] text-slate-400">No capture context data in this range</p>;
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="min-w-[850px] w-full text-left" aria-label="Roadblock accountability report">
+      <table className="min-w-[850px] w-full text-left" aria-label="Capture context accountability report">
         <thead>
           <tr className="border-b" style={{ borderColor: '#E2E8F0' }}>
-            {['ROADBLOCK / ID', 'STATION / SUPERVISOR', 'TESTS', 'FAILURES', 'FAILURE RATE', 'OFFICERS', 'AVG BAC', 'SHIFT WINDOW'].map((column) => (
+            {['CAPTURE CONTEXT / ID', 'STATION / SUPERVISOR', 'TESTS', 'FAILURES', 'FAILURE RATE', 'OFFICERS', 'AVG BAC', 'SHIFT WINDOW'].map((column) => (
               <th key={column} className="px-3 py-2 text-[9px] font-bold tracking-[0.1em] text-slate-500">
                 {column}
               </th>
@@ -334,7 +335,7 @@ export function RoadblockPerformanceTable({ stats }: { stats: RoadblockStat[] })
               <td className="max-w-[190px] px-3 py-2.5">
                 <p className="truncate text-[0.75rem] font-bold text-slate-800" title={row.name}>{row.name}</p>
                 <p className="mt-0.5 truncate font-mono text-[10px] text-slate-500" title={row.roadblockId ?? undefined}>
-                  {row.roadblockId ?? 'No shift ID'}
+                  {row.captureType === 'individual' ? 'No roadblock linked' : row.roadblockId ?? 'No shift ID'}
                 </p>
               </td>
               <td className="max-w-[180px] px-3 py-2.5">

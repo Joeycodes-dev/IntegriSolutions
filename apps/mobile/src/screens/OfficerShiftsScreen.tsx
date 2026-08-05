@@ -198,7 +198,7 @@ export function OfficerShiftsScreen({ navigation }: Props) {
           <Text style={styles.currentText}>
             {selectedShift
               ? `${selectedShift.station} - ${formatDateTime(selectedShift.startsAt)} to ${formatDateTime(selectedShift.endsAt)}`
-              : 'Select an active roadblock before capturing a roadside test.'}
+              : 'Individual tests can be captured without a roadblock. Select an active roadblock only when this test is part of that operation.'}
           </Text>
           {selectedShift && (
             <Pressable style={styles.clearButton} onPress={() => void handleClear()}>
@@ -251,7 +251,7 @@ export function OfficerShiftsScreen({ navigation }: Props) {
           <View style={styles.emptyCard}>
             <Feather name="map" size={42} color="#cbd5e1" />
             <Text style={styles.emptyTitle}>No Active Assignments</Text>
-            <Text style={styles.emptyText}>Ask your supervisor to assign you to a current roadblock shift.</Text>
+            <Text style={styles.emptyText}>You can still capture individual tests without an active roadblock assignment.</Text>
           </View>
         ) : (
           <FlatList

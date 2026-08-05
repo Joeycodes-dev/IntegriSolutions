@@ -936,9 +936,7 @@ async function runTesseractScan(
 
   const local = buildFastLocalResult(passes);
   const reason = fallbackReason ?? (timedPasses
-    ? (retryMode
-      ? 'Retry mode enabled stronger local preprocessing only.'
-      : 'Tesseract fast mode used without Google Vision configuration.')
+    ? (retryMode ? 'Retry mode enabled stronger local preprocessing only.' : null)
     : (highlightPasses
       ? 'Tesseract primary OCR timed out; used highlighted-values fallback.'
       : 'Tesseract primary OCR timed out; used emergency night pass fallback.'));
@@ -962,6 +960,10 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
 
   let visionFailure: string | null = null;
   let visionAttempt: ScanAttempt | null = null;
+
+  // Google Vision is temporarily disabled while the billing account is repaired.
+  // Restore this block when Google Vision is ready to be used again.
+  /*
   if (!highlightOnly) {
     try {
       visionAttempt = await runVisionScan(base64Image, retryMode);
@@ -976,6 +978,7 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
       console.warn('[scan] Google Vision OCR failed; falling back to Tesseract:', visionFailure);
     }
   }
+  */
 
   const tesseractAttempt = await runTesseractScan(
     base64Image,
@@ -992,10 +995,11 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
   }
 
   if (!tesseractAttempt.valid) {
+    const candidateVisionAttempt = visionAttempt as ScanAttempt | null;
     return res.status(422).json({
       error: 'Low confidence capture. Retake in good light, avoid glare, and fill the frame with the card.',
-      partial: visionAttempt && visionAttempt.response._ocr.overallConfidence > tesseractAttempt.response._ocr.overallConfidence
-        ? visionAttempt.response
+      partial: candidateVisionAttempt && candidateVisionAttempt.response._ocr.overallConfidence > tesseractAttempt.response._ocr.overallConfidence
+        ? candidateVisionAttempt.response
         : tesseractAttempt.response
     });
   }

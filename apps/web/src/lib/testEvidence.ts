@@ -1,5 +1,12 @@
 import type { TestEvidence, TestRecord } from '../types';
 
+export type TestCaptureType = 'roadblock' | 'individual';
+
+export const INDIVIDUAL_TEST_LABEL = 'Individual test';
+export const INDIVIDUAL_TESTS_LABEL = 'Individual tests';
+export const ROADBLOCK_TEST_LABEL = 'Roadblock test';
+export const NO_ROADBLOCK_LINK_LABEL = 'No roadblock linked';
+
 export interface ParsedLocation {
   lat?: number;
   lng?: number;
@@ -25,6 +32,16 @@ export interface ParsedLocation {
   bacLimitG100ml?: number;
   bacLimitMg1000ml?: number;
   settingsRevision?: number;
+}
+
+type LocationInput = string | Record<string, unknown> | null | undefined;
+
+function hasText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function getCaptureType(fields: Pick<ParsedLocation, 'roadblockId' | 'roadblock'>): TestCaptureType {
+  return hasText(fields.roadblockId) || hasText(fields.roadblock) ? 'roadblock' : 'individual';
 }
 
 function extractLocationBounds(parsed: Record<string, unknown>): ParsedLocation['locationBounds'] {
@@ -106,6 +123,23 @@ export function parseTestLocation(location?: string | Record<string, unknown> | 
   return { label: trimmed };
 }
 
+export function getTestCaptureType(test: TestRecord): TestCaptureType {
+  const parsed = parseTestLocation(test.location);
+  return getCaptureType({ ...parsed, ...test.evidence });
+}
+
+export function formatCaptureContext(location: LocationInput, evidence?: TestRecord['evidence']): string {
+  const parsed = parseTestLocation(location);
+  const merged = { ...parsed, ...evidence };
+  if (getCaptureType(merged) === 'roadblock') {
+    return hasText(merged.roadblock) ? merged.roadblock.trim() : ROADBLOCK_TEST_LABEL;
+  }
+
+  return hasText(merged.station)
+    ? `${INDIVIDUAL_TEST_LABEL} - ${merged.station.trim()}`
+    : INDIVIDUAL_TEST_LABEL;
+}
+
 export function formatReferenceId(testId: string): string {
   const compact = testId.replace(/-/g, '').toUpperCase();
   const mid = compact.slice(0, 10) || 'UNKNOWN';
@@ -168,9 +202,12 @@ export function formatOfficerDisplay(name: string, rank?: string): string {
 export function buildTestEvidence(test: TestRecord): TestEvidence {
   const parsed = parseTestLocation(test.location);
   const merged = { ...parsed, ...test.evidence };
+  const captureType = getTestCaptureType(test);
 
   const station = merged.station?.trim() || merged.roadblock?.trim() || '—';
-  const roadblock = merged.roadblock?.trim() || merged.station?.trim() || '—';
+  const roadblock = captureType === 'roadblock'
+    ? merged.roadblock?.trim() || ROADBLOCK_TEST_LABEL
+    : `${INDIVIDUAL_TEST_LABEL} (no roadblock)`;
   const limit = merged.driverCategory?.includes('0.02') ? 0.02 : 0.05;
   const bounds = merged.locationBounds;
 
@@ -187,7 +224,7 @@ export function buildTestEvidence(test: TestRecord): TestEvidence {
     rank: merged.officerRank ?? 'Constable',
     station,
     timestamp: formatEvidenceTimestamp(test.createdAt),
-    roadblockId: merged.roadblockId ?? 'Not linked',
+    roadblockId: merged.roadblockId?.trim() || (captureType === 'roadblock' ? 'No shift ID' : NO_ROADBLOCK_LINK_LABEL),
     roadblock,
     locationLabel:
       merged.label?.trim() ||

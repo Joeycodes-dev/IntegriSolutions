@@ -241,7 +241,7 @@ async function renderEvidencePage(
   y = await ensureSpace(y, 42);
   y = sectionTitle(doc, y, 'Test Results');
   yLeft = fieldBlock(doc, leftX, y, COL_W, 'Timestamp', evidence.timestamp);
-  yRight = fieldBlock(doc, rightX, y, COL_W, 'Roadblock', evidence.roadblock);
+  yRight = fieldBlock(doc, rightX, y, COL_W, 'Capture context', evidence.roadblock);
   y = Math.max(yLeft, yRight) + 2;
   yLeft = fieldBlock(doc, leftX, y, COL_W, 'Result', resultLabel, { valueColor: resultColor });
   yRight = fieldBlock(doc, rightX, y, COL_W, 'Reading', evidence.reading);

@@ -424,11 +424,11 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
               <option value="fail">Failed</option>
             </SelectField>
             <SelectField
-              label="Roadblock"
+              label="Capture context"
               value={filters.roadblock}
               onChange={(v) => updateFilter('roadblock', v)}
             >
-              <option value="ALL">ALL</option>
+              <option value="ALL">All capture contexts</option>
               {roadblockOptions.map((roadblock) => (
                 <option key={roadblock.key} value={roadblock.key}>
                   {roadblock.name}{roadblock.station !== '—' ? ` · ${roadblock.station}` : ''}
@@ -550,11 +550,11 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
           </SectionCard>
         </div>
 
-        {/* Roadblocks + BAC distribution */}
+        {/* Capture contexts + BAC distribution */}
         <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2">
           <SectionCard
-            title="Failures by Roadblock"
-            subtitle="Highest-yield checkpoints, ranked by failed tests"
+            title="Failures by Capture Context"
+            subtitle="Roadblock checkpoints and individual tests, ranked by failures"
             icon={MapPin}
             className="min-h-[260px]"
           >
@@ -584,12 +584,12 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
         </div>
 
         <SectionCard
-          title="Roadblock Accountability"
-          subtitle="Stable shift IDs, deployment context, and outcomes for every checkpoint in the selected period"
+          title="Capture Context Accountability"
+          subtitle="Shift IDs for roadblocks and outcomes for individual tests in the selected period"
           icon={MapPin}
         >
           {loading ? (
-            <p className="py-8 text-center text-[0.75rem] text-slate-500">Loading roadblock report…</p>
+            <p className="py-8 text-center text-[0.75rem] text-slate-500">Loading capture context report…</p>
           ) : (
             <RoadblockPerformanceTable stats={roadblockStats} />
           )}
