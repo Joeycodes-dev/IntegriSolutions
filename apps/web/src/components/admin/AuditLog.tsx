@@ -131,11 +131,11 @@ export function AuditLog() {
             style={{ borderColor: BORDER }}
           />
         </div>
-        <div className="relative">
+        <div className="relative max-w-full">
           <select
             value={actionFilter}
             onChange={(e) => setActionFilter(e.target.value)}
-            className="h-[34px] appearance-none rounded-md border bg-white pl-3 pr-8 text-[0.8125rem] text-slate-800 outline-none transition focus:border-[#0D2137]/35 focus:ring-1 focus:ring-[#0D2137]/10"
+            className="h-[34px] min-w-[160px] max-w-[240px] appearance-none rounded-md border bg-white pl-3 pr-8 text-[0.8125rem] text-slate-800 outline-none transition focus:border-[#0D2137]/35 focus:ring-1 focus:ring-[#0D2137]/10"
             style={{ borderColor: BORDER }}
           >
             <option value="">All Actions</option>
