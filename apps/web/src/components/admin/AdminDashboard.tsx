@@ -18,9 +18,11 @@ export function AdminDashboard() {
         onLogout={() => void signOut()}
       />
 
-      {activeNav === 'users' && <UserManagement />}
-      {activeNav === 'audit' && <AuditLog />}
-      {activeNav === 'config' && <SystemConfiguration />}
+      <main className="flex min-w-0 flex-1 flex-col">
+        {activeNav === 'users' && <UserManagement />}
+        {activeNav === 'audit' && <AuditLog />}
+        {activeNav === 'config' && <SystemConfiguration />}
+      </main>
     </div>
   );
 }

@@ -206,13 +206,19 @@ export function AuditLog() {
                       className="border-b last:border-b-0"
                       style={{ borderColor: BORDER }}
                     >
-                      <td className="px-5 py-3.5 font-mono text-[0.75rem] text-slate-600">
+                      <td className="whitespace-nowrap px-5 py-3.5 font-mono text-[0.75rem] text-slate-600">
                         {entry.auditId}
                       </td>
-                      <td className="px-5 py-3.5 text-[0.8125rem] text-slate-800">{entry.actor}</td>
-                      <td className="px-5 py-3.5 text-[0.8125rem] text-slate-700">{entry.action}</td>
-                      <td className="px-5 py-3.5 text-[0.8125rem] text-slate-700">{entry.target}</td>
-                      <td className="px-5 py-3.5 font-mono text-[0.75rem] text-slate-600">
+                      <td className="max-w-[180px] truncate px-5 py-3.5 text-[0.8125rem] font-medium text-slate-800" title={entry.actor}>
+                        {entry.actor}
+                      </td>
+                      <td className="max-w-[280px] truncate px-5 py-3.5 text-[0.8125rem] text-slate-700" title={entry.action}>
+                        {entry.action}
+                      </td>
+                      <td className="max-w-[180px] truncate px-5 py-3.5 font-mono text-[0.75rem] text-slate-600" title={entry.target}>
+                        {entry.target}
+                      </td>
+                      <td className="whitespace-nowrap px-5 py-3.5 font-mono text-[0.75rem] text-slate-600">
                         {entry.timestamp}
                       </td>
                     </tr>
