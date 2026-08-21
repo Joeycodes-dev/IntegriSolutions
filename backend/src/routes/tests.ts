@@ -34,7 +34,7 @@ router.get('/stream', requireSupervisor, (req, res) => {
   send({ type: 'connected', at: new Date().toISOString() });
 
   const unsubscribe = subscribeTestInserted((payload) => {
-    send({ type: 'test-inserted', ...payload });
+    send(payload);
   });
 
   const heartbeat = setInterval(() => {

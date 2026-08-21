@@ -24,6 +24,7 @@ import configRoutes from './routes/config';
 import { apiLimiter, authLimiter, syncLimiter, verifyLimiter } from './middleware/rateLimiter';
 
 const app = express();
+app.set('trust proxy', 1);
 const port = process.env.PORT ?? '4000';
 const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
 const allowedOrigins = new Set([

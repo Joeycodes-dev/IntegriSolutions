@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { getAccessToken, getTests } from '../services/api';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { getTests } from '../services/api';
 import type { TestRecord } from '../types';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+import { useSseWithFallback, type SupervisorEvent } from './useSseWithFallback';
 
 function isToday(iso: string): boolean {
   const date = new Date(iso);
@@ -24,74 +23,43 @@ export function useSupervisorTests() {
   const [tests, setTests] = useState<TestRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [streamConnected, setStreamConnected] = useState(false);
   const [lastEventAt, setLastEventAt] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadTests = async () => {
-      try {
-        const data = await getTests();
-        if (!cancelled) {
-          setTests(data as TestRecord[]);
-          setError(null);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load test data');
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    void loadTests();
-    const interval = setInterval(() => void loadTests(), 10000);
-
-    const token = getAccessToken();
-    // Browser EventSource cannot set Authorization headers — pass JWT as query param.
-    const streamUrl = token
-      ? `${API_BASE}/api/tests/stream?access_token=${encodeURIComponent(token)}`
-      : null;
-    const stream =
-      streamUrl && typeof EventSource !== 'undefined' ? new EventSource(streamUrl) : null;
-    if (stream) {
-      stream.onopen = () => {
-        if (!cancelled) {
-          setStreamConnected(true);
-        }
-      };
-      stream.onmessage = (event) => {
-        if (!cancelled) {
-          setStreamConnected(true);
-          try {
-            const payload = JSON.parse(event.data) as { at?: string; type?: string };
-            if (payload.type === 'test-inserted' && payload.at) {
-              setLastEventAt(payload.at);
-            }
-          } catch {
-            // keep silent if heartbeat or non-JSON payload is received
-          }
-        }
-        void loadTests();
-      };
-      stream.onerror = () => {
-        if (!cancelled) {
-          setStreamConnected(false);
-        }
-        // keep polling fallback active when EventSource is unavailable
-      };
-    } else if (!cancelled) {
-      setStreamConnected(false);
+  const loadTests = useCallback(async () => {
+    try {
+      const data = await getTests();
+      setTests(data as TestRecord[]);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load test data');
+    } finally {
+      setLoading(false);
     }
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-      stream?.close();
-    };
   }, []);
+
+  const handleMessage = useCallback(
+    (event: SupervisorEvent) => {
+      if (event.type === 'test-inserted' && typeof event.at === 'string') {
+        setLastEventAt(event.at as string);
+      }
+      // Test list is affected by test-inserted; case-updated does not require test reload
+      if (event.type === 'test-inserted') {
+        void loadTests();
+      }
+    },
+    [loadTests]
+  );
+
+  const { streamConnected } = useSseWithFallback({
+    onMessage: handleMessage,
+    fallback: loadTests,
+    fallbackIntervalMs: 60_000,
+    periodicIntervalMs: 90_000,
+  });
+
+  useEffect(() => {
+    void loadTests();
+  }, [loadTests]);
 
   const todayTests = useMemo(() => tests.filter((t) => isToday(t.createdAt)), [tests]);
 

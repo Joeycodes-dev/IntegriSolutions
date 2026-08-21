@@ -6,8 +6,7 @@ import { formatCaptureContext, formatReferenceId } from '../../lib/testEvidence'
 import { CASE_STATUSES, CASE_STATUS_LABELS, CASE_STATUS_STYLES, formatCaseTimestamp } from '../../lib/caseStatus';
 import { BORDER, NAVY, PAGE_BG, pageContent, pageShell } from './supervisorStyles';
 import { EvidenceReview } from './EvidenceReview';
-
-const REFRESH_INTERVAL_MS = 10_000;
+import { useSseWithFallback, type SupervisorEvent } from '../../hooks/useSseWithFallback';
 
 export function CaseStatusBadge({ status }: { status: CaseStatus }) {
   const style = CASE_STATUS_STYLES[status];
@@ -51,15 +50,29 @@ export function SupervisorCases() {
     }
   }, []);
 
+  const handleSseMessage = useCallback(
+    (event: SupervisorEvent) => {
+      // New tests create new cases; case-updated reflects status changes by other supervisors
+      if (event.type === 'test-inserted' || event.type === 'case-updated') {
+        void loadCases();
+      }
+    },
+    [loadCases]
+  );
+
+  // Shared SSE: single EventSource for all supervisor tabs. Fallback 60s when disconnected,
+  // periodic 90s when connected ensures case status changes are eventually seen even if
+  // SSE is stalled or events are missed. Periodic is interval-based, not reset by test events.
+  useSseWithFallback({
+    onMessage: handleSseMessage,
+    fallback: loadCases,
+    fallbackIntervalMs: 60_000,
+    periodicIntervalMs: 90_000,
+  });
+
   useEffect(() => {
     void loadCases();
   }, [loadCases]);
-
-  useEffect(() => {
-    if (loading) return;
-    const interval = setInterval(() => void loadCases(), REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [loadCases, loading]);
 
   const counts = useMemo(() => {
     const map = new Map<string, number>(CASE_STATUSES.map((status) => [status, 0]));

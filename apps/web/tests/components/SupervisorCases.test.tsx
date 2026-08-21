@@ -59,6 +59,7 @@ const mockCases = [
 
 vi.mock('../../src/services/api', () => ({
   getCases: vi.fn(),
+  getAccessToken: vi.fn().mockReturnValue(null),
   getAnnotations: vi.fn(),
   getEvidence: vi.fn(),
   annotateTest: vi.fn(),
@@ -109,6 +110,24 @@ describe('SupervisorCases', () => {
     expect(screen.getAllByText('New').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Under Review').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Verified').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('uses slower fallback polling when live updates are unavailable', async () => {
+    render(<SupervisorCases />);
+
+    await waitFor(() => {
+      expect(api.getCases).toHaveBeenCalledTimes(1);
+    });
+
+    vi.advanceTimersByTime(10000);
+
+    expect(api.getCases).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(50000);
+
+    await waitFor(() => {
+      expect(api.getCases).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('filters the queue by case status while keeping global counts loaded', async () => {

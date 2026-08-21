@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { requireSupervisor, type SupervisorRequest } from '../../middleware/requireSupervisor';
 import { writeAuditLog } from '../../utilities/auditLog';
 import { asyncHandler } from '../../asyncHandler';
+import { publishCaseUpdated } from '../../utilities/testEvents';
 
 const router = Router();
 
@@ -111,6 +112,9 @@ router.post('/:testId', asyncHandler(async (req, res) => {
       : 'under_review';
 
   await upsertCaseRecord(testId, authReq.userEmail ?? 'unknown', caseStatus, comment);
+
+  // Notify supervisors via SSE so case queues refresh without polling
+  publishCaseUpdated(testId, caseStatus, authReq.userEmail ?? 'unknown');
 
   await writeAuditLog(
     authReq.userEmail ?? 'unknown',

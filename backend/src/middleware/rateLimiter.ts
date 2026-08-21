@@ -10,10 +10,15 @@ export const authLimiter = rateLimit({
 
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10000,
+  max: 400,
   message: { error: 'Too many requests, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
+  // SSE stream is long-lived; don't count it against the API budget
+  skip: (req) => {
+    const url = (req.originalUrl as string) || req.url || req.path;
+    return url.includes('/api/tests/stream') || url.includes('/api/health');
+  },
 });
 
 export const syncLimiter = rateLimit({

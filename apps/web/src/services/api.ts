@@ -1,6 +1,7 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 const ACCESS_TOKEN_KEY = 'backend_access_token';
 export const AUTH_EXPIRED_EVENT = 'integriscan:auth-expired';
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
 
 if (!import.meta.env.VITE_API_BASE_URL) {
   console.warn('VITE_API_BASE_URL is not defined; falling back to http://localhost:4000');
@@ -16,9 +17,30 @@ function isExpiredTokenResponse(status: number, message: string): boolean {
   return status === 401 && /invalid or expired access token/i.test(message);
 }
 
-async function request<T>(path: string, options: RequestInit = {}) {
-  const { headers: optionHeaders, ...rest } = options;
+function request<T>(path: string, options: RequestInit = {}) {
+  const method = (options.method ?? 'GET').toUpperCase();
   const sentToken = getAccessToken();
+  const dedupeKey = method === 'GET' ? `${sentToken ?? ''}:${path}` : null;
+
+  if (dedupeKey) {
+    const inFlight = inFlightGetRequests.get(dedupeKey);
+    if (inFlight) return inFlight as Promise<T>;
+  }
+
+  const promise = performRequest<T>(path, options, sentToken);
+  if (dedupeKey) {
+    inFlightGetRequests.set(dedupeKey, promise);
+    promise.then(
+      () => inFlightGetRequests.delete(dedupeKey),
+      () => inFlightGetRequests.delete(dedupeKey)
+    );
+  }
+
+  return promise;
+}
+
+async function performRequest<T>(path: string, options: RequestInit, sentToken: string | null) {
+  const { headers: optionHeaders, ...rest } = options;
   const response = await fetch(`${API_BASE}${path}`, {
     ...rest,
     headers: {

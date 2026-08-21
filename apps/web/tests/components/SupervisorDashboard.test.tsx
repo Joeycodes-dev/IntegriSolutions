@@ -184,7 +184,7 @@ describe('SupervisorDashboard', () => {
     });
   });
 
-  it('polls for new data every 10 seconds', async () => {
+  it('uses slower fallback polling when live updates are unavailable', async () => {
     const getTestsSpy = vi.spyOn(api, 'getTests').mockResolvedValue([]);
 
     render(<SupervisorDashboard />);
@@ -194,6 +194,10 @@ describe('SupervisorDashboard', () => {
     });
 
     vi.advanceTimersByTime(10000);
+
+    expect(getTestsSpy).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(50000);
 
     await waitFor(() => {
       expect(getTestsSpy).toHaveBeenCalledTimes(2);
