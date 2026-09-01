@@ -40,11 +40,19 @@ function request<T>(path: string, options: RequestInit = {}) {
 }
 
 async function performRequest<T>(path: string, options: RequestInit, sentToken: string | null) {
-  const { headers: optionHeaders, ...rest } = options;
+  const { headers: optionHeaders, body, ...rest } = options;
+  
+  // Don't set Content-Type for FormData - let the browser set it automatically with boundary
+  const defaultHeaders: Record<string, string> = {};
+  if (!(body instanceof FormData)) {
+    defaultHeaders['Content-Type'] = 'application/json';
+  }
+  
   const response = await fetch(`${API_BASE}${path}`, {
     ...rest,
+    body,
     headers: {
-      'Content-Type': 'application/json',
+      ...defaultHeaders,
       ...(optionHeaders ?? {})
     }
   });
@@ -84,6 +92,53 @@ export function setAccessToken(token: string) {
 
 export function clearAccessToken() {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
+}
+
+export interface RoadOffenceReviewRecord {
+  id: number;
+  action: 'verified' | 'correction_requested' | 'referred' | 'closed';
+  reason: string;
+  reviewer_name: string;
+  created_at: string;
+}
+
+export interface RoadOffenceEvidence {
+  id: number;
+  storage_url: string;
+  file_name: string;
+  file_type: string;
+  file_size: number;
+  created_at: string;
+}
+
+export interface RoadOffenceRecord {
+  id: string;
+  officer_name: string;
+  badge_number: string;
+  offence_type: string;
+  driver_name: string;
+  driver_identifier: string;
+  vehicle_registration: string;
+  vehicle_description: string;
+  notes: string;
+  action_taken: string;
+  reference_number: string | null;
+  location: { lat?: number; lng?: number };
+  created_at: string;
+  road_offence_reviews: RoadOffenceReviewRecord[];
+  road_offence_evidence: RoadOffenceEvidence[];
+}
+
+export async function getRoadOffences() {
+  const token = getAccessToken();
+  return request<RoadOffenceRecord[]>('/api/road-offences', { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+}
+
+export async function addRoadOffenceReview(id: string, action: RoadOffenceReviewRecord['action'], reason: string) {
+  const token = getAccessToken();
+  return request<RoadOffenceReviewRecord>(`/api/road-offences/${encodeURIComponent(id)}/reviews`, {
+    method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: JSON.stringify({ action, reason })
+  });
 }
 
 export async function login(email: string, password: string) {
@@ -180,7 +235,20 @@ export async function createTest(payload: Record<string, unknown>) {
 function authHeaders() {
   const token = getAccessToken();
   if (!token) throw new Error('Not authenticated');
-  return { Authorization: `Bearer ${token}` };
+  let roleHeader: Record<string, string> = {};
+  try {
+    const rawProfile = localStorage.getItem('local_auth_profile');
+    if (rawProfile) {
+      const parsed = JSON.parse(rawProfile) as { roleId?: unknown };
+      const roleId = Number(parsed.roleId);
+      if (Number.isInteger(roleId) && (roleId === 1 || roleId === 2 || roleId === 3)) {
+        roleHeader = { 'X-Actor-Role-Id': String(roleId) };
+      }
+    }
+  } catch {
+    roleHeader = {};
+  }
+  return { Authorization: `Bearer ${token}`, ...roleHeader };
 }
 
 export async function getPortalUsers() {
@@ -462,4 +530,85 @@ export async function uploadEvidence(testId: string, file: File, notes?: string)
   }
 
   return payload as unknown as EvidencePhoto;
+}
+
+export async function getChatOfficerContacts(query?: string) {
+  const params = new URLSearchParams();
+  if (query?.trim()) {
+    params.set('q', query.trim());
+  }
+  const path = params.toString()
+    ? `/api/chat/contacts/officers?${params.toString()}`
+    : '/api/chat/contacts/officers';
+  return request<import('../types').ChatOfficerContact[]>(path, {
+    headers: authHeaders()
+  });
+}
+
+export async function getChatThreads() {
+  return request<import('../types').ChatThreadSummary[]>('/api/chat/threads', {
+    headers: authHeaders()
+  });
+}
+
+export async function createEmergencyChatThread(payload: {
+  officerIds?: number[];
+  title?: string;
+  includeSuperUsers?: boolean;
+  sendToAllOfficers?: boolean;
+  sendToEveryone?: boolean;
+}) {
+  return request<{ id: string }>('/api/chat/threads/emergency', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function getChatThreadMessages(threadId: string, limit = 120, markRead = true) {
+  const safeLimit = Math.max(1, Math.min(200, limit));
+  const freshNonce = Date.now();
+  return request<import('../types').ChatMessage[]>(`/api/chat/threads/${encodeURIComponent(threadId)}/messages?limit=${safeLimit}&fresh=${freshNonce}&markRead=${markRead ? 'true' : 'false'}`, {
+    headers: authHeaders()
+  });
+}
+
+export async function uploadChatFiles(files: File[]) {
+  const formData = new FormData();
+  files.forEach((file) => formData.append('files', file));
+  
+  return request<{ files: Array<{ fileName: string; fileType: string; fileSize: number; storagePath: string; storageUrl: string }> }>('/api/chat/attachments/upload', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: formData
+  });
+}
+
+export async function sendChatMessage(
+  threadId: string,
+  body: string,
+  isEmergency = true,
+  priority: 'high' | 'medium' | 'low' = 'medium',
+  replyToMessageId?: number | null,
+  attachments?: Array<{ fileName: string; fileType: string; fileSize: number; storagePath: string; storageUrl: string }>
+) {
+  return request<import('../types').ChatMessage>(`/api/chat/threads/${encodeURIComponent(threadId)}/messages`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ body, isEmergency, priority, replyToMessageId: replyToMessageId ?? null, attachments: attachments ?? [] })
+  });
+}
+
+export async function markAttachmentOpened(attachmentId: number) {
+  return request<{ ok: boolean }>(`/api/chat/attachments/${attachmentId}/opened`, {
+    method: 'POST',
+    headers: authHeaders()
+  });
+}
+
+export async function markChatThreadRead(threadId: string) {
+  return request<{ ok: boolean }>(`/api/chat/threads/${encodeURIComponent(threadId)}/read`, {
+    method: 'POST',
+    headers: authHeaders()
+  });
 }

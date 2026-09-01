@@ -61,6 +61,7 @@ type RootStackParamList = {
   OfficerReports: undefined;
   OfficerShifts: undefined;
   Audit: undefined;
+  RoadOffence: undefined;
 };
 
 type Props = NativeStackScreenProps<RootStackParamList, "OfficerDashboard">;
@@ -1108,6 +1109,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             initialDuty={duty}
             onDutyChange={handleDutyChange}
             onStartSession={startScan}
+            onOpenRoadOffence={() => navigation.navigate("RoadOffence")}
             onForceSync={forceSync}
             onOpenReports={() => navigation.navigate("OfficerReports")}
             onOpenAudit={() => navigation.navigate("Audit")}

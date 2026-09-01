@@ -9,9 +9,11 @@ import { SupervisorOfficers } from './supervisor/SupervisorOfficers';
 import { SupervisorReports } from './supervisor/SupervisorReports';
 import { SupervisorShifts } from './supervisor/SupervisorShifts';
 import { SupervisorCases } from './supervisor/SupervisorCases';
+import { EmergencyChatPanel } from './chat/EmergencyChatPanel';
+import { RoadOffenceReview } from './RoadOffenceReview';
 
 export function SupervisorDashboard() {
-  const { signOut } = useAuth();
+  const { signOut, profile } = useAuth();
   const [activeNav, setActiveNav] = useState<SupervisorNavItem>('dashboard');
   const { tests, loading, error, metrics, streamConnected, lastEventAt } = useSupervisorTests();
 
@@ -51,6 +53,8 @@ export function SupervisorDashboard() {
       {activeNav === 'reports' && (
         <SupervisorReports tests={tests} loading={loading} error={error} />
       )}
+      {activeNav === 'roadOffences' && <RoadOffenceReview />}
+      {activeNav === 'chat' && <EmergencyChatPanel profile={profile} />}
       </main>
     </div>
   );

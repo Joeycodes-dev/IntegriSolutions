@@ -1,5 +1,6 @@
-import { FileText, LogOut, Settings, Shield, Users } from 'lucide-react';
+import { FileText, LogOut, MessageSquareWarning, Settings, Shield, ShieldAlert, Users } from 'lucide-react';
 import type { AdminNavItem } from '../../types';
+import { useChatUnreadCount } from '../../hooks/useChatUnreadCount';
 
 const NAVY_SIDEBAR = '#0F172A';
 const ACTIVE_ACCENT = '#38BDF8';
@@ -7,7 +8,9 @@ const ACTIVE_ACCENT = '#38BDF8';
 const NAV_ITEMS: { id: AdminNavItem; label: string; icon: typeof Users }[] = [
   { id: 'users', label: 'User Management', icon: Users },
   { id: 'audit', label: 'Audit Log', icon: FileText },
-  { id: 'config', label: 'System Configuration', icon: Settings }
+  { id: 'config', label: 'System Configuration', icon: Settings },
+  { id: 'roadOffences', label: 'Road Offences', icon: ShieldAlert },
+  { id: 'chat', label: 'Emergency Chat', icon: MessageSquareWarning }
 ];
 
 interface AdminSidebarProps {
@@ -17,6 +20,8 @@ interface AdminSidebarProps {
 }
 
 export function AdminSidebar({ active, onNavigate, onLogout }: AdminSidebarProps) {
+  const unreadCount = useChatUnreadCount(active !== 'chat');
+
   return (
     <aside
       className="sticky top-0 flex h-screen w-[220px] shrink-0 flex-col px-4 py-5"
@@ -50,7 +55,12 @@ export function AdminSidebar({ active, onNavigate, onLogout }: AdminSidebarProps
               style={isActive ? { color: ACTIVE_ACCENT } : undefined}
             >
               <Icon size={16} strokeWidth={2} />
-              {label}
+              <span>{label}</span>
+              {id === 'chat' && unreadCount > 0 && (
+                <span className="ml-auto rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
             </button>
           );
         })}

@@ -61,3 +61,88 @@ export interface DriverLicenseData {
     fallbackReason: string | null;
   };
 }
+
+export interface ChatOfficerContact {
+  officerId: number;
+  name: string;
+  badgeNumber: string;
+  email: string;
+}
+
+export interface ChatParticipant {
+  source: 'officer_users' | 'supervisor_users' | 'admin_users';
+  participantId: number;
+  roleId: number;
+  name: string;
+  badgeNumber: string | null;
+}
+
+export interface ChatThreadSummary {
+  id: string;
+  kind: 'emergency' | 'direct' | 'group';
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastReadAt: string | null;
+  unreadCount: number;
+  participants: ChatParticipant[];
+  latestMessage: {
+    id: number;
+    body: string;
+    senderName: string;
+    createdAt: string;
+    isEmergency: boolean;
+    priority: 'high' | 'medium' | 'low';
+  } | null;
+}
+
+export interface ChatAttachment {
+  id: number;
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  storageUrl: string;
+  openedCount: number;
+  openedBy: Array<{
+    source: 'officer_users' | 'supervisor_users' | 'admin_users';
+    participantId: number;
+    roleId: number;
+    name: string;
+    badgeNumber: string | null;
+    openedAt: string;
+  }>;
+  createdAt: string;
+}
+
+export interface ChatMessage {
+  id: number;
+  threadId: string;
+  replyToMessageId: number | null;
+  replyTo: {
+    id: number;
+    senderName: string;
+    body: string;
+  } | null;
+  body: string;
+  sender: {
+    source: 'officer_users' | 'supervisor_users' | 'admin_users';
+    participantId: number;
+    roleId: number;
+    name: string;
+  };
+  isEmergency: boolean;
+  priority: 'high' | 'medium' | 'low';
+  seenCount: number;
+  officersSeenCount: number;
+  superUsersSeenCount: number;
+  seenBy: Array<{
+    source: 'officer_users' | 'supervisor_users' | 'admin_users';
+    participantId: number;
+    roleId: number;
+    name: string;
+    badgeNumber: string | null;
+    readAt: string;
+  }>;
+  attachments: ChatAttachment[];
+  createdAt: string;
+}

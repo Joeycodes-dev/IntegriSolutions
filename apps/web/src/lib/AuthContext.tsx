@@ -7,6 +7,12 @@ const LAST_ACTIVITY_KEY = 'integriscan:last_activity';
 const IDLE_CHECK_MS = 15_000;
 const DEFAULT_SESSION_TIMEOUT_MINUTES = 30;
 const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'touchstart', 'scroll'] as const;
+const EXPIRED_TOKEN_MESSAGE = /invalid or expired access token/i;
+
+function isExpiredTokenError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return EXPIRED_TOKEN_MESSAGE.test(error.message);
+}
 
 function loadLocalProfile(): UserProfile | null {
   const stored = localStorage.getItem(PROFILE_STORAGE_KEY);
@@ -44,6 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [sessionTimeoutMinutes, setSessionTimeoutMinutes] = useState(DEFAULT_SESSION_TIMEOUT_MINUTES);
   const lastActivityRef = useRef<number>(Date.now());
   const idleTimerRef = useRef<number | null>(null);
+  const validatingExpiredRef = useRef(false);
 
   const clearAuthState = () => {
     clearAccessToken();
@@ -68,16 +75,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const initAuth = async () => {
-      const savedProfile = loadLocalProfile();
-      if (savedProfile) {
-        setUser(savedProfile);
-        setProfile(savedProfile);
-        setLoading(false);
-        return;
-      }
-
       const token = getAccessToken();
       if (!token) {
+        clearLocalProfile();
         setLoading(false);
         return;
       }
@@ -86,9 +86,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const profileData = await getProfile();
         setUser(profileData);
         setProfile(profileData);
+        saveLocalProfile(profileData);
       } catch (error) {
         console.error('Authentication refresh failed:', error);
-        clearAccessToken();
+        clearAuthState();
       } finally {
         setLoading(false);
       }
@@ -98,14 +99,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const handleAuthExpired = (event: Event) => {
+    const handleAuthExpired = async (event: Event) => {
       // Ignore events from requests that were sent with a different token
       // (e.g. a stale background request resolving after a fresh sign-in).
       const detail = (event as CustomEvent).detail as
         | { message?: string; token?: string | null }
         | undefined;
-      if (detail?.token != null && detail.token !== getAccessToken()) return;
-      clearAuthState();
+      const activeToken = getAccessToken();
+      if (!activeToken) {
+        clearAuthState();
+        return;
+      }
+      if (detail?.token != null && detail.token !== activeToken) return;
+
+      if (validatingExpiredRef.current) return;
+      validatingExpiredRef.current = true;
+      try {
+        await getProfile();
+      } catch (error) {
+        if (isExpiredTokenError(error)) {
+          clearAuthState();
+        }
+      } finally {
+        validatingExpiredRef.current = false;
+      }
     };
 
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);

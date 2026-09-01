@@ -8,6 +8,8 @@ import { OfficerDashboardScreen } from './screens/OfficerDashboardScreen';
 import { OfficerReportsScreen } from './screens/OfficerReportsScreen';
 import { OfficerShiftsScreen } from './screens/OfficerShiftsScreen';
 import { AuditScreen } from './screens/AuditScreen';
+import { EmergencyChatScreen } from './screens/EmergencyChatScreen';
+import { RoadOffenceScreen } from './screens/RoadOffenceScreen';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { SyncProvider } from './lib/SyncContext';
 import { getDB } from './db/client';
@@ -17,13 +19,15 @@ type RootStackParamList = {
   OfficerDashboard: undefined;
   OfficerReports: undefined;
   OfficerShifts: undefined;
+  EmergencyChat: undefined;
   Audit: undefined;
+  RoadOffence: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 function AppNavigator() {
-  const { profile, isRestoring } = useAuth();
+  const { profile, token, isRestoring } = useAuth();
 
   if (isRestoring) {
     return (
@@ -35,7 +39,7 @@ function AppNavigator() {
 
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      {profile ? (
+      {profile && token ? (
         <>
           <Stack.Screen
             name="OfficerDashboard"
@@ -46,7 +50,9 @@ function AppNavigator() {
             component={OfficerReportsScreen}
           />
           <Stack.Screen name="OfficerShifts" component={OfficerShiftsScreen} />
+          <Stack.Screen name="EmergencyChat" component={EmergencyChatScreen} />
           <Stack.Screen name="Audit" component={AuditScreen} />
+          <Stack.Screen name="RoadOffence" component={RoadOffenceScreen} />
         </>
       ) : (
         <Stack.Screen name="Login" component={LoginScreen} />

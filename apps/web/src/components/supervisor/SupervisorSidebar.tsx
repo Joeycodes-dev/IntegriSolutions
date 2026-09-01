@@ -1,14 +1,17 @@
 import {
   BarChart3,
+  MessageSquareWarning,
   ClipboardList,
   FolderKanban,
   LayoutDashboard,
   LogOut,
   MapPinned,
   Shield,
+  ShieldAlert,
   User
 } from 'lucide-react';
 import type { SupervisorNavItem } from '../../types';
+import { useChatUnreadCount } from '../../hooks/useChatUnreadCount';
 
 const NAVY_SIDEBAR = '#0D2137';
 const ACTIVE_ACCENT = '#38BDF8';
@@ -19,7 +22,9 @@ const NAV_ITEMS: { id: SupervisorNavItem; label: string; icon: typeof LayoutDash
   { id: 'logs', label: 'Logs', icon: ClipboardList },
   { id: 'officers', label: 'Officers', icon: User },
   { id: 'shifts', label: 'Shifts', icon: MapPinned },
-  { id: 'reports', label: 'Reports', icon: BarChart3 }
+  { id: 'reports', label: 'Reports', icon: BarChart3 },
+  { id: 'roadOffences', label: 'Road Offences', icon: ShieldAlert },
+  { id: 'chat', label: 'Emergency Chat', icon: MessageSquareWarning }
 ];
 
 interface SupervisorSidebarProps {
@@ -29,6 +34,8 @@ interface SupervisorSidebarProps {
 }
 
 export function SupervisorSidebar({ active, onNavigate, onLogout }: SupervisorSidebarProps) {
+  const unreadCount = useChatUnreadCount(active !== 'chat');
+
   return (
     <aside
       className="sticky top-0 flex h-screen w-[200px] shrink-0 flex-col px-3 py-4"
@@ -62,7 +69,12 @@ export function SupervisorSidebar({ active, onNavigate, onLogout }: SupervisorSi
               style={isActive ? { color: ACTIVE_ACCENT } : undefined}
             >
               <Icon size={14} strokeWidth={2} />
-              {label}
+              <span>{label}</span>
+              {id === 'chat' && unreadCount > 0 && (
+                <span className="ml-auto rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
             </button>
           );
         })}

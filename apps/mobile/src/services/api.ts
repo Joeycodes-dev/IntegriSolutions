@@ -1,4 +1,4 @@
-import { clearAccessToken, getAccessToken } from './auth';
+import { clearAccessToken, getAccessToken, getStoredProfile } from './auth';
 import { API_BASE_URL } from './constants';
 import { logAuditEvent } from './audit';
 import { Platform } from 'react-native';
@@ -15,6 +15,23 @@ interface RequestBehavior {
 
 const EXPIRED_TOKEN_MESSAGE = /invalid or expired access token/i;
 
+type AuthExpiredListener = (message: string) => void;
+
+let authExpiredListener: AuthExpiredListener | null = null;
+
+function notifyAuthExpired(message: string) {
+  authExpiredListener?.(message);
+}
+
+export function onAuthExpired(listener: AuthExpiredListener) {
+  authExpiredListener = listener;
+  return () => {
+    if (authExpiredListener === listener) {
+      authExpiredListener = null;
+    }
+  };
+}
+
 function extractErrorMessage(payload: unknown): string {
   const candidate = (payload as { error?: unknown })?.error;
   return typeof candidate === 'string' && candidate.trim() ? candidate : 'API request failed';
@@ -22,17 +39,29 @@ function extractErrorMessage(payload: unknown): string {
 
 async function request<T>(path: string, options: RequestInit = {}, behavior: RequestBehavior = {}) {
   const token = await getAccessToken();
+  const storedProfile = await getStoredProfile();
+  const roleId = Number(storedProfile?.roleId);
+  const roleHeader: Record<string, string> = Number.isInteger(roleId) && (roleId === 1 || roleId === 2 || roleId === 3)
+    ? { 'X-Actor-Role-Id': String(roleId) }
+    : {};
   const url = `${API_BASE_URL}${path}`;
   console.log(`[api] fetch ${url}`);
-  const baseHeaders = {
-    'Content-Type': 'application/json',
+  
+  // Don't set Content-Type for FormData - let fetch handle it automatically with boundary
+  const baseHeaders: Record<string, string> = {};
+  if (!(options.body instanceof FormData)) {
+    baseHeaders['Content-Type'] = 'application/json';
+  }
+  const finalHeaders = {
+    ...baseHeaders,
     ...(options.headers ?? {})
   };
 
   const doFetch = async (bearerToken: string | null): Promise<Response> => {
     return fetch(url, {
       headers: {
-        ...baseHeaders,
+        ...finalHeaders,
+        ...roleHeader,
         ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {})
       },
       ...options
@@ -58,6 +87,7 @@ async function request<T>(path: string, options: RequestInit = {}, behavior: Req
 
     if (shouldRetryWithoutAuth) {
       await clearAccessToken();
+      notifyAuthExpired(errorMessage);
       try {
         response = await doFetch(null);
       } catch (error) {
@@ -70,6 +100,12 @@ async function request<T>(path: string, options: RequestInit = {}, behavior: Req
       }
 
       return payload as T;
+    }
+
+    if (response.status === 401 && EXPIRED_TOKEN_MESSAGE.test(errorMessage)) {
+      await clearAccessToken();
+      notifyAuthExpired(errorMessage);
+      throw new Error('Session expired. Please sign in again.');
     }
 
     throw new Error(errorMessage);
@@ -143,6 +179,7 @@ export async function uploadEvidencePhoto(
     const errorMessage = extractErrorMessage(payload);
     if (response.status === 401 && EXPIRED_TOKEN_MESSAGE.test(errorMessage)) {
       await clearAccessToken();
+      notifyAuthExpired(errorMessage);
       throw new Error('Evidence upload deferred: session expired. Sign in again to upload photos.');
     }
     throw new Error(errorMessage || 'Photo upload failed');
@@ -215,4 +252,105 @@ export async function invalidateTest(testId: string, reason: string, actor?: Aud
   });
 
   return payload;
+}
+
+export async function getChatOfficerContacts(query?: string) {
+  const params = new URLSearchParams();
+  if (query?.trim()) {
+    params.set('q', query.trim());
+  }
+  const path = params.toString()
+    ? `/chat/contacts/officers?${params.toString()}`
+    : '/chat/contacts/officers';
+  return request<import('../types').ChatOfficerContact[]>(path);
+}
+
+export async function getChatThreads() {
+  return request<import('../types').ChatThreadSummary[]>('/chat/threads');
+}
+
+export async function createEmergencyChatThread(payload: {
+  officerIds?: number[];
+  title?: string;
+  includeSuperUsers?: boolean;
+  sendToAllOfficers?: boolean;
+  sendToEveryone?: boolean;
+}) {
+  return request<{ id: string }>('/chat/threads/emergency', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function getChatThreadMessages(threadId: string, limit = 120, markRead = true) {
+  const safeLimit = Math.max(1, Math.min(200, limit));
+  return request<import('../types').ChatMessage[]>(`/chat/threads/${encodeURIComponent(threadId)}/messages?limit=${safeLimit}&markRead=${markRead ? 'true' : 'false'}`);
+}
+
+export async function uploadChatFiles(files: Array<File | { uri: string; name: string; type?: string }>) {
+  const formData = new FormData();
+
+  for (const file of files) {
+    if (Platform.OS === 'web' && typeof (file as File).arrayBuffer === 'function') {
+      formData.append('files', file as File);
+      continue;
+    }
+
+    const nativeFile = file as { uri: string; name: string; type?: string };
+    formData.append('files', {
+      uri: nativeFile.uri,
+      name: nativeFile.name || 'file.bin',
+      type: nativeFile.type || 'application/octet-stream'
+    } as any);
+  }
+
+  return request<{ files: Array<{ fileName: string; fileType: string; fileSize: number; storagePath: string; storageUrl: string }> }>('/chat/attachments/upload', {
+    method: 'POST',
+    body: formData
+  });
+}
+
+export async function sendChatMessage(
+  threadId: string,
+  body: string,
+  isEmergency = true,
+  priority: 'high' | 'medium' | 'low' = 'medium',
+  replyToMessageId?: number | null,
+  attachments?: Array<{ fileName: string; fileType: string; fileSize: number; storagePath: string; storageUrl: string }>
+) {
+  return request<import('../types').ChatMessage>(`/chat/threads/${encodeURIComponent(threadId)}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ body, isEmergency, priority, replyToMessageId: replyToMessageId ?? null, attachments: attachments ?? [] })
+  });
+}
+
+export async function markAttachmentOpened(attachmentId: number) {
+  return request<{ ok: boolean }>(`/chat/attachments/${attachmentId}/opened`, {
+    method: 'POST'
+  });
+}
+
+export async function markChatThreadRead(threadId: string) {
+  return request<{ ok: boolean }>(`/chat/threads/${encodeURIComponent(threadId)}/read`, {
+    method: 'POST'
+  });
+}
+
+export type RoadOffenceType = 'driving_without_valid_licence' | 'expired_driving_licence' | 'expired_vehicle_licence_disc' | 'vehicle_not_roadworthy' | 'defective_lights' | 'unsafe_tyres' | 'no_seat_belt' | 'mobile_phone_use' | 'speeding' | 'traffic_control_non_compliance' | 'reckless_or_negligent_driving' | 'unsafe_overtaking' | 'overloading' | 'registration_or_number_plate_non_compliance' | 'other';
+export type RoadOffenceAction = 'warning' | 'fine_or_notice' | 'vehicle_discontinued' | 'referred' | 'arrested' | 'other';
+
+export async function createRoadOffence(payload: {
+  id: string; offenceType: RoadOffenceType; actionTaken: RoadOffenceAction; driverName: string;
+  driverIdentifier: string; vehicleRegistration: string; vehicleDescription: string; notes: string;
+  referenceNumber: string; location: { lat: number; lng: number };
+}) {
+  return request('/road-offences', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function uploadRoadOffencePhotos(roadOffenceId: string, photos: Array<{ uri: string; name: string; type: string }>) {
+  const formData = new FormData();
+  for (const photo of photos) {
+    formData.append('photos', { uri: photo.uri, name: photo.name, type: photo.type } as any);
+  }
+  return request(`/road-offences/${encodeURIComponent(roadOffenceId)}/evidence`, { method: 'POST', body: formData });
 }

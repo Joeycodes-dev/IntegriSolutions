@@ -140,52 +140,57 @@ function fromAdminRow(row: AdminRow, uid: string): ResolvedProfile {
 export async function resolveProfileByEmail(
   email: string,
   uid: string,
-  client: SupabaseClient = serviceSupabase
+  client: SupabaseClient = serviceSupabase,
+  preferredRoleId?: number
 ): Promise<ResolvedProfile | null> {
-  const { data: adminRows, error: adminError } = await client
-    .from('admin_users')
-    .select('*')
-    .eq('admin_email_address', email)
-    .limit(1);
+  const lookupByRole = async (roleId: number): Promise<ResolvedProfile | null> => {
+    if (roleId === 3) {
+      const { data: adminRows, error: adminError } = await client
+        .from('admin_users')
+        .select('*')
+        .eq('admin_email_address', email)
+        .limit(1);
+      if (adminError) throw new Error(adminError.message);
+      const admin = Array.isArray(adminRows) ? adminRows[0] : null;
+      return admin ? fromAdminRow(admin as AdminRow, uid) : null;
+    }
 
-  if (adminError) {
-    throw new Error(adminError.message);
+    if (roleId === 2) {
+      const { data: supervisorRows, error: supervisorError } = await client
+        .from('supervisor_users')
+        .select('*')
+        .eq('supervisor_email_address', email)
+        .limit(1);
+      if (supervisorError) throw new Error(supervisorError.message);
+      const supervisor = Array.isArray(supervisorRows) ? supervisorRows[0] : null;
+      return supervisor ? fromSupervisorRow(supervisor as SupervisorRow, uid) : null;
+    }
+
+    const { data: officerRows, error: officerError } = await client
+      .from('officer_users')
+      .select('*')
+      .eq('officer_email_address', email)
+      .limit(1);
+    if (officerError) throw new Error(officerError.message);
+    const officer = Array.isArray(officerRows) ? officerRows[0] : null;
+    return officer ? fromOfficerRow(officer as OfficerRow, uid) : null;
+  };
+
+  if (preferredRoleId === 1 || preferredRoleId === 2 || preferredRoleId === 3) {
+    const preferred = await lookupByRole(preferredRoleId);
+    if (preferred) {
+      return preferred;
+    }
   }
 
-  const admin = Array.isArray(adminRows) ? adminRows[0] : null;
-  if (admin) {
-    return fromAdminRow(admin as AdminRow, uid);
-  }
+  const admin = await lookupByRole(3);
+  if (admin) return admin;
 
-  const { data: officerRows, error: officerError } = await client
-    .from('officer_users')
-    .select('*')
-    .eq('officer_email_address', email)
-    .limit(1);
+  const officer = await lookupByRole(1);
+  if (officer) return officer;
 
-  if (officerError) {
-    throw new Error(officerError.message);
-  }
-
-  const officer = Array.isArray(officerRows) ? officerRows[0] : null;
-  if (officer) {
-    return fromOfficerRow(officer as OfficerRow, uid);
-  }
-
-  const { data: supervisorRows, error: supervisorError } = await client
-    .from('supervisor_users')
-    .select('*')
-    .eq('supervisor_email_address', email)
-    .limit(1);
-
-  if (supervisorError) {
-    throw new Error(supervisorError.message);
-  }
-
-  const supervisor = Array.isArray(supervisorRows) ? supervisorRows[0] : null;
-  if (supervisor) {
-    return fromSupervisorRow(supervisor as SupervisorRow, uid);
-  }
+  const supervisor = await lookupByRole(2);
+  if (supervisor) return supervisor;
 
   return null;
 }

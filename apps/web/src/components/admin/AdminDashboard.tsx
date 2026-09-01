@@ -3,11 +3,13 @@ import { useAuth } from '../../lib/AuthContext';
 import type { AdminNavItem } from '../../types';
 import { AdminSidebar } from './AdminSidebar';
 import { AuditLog } from './AuditLog';
+import { EmergencyChatPanel } from '../chat/EmergencyChatPanel';
 import { SystemConfiguration } from './SystemConfiguration';
+import { RoadOffenceReview } from '../RoadOffenceReview';
 import { UserManagement } from './UserManagement';
 
 export function AdminDashboard() {
-  const { signOut } = useAuth();
+  const { signOut, profile } = useAuth();
   const [activeNav, setActiveNav] = useState<AdminNavItem>('users');
 
   return (
@@ -22,6 +24,8 @@ export function AdminDashboard() {
         {activeNav === 'users' && <UserManagement />}
         {activeNav === 'audit' && <AuditLog />}
         {activeNav === 'config' && <SystemConfiguration />}
+        {activeNav === 'roadOffences' && <RoadOffenceReview />}
+        {activeNav === 'chat' && <EmergencyChatPanel profile={profile} />}
       </main>
     </div>
   );

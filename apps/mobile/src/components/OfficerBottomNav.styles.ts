@@ -7,12 +7,16 @@ export const styles = StyleSheet.create({
     backgroundColor: colors.background,
     borderTopWidth: 1,
     borderTopColor: colors.borderLight,
-    paddingVertical: 8
+    minHeight: 66,
+    paddingTop: 8,
+    paddingBottom: 10
   },
   navItem: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 6
+    justifyContent: 'center',
+    paddingVertical: 8,
+    position: 'relative'
   },
   navLabel: {
     fontSize: 11,
@@ -24,5 +28,22 @@ export const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.neutralGray,
     marginTop: 4
+  },
+  unreadPill: {
+    position: 'absolute',
+    top: 4,
+    right: 14,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.error,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4
+  },
+  unreadPillText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700'
   }
 });

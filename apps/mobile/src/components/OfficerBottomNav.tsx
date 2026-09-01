@@ -1,13 +1,14 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { styles } from './OfficerBottomNav.styles';
 import { colors } from '../styles/colors';
+import { useChatUnreadCount } from '../lib/useChatUnreadCount';
 
-export type OfficerTab = 'OfficerDashboard' | 'OfficerReports' | 'OfficerShifts' | 'Audit';
+export type OfficerTab = 'OfficerDashboard' | 'OfficerReports' | 'OfficerShifts' | 'EmergencyChat' | 'Audit';
 
 interface TabConfig {
   key: OfficerTab;
@@ -15,10 +16,18 @@ interface TabConfig {
   iconLib: 'feather' | 'ionicons';
   iconName: string;
   iconNameActive: string;
-  route: 'OfficerDashboard' | 'OfficerReports' | 'OfficerShifts' | 'Audit';
+  route: 'OfficerDashboard' | 'OfficerReports' | 'OfficerShifts' | 'EmergencyChat' | 'Audit';
 }
 
 const TABS: TabConfig[] = [
+  {
+    key: 'EmergencyChat',
+    label: 'Chat',
+    iconLib: 'ionicons',
+    iconName: 'chatbubble-ellipses-outline',
+    iconNameActive: 'chatbubble-ellipses',
+    route: 'EmergencyChat'
+  },
   {
     key: 'OfficerDashboard',
     label: 'Home',
@@ -59,6 +68,7 @@ interface Props {
 
 export function OfficerBottomNav({ active }: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<any>>();
+  const unreadCount = useChatUnreadCount(active !== 'EmergencyChat');
 
   return (
     <View style={styles.bottomNav}>
@@ -71,7 +81,9 @@ export function OfficerBottomNav({ active }: Props) {
           <Pressable
             key={tab.key}
             style={styles.navItem}
+            hitSlop={8}
             onPress={() => {
+              Keyboard.dismiss();
               if (!isActive) {
                 navigation.navigate(tab.route);
               }
@@ -81,6 +93,11 @@ export function OfficerBottomNav({ active }: Props) {
               <Feather name={iconName as any} size={24} color={color} />
             ) : (
               <Ionicons name={iconName as any} size={24} color={color} />
+            )}
+            {tab.key === 'EmergencyChat' && unreadCount > 0 && (
+              <View pointerEvents="none" style={styles.unreadPill}>
+                <Text style={styles.unreadPillText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+              </View>
             )}
             <Text style={[isActive ? styles.navLabel : styles.navLabelInactive]}>
               {tab.label}

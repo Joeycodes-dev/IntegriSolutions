@@ -8,8 +8,10 @@ import {
   getStoredProfile,
   clearStoredProfile
 } from '../services/auth';
+import { API_BASE_URL } from '../services/constants';
 import { logAuditEvent } from '../services/audit';
 import { canAccessMobileApp } from './roles';
+import { onAuthExpired } from '../services/api';
 
 const MOBILE_ACCESS_ERROR = 'This mobile app is for officer accounts. Supervisors and administrators must use the web portal.';
 
@@ -46,16 +48,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await clearStoredProfile();
             return;
           }
+
+          // Validate token before restoring protected app screens.
+          const profileResponse = await fetch(`${API_BASE_URL}/profile`, {
+            headers: {
+              Authorization: `Bearer ${storedToken}`
+            }
+          });
+
+          if (!profileResponse.ok) {
+            await clearAccessToken();
+            await clearStoredProfile();
+            return;
+          }
+
           setProfile(storedProfile);
           setToken(storedToken);
+        } else {
+          await clearAccessToken();
+          await clearStoredProfile();
         }
       } catch {
-        // Session restore failed — user needs to re-login
+        await clearAccessToken();
+        await clearStoredProfile();
       } finally {
         setIsRestoring(false);
       }
     }
     restoreSession();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onAuthExpired(() => {
+      setProfile(null);
+      setToken(null);
+      void clearAccessToken();
+      void clearStoredProfile();
+    });
+
+    return unsubscribe;
   }, []);
 
   const signIn = useCallback(async (profileData: UserProfile, tokenValue: string | null) => {

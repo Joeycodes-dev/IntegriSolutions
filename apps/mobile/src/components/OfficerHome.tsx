@@ -25,6 +25,7 @@ interface Props {
   initialDuty?: DutyStatus;
   onDutyChange?: (next: DutyStatus) => void;
   onStartSession: () => void;
+  onOpenRoadOffence: () => void;
   onForceSync: () => void;
   onOpenReports: () => void;
   onOpenAudit: () => void;
@@ -83,6 +84,7 @@ export function OfficerHome({
   initialDuty = 'on',
   onDutyChange,
   onStartSession,
+  onOpenRoadOffence,
   onForceSync,
   onOpenReports,
   onOpenAudit
@@ -210,6 +212,19 @@ export function OfficerHome({
           <View style={styles.ctaTextBlock}>
             <Text style={styles.ctaTitle}>Start New Session</Text>
             <Text style={styles.ctaSubtitle}>Scan a license to begin a verified record</Text>
+          </View>
+          <Feather name="arrow-right" size={20} color="#4338ca" />
+        </View>
+      </Pressable>
+
+      <Pressable style={styles.cta} onPress={onOpenRoadOffence}>
+        <View style={styles.ctaInner}>
+          <View style={styles.ctaIconWrap}>
+            <Feather name="alert-triangle" size={22} color="#4338ca" />
+          </View>
+          <View style={styles.ctaTextBlock}>
+            <Text style={styles.ctaTitle}>Capture Road Offence</Text>
+            <Text style={styles.ctaSubtitle}>Create a separate locked roadside record</Text>
           </View>
           <Feather name="arrow-right" size={20} color="#4338ca" />
         </View>

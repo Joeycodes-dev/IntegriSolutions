@@ -4,6 +4,7 @@ import { supabase } from '../supabase';
 export interface AuthRequest extends Request {
   userId: string;
   userEmail: string | null;
+  preferredRoleId?: number;
 }
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
@@ -23,6 +24,12 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   const authReq = req as AuthRequest;
   authReq.userId = data.user.id;
   authReq.userEmail = data.user.email ?? null;
+  const roleHintHeader = req.headers['x-actor-role-id'];
+  const roleHintRaw = Array.isArray(roleHintHeader) ? roleHintHeader[0] : roleHintHeader;
+  const roleHint = Number(roleHintRaw);
+  if (Number.isInteger(roleHint) && (roleHint === 1 || roleHint === 2 || roleHint === 3)) {
+    authReq.preferredRoleId = roleHint;
+  }
 
   return next();
 }
