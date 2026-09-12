@@ -28,4 +28,21 @@ export const colors = {
   successBackground: '#F0FDF4', // light green
   successBorder: '#BBF7D0',     // green
   successText: '#15803D',       // green
+
+  // Operational Alert priority accents (Home banner + bottom-nav badge).
+  // Deliberately NOT red for ordinary High-priority alerts — red is
+  // reserved for a genuinely urgent/emergency state (e.g. future SOS /
+  // Officer Safety), so officers never confuse a routine BOLO/hazard
+  // notice with an emergency signal.
+  alertHighBackground: '#FFFBEB',  // amber-50
+  alertHighBorder: '#FCD34D',      // amber-300
+  alertHighAccent: '#B45309',      // amber-700 (AA-contrast on white)
+
+  alertMediumBackground: '#FEFCE8', // yellow-50
+  alertMediumBorder: '#FDE047',     // yellow-300
+  alertMediumAccent: '#A16207',     // yellow-700 (AA-contrast on white)
+
+  alertLowBackground: '#EFF6FF',   // blue-50
+  alertLowBorder: '#BFDBFE',       // blue-200
+  alertLowAccent: '#1D4ED8',       // blue-700 (AA-contrast on white)
 };

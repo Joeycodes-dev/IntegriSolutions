@@ -147,6 +147,32 @@ describe('Officer Operational Alerts Routes', () => {
       expect(res.body[0].id).toBe('alert-shift');
     });
 
+    it('sorts a critical-priority alert ahead of high/medium/low — priority order is critical > high > medium > low', async () => {
+      const low = baseAlertRow({ id: 'alert-low', target_scope: 'all_officers', priority: 'low' });
+      const medium = baseAlertRow({ id: 'alert-medium', target_scope: 'all_officers', priority: 'medium' });
+      const high = baseAlertRow({ id: 'alert-high', target_scope: 'all_officers', priority: 'high' });
+      const critical = baseAlertRow({ id: 'alert-critical', target_scope: 'all_officers', priority: 'critical' });
+
+      mockServiceSupabase.from.mockImplementation((table: string) => {
+        if (table === 'roadblock_shift_officers') return chainable({ data: [], error: null });
+        if (table === 'operational_alert_officers') return chainable({ data: [], error: null });
+        if (table === 'operational_alerts') {
+          return chainable({ data: [low, medium, high, critical], error: null });
+        }
+        return chainable({ data: [], error: null });
+      });
+
+      const res = await request(app).get('/api/alerts/active').set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body.map((row: any) => row.id)).toEqual([
+        'alert-critical',
+        'alert-high',
+        'alert-medium',
+        'alert-low',
+      ]);
+    });
+
     it('excludes an alert once it has expired', async () => {
       const expiredAlert = baseAlertRow({
         id: 'alert-expired',

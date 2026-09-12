@@ -379,7 +379,7 @@ export interface AlertMatchEscalationSummary {
   id: string;
   description: string;
   alertType: string;
-  priority: 'high' | 'medium' | 'low';
+  priority: 'critical' | 'high' | 'medium' | 'low';
 }
 
 export interface AlertMatchEscalationOfficer {
@@ -406,6 +406,18 @@ const MATCH_ESCALATION_DISCLAIMER =
 
 function capitalize(value: string): string {
   return value.length ? value[0].toUpperCase() + value.slice(1) : value;
+}
+
+/**
+ * Chat messages have their own, separate priority concept/DB constraint
+ * ('high' | 'medium' | 'low' — unrelated to Operational Alerts) that this
+ * task does not extend. An Operational Alert's Critical tier has no chat
+ * equivalent, so it's clamped down to 'high' — the strongest priority chat
+ * actually supports — only for the chat channel field. The human-readable
+ * "Priority: Critical" text in the message body is unaffected.
+ */
+function toChatPriority(priority: AlertMatchEscalationSummary['priority']): 'high' | 'medium' | 'low' {
+  return priority === 'critical' ? 'high' : priority;
 }
 
 /**
@@ -450,7 +462,7 @@ export async function reportAlertMatchWithEscalation(
 
   try {
     const thread = await createEmergencyChatThread({ includeSuperUsers: true, title: 'Alert Match Reports' });
-    await sendChatMessage(thread.id, body, true, alert.priority);
+    await sendChatMessage(thread.id, body, true, toChatPriority(alert.priority));
     return { escalated: true, escalationError: null };
   } catch (err) {
     return {

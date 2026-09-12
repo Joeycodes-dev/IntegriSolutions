@@ -127,25 +127,6 @@ export const styles = StyleSheet.create({
     color: colors.textPrimary,
     letterSpacing: 0.4
   },
-  priorityBadgeHigh: {
-    backgroundColor: colors.errorBackground,
-    borderWidth: 1,
-    borderColor: colors.errorBorder
-  },
-  priorityBadgeHighText: {
-    color: colors.errorText
-  },
-  priorityBadgeMedium: {
-    backgroundColor: '#FEF3C7',
-    borderWidth: 1,
-    borderColor: '#FDE68A'
-  },
-  priorityBadgeMediumText: {
-    color: colors.warning
-  },
-  priorityBadgeLow: {
-    backgroundColor: colors.surfaceHighlight
-  },
   provenanceBadge: {
     borderRadius: 999,
     paddingHorizontal: 10,

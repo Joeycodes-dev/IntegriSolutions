@@ -7,6 +7,9 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { styles } from './OfficerBottomNav.styles';
 import { colors } from '../styles/colors';
 import { useChatUnreadCount } from '../lib/useChatUnreadCount';
+import { useAlertsContext } from '../lib/AlertsContext';
+import { summarizeAlertsForHome } from '../lib/homeAlertsSummary';
+import { formatAlertBadgeCount } from '../lib/alertBadge';
 import { OFFICER_BOTTOM_NAV_TABS, type OfficerTab } from '../lib/officerBottomNavTabs';
 
 export type { OfficerTab };
@@ -18,6 +21,10 @@ interface Props {
 export function OfficerBottomNav({ active }: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<any>>();
   const unreadCount = useChatUnreadCount(active !== 'EmergencyChat');
+  // Reuses the same shared alert state (and the same active/unacknowledged/
+  // unexpired eligibility rule) as the Home summary — no separate fetch.
+  const { alerts } = useAlertsContext();
+  const unacknowledgedAlertCount = summarizeAlertsForHome(alerts).totalUnacknowledged;
 
   return (
     <View style={styles.bottomNav}>
@@ -46,6 +53,11 @@ export function OfficerBottomNav({ active }: Props) {
             {tab.key === 'EmergencyChat' && unreadCount > 0 && (
               <View pointerEvents="none" style={styles.unreadPill}>
                 <Text style={styles.unreadPillText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+              </View>
+            )}
+            {tab.key === 'Alerts' && unacknowledgedAlertCount > 0 && (
+              <View pointerEvents="none" style={styles.unreadPill}>
+                <Text style={styles.unreadPillText}>{formatAlertBadgeCount(unacknowledgedAlertCount)}</Text>
               </View>
             )}
             <Text style={[isActive ? styles.navLabel : styles.navLabelInactive]}>

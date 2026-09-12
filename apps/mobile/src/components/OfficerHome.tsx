@@ -11,6 +11,7 @@ import type { OperationalAlert, UserProfile } from '../types';
 
 import { styles } from './OfficerHome.styles';
 import { colors } from '../styles/colors';
+import { alertPriorityStyle } from '../lib/alertPriorityStyle';
 
 interface Props {
   profile: UserProfile;
@@ -228,37 +229,40 @@ export function OfficerHome({
         </Pressable>
       </View>
 
-      {featuredAlert && (
-        <View style={styles.alertBanner}>
-          <View style={styles.alertBannerHeaderRow}>
-            <View style={styles.alertPriorityBadge}>
-              <Text style={styles.alertPriorityBadgeText}>{featuredAlert.priority.toUpperCase()}</Text>
+      {featuredAlert && (() => {
+        const priorityStyle = alertPriorityStyle(featuredAlert.priority);
+        return (
+          <View style={[styles.alertBanner, { backgroundColor: priorityStyle.background, borderColor: priorityStyle.border }]}>
+            <View style={styles.alertBannerHeaderRow}>
+              <View style={[styles.alertPriorityBadge, { backgroundColor: priorityStyle.accent }]}>
+                <Text style={styles.alertPriorityBadgeText}>{featuredAlert.priority.toUpperCase()}</Text>
+              </View>
+              <Text style={[styles.alertBannerLabel, { color: priorityStyle.labelText }]}>Operational Alert</Text>
             </View>
-            <Text style={styles.alertBannerLabel}>Operational Alert</Text>
+            <Text style={styles.alertDescription}>{featuredAlert.description}</Text>
+            <Text style={styles.alertMetaText}>{alertProvenanceLabel(featuredAlert)}</Text>
+            {featuredAlert.expiresAt && (
+              <Text style={styles.alertMetaText}>Expires {formatAlertExpiry(featuredAlert.expiresAt)}</Text>
+            )}
+            <View style={styles.alertActionsRow}>
+              <Pressable
+                style={[styles.alertAckButton, { backgroundColor: priorityStyle.accent }, acknowledging && styles.alertAckButtonDisabled]}
+                onPress={() => void handleAcknowledge()}
+                disabled={acknowledging}
+              >
+                {acknowledging ? (
+                  <ActivityIndicator size="small" color={colors.background} />
+                ) : (
+                  <Text style={styles.alertAckButtonText}>Acknowledge</Text>
+                )}
+              </Pressable>
+              <Pressable style={[styles.alertViewButton, { borderColor: priorityStyle.border }]} onPress={onViewAlerts}>
+                <Text style={[styles.alertViewButtonText, { color: priorityStyle.labelText }]}>View Details</Text>
+              </Pressable>
+            </View>
           </View>
-          <Text style={styles.alertDescription}>{featuredAlert.description}</Text>
-          <Text style={styles.alertMetaText}>{alertProvenanceLabel(featuredAlert)}</Text>
-          {featuredAlert.expiresAt && (
-            <Text style={styles.alertMetaText}>Expires {formatAlertExpiry(featuredAlert.expiresAt)}</Text>
-          )}
-          <View style={styles.alertActionsRow}>
-            <Pressable
-              style={[styles.alertAckButton, acknowledging && styles.alertAckButtonDisabled]}
-              onPress={() => void handleAcknowledge()}
-              disabled={acknowledging}
-            >
-              {acknowledging ? (
-                <ActivityIndicator size="small" color={colors.background} />
-              ) : (
-                <Text style={styles.alertAckButtonText}>Acknowledge</Text>
-              )}
-            </Pressable>
-            <Pressable style={styles.alertViewButton} onPress={onViewAlerts}>
-              <Text style={styles.alertViewButtonText}>View Details</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
+        );
+      })()}
 
       {otherAlertsCount > 0 && (
         <Pressable style={styles.alertsSummaryRow} onPress={onViewAlerts}>

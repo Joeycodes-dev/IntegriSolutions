@@ -161,11 +161,11 @@ export const styles = StyleSheet.create({
     fontWeight: '600'
   },
   alertBanner: {
-    backgroundColor: colors.errorBackground,
+    // Background/border color is applied per-priority via alertPriorityStyle()
+    // at render time — see OfficerHome.tsx.
     borderRadius: 16,
     padding: 14,
     borderWidth: 1,
-    borderColor: colors.errorBorder,
     marginBottom: 14
   },
   alertBannerHeaderRow: {
@@ -175,10 +175,10 @@ export const styles = StyleSheet.create({
     marginBottom: 6
   },
   alertPriorityBadge: {
+    // backgroundColor applied per-priority — see OfficerHome.tsx.
     borderRadius: 999,
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    backgroundColor: colors.error
+    paddingVertical: 3
   },
   alertPriorityBadgeText: {
     color: colors.background,
@@ -187,9 +187,9 @@ export const styles = StyleSheet.create({
     letterSpacing: 0.4
   },
   alertBannerLabel: {
+    // color applied per-priority — see OfficerHome.tsx.
     fontSize: 11,
     fontWeight: '700',
-    color: colors.errorText,
     letterSpacing: 0.4,
     textTransform: 'uppercase'
   },
@@ -210,12 +210,12 @@ export const styles = StyleSheet.create({
     marginTop: 10
   },
   alertAckButton: {
+    // backgroundColor applied per-priority — see OfficerHome.tsx.
     flex: 1,
     height: 36,
     borderRadius: 10,
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.error
+    justifyContent: 'center'
   },
   alertAckButtonDisabled: {
     opacity: 0.6
@@ -226,17 +226,17 @@ export const styles = StyleSheet.create({
     fontWeight: '700'
   },
   alertViewButton: {
+    // borderColor applied per-priority — see OfficerHome.tsx.
     flex: 1,
     height: 36,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.errorBorder
+    borderWidth: 1
   },
   alertViewButtonText: {
-    color: colors.errorText,
+    // color applied per-priority — see OfficerHome.tsx.
     fontSize: 12,
     fontWeight: '700'
   },

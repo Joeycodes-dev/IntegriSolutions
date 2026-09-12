@@ -5,9 +5,11 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { OfficerBottomNav } from '../components/OfficerBottomNav';
 import { useAuth } from '../lib/AuthContext';
-import { getActiveAlerts, acknowledgeAlert, reportAlertMatchWithEscalation } from '../services/api';
+import { useAlertsContext } from '../lib/AlertsContext';
+import { reportAlertMatchWithEscalation } from '../services/api';
 import type { OperationalAlert } from '../types';
 import { colors } from '../styles/colors';
+import { alertPriorityStyle } from '../lib/alertPriorityStyle';
 import { styles } from './AlertsScreen.styles';
 
 type RootStackParamList = {
@@ -33,18 +35,6 @@ const ALERT_TYPE_LABELS: Record<string, string> = {
   general: 'General'
 };
 
-function priorityBadgeStyle(priority: string) {
-  if (priority === 'high') return [styles.typeBadge, styles.priorityBadgeHigh];
-  if (priority === 'low') return [styles.typeBadge, styles.priorityBadgeLow];
-  return [styles.typeBadge, styles.priorityBadgeMedium];
-}
-
-function priorityBadgeTextStyle(priority: string) {
-  if (priority === 'high') return [styles.typeBadgeText, styles.priorityBadgeHighText];
-  if (priority === 'medium') return [styles.typeBadgeText, styles.priorityBadgeMediumText];
-  return styles.typeBadgeText;
-}
-
 function provenanceLabel(alert: OperationalAlert): string {
   if (alert.sourceType === 'external') {
     return `External — ${alert.sourceAuthority ?? 'Unknown authority'} (Ref: ${alert.sourceReference ?? 'n/a'})`;
@@ -54,26 +44,11 @@ function provenanceLabel(alert: OperationalAlert): string {
 
 export function AlertsScreen({ navigation: _navigation }: Props) {
   const { profile } = useAuth();
-  const [alerts, setAlerts] = useState<OperationalAlert[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { alerts, loading, error, refresh, acknowledge } = useAlertsContext();
   const [ackingId, setAckingId] = useState<string | null>(null);
   const [matchFormAlertId, setMatchFormAlertId] = useState<string | null>(null);
   const [matchNotes, setMatchNotes] = useState('');
   const [submittingMatch, setSubmittingMatch] = useState(false);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const active = await getActiveAlerts();
-      setAlerts(active);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load operational alerts');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -84,8 +59,7 @@ export function AlertsScreen({ navigation: _navigation }: Props) {
   const handleAcknowledge = async (alert: OperationalAlert) => {
     setAckingId(alert.id);
     try {
-      const result = await acknowledgeAlert(alert.id);
-      setAlerts((prev) => prev.map((item) => item.id === alert.id ? { ...item, acknowledgedAt: result.acknowledgedAt } : item));
+      await acknowledge(alert.id);
     } catch (err) {
       Alert.alert('Acknowledge failed', err instanceof Error ? err.message : 'Could not acknowledge this alert.');
     } finally {
@@ -134,6 +108,7 @@ export function AlertsScreen({ navigation: _navigation }: Props) {
   const renderAlert = ({ item }: { item: OperationalAlert }) => {
     const acknowledged = Boolean(item.acknowledgedAt);
     const formOpen = matchFormAlertId === item.id;
+    const priorityStyle = alertPriorityStyle(item.priority);
 
     return (
       <View style={styles.card}>
@@ -143,8 +118,8 @@ export function AlertsScreen({ navigation: _navigation }: Props) {
               <View style={styles.typeBadge}>
                 <Text style={styles.typeBadgeText}>{ALERT_TYPE_LABELS[item.alertType] ?? item.alertType}</Text>
               </View>
-              <View style={priorityBadgeStyle(item.priority) as any}>
-                <Text style={priorityBadgeTextStyle(item.priority) as any}>{item.priority.toUpperCase()}</Text>
+              <View style={[styles.typeBadge, { backgroundColor: priorityStyle.background, borderWidth: 1, borderColor: priorityStyle.border }]}>
+                <Text style={[styles.typeBadgeText, { color: priorityStyle.labelText }]}>{item.priority.toUpperCase()}</Text>
               </View>
               <View style={[styles.provenanceBadge, item.sourceType === 'external' && styles.provenanceBadgeExternal]}>
                 <Text style={[styles.provenanceBadgeText, item.sourceType === 'external' && styles.provenanceBadgeTextExternal]}>

@@ -28,7 +28,7 @@ import {
 import { saveLocally, syncPendingRecords } from "../services/sync";
 import { useSync } from "../lib/SyncContext";
 import { getRuntimeConfig, updateDutyStatus } from "../services/api";
-import { useActiveAlerts } from "../lib/useActiveAlerts";
+import { useAlertsContext } from "../lib/AlertsContext";
 import { summarizeAlertsForHome } from "../lib/homeAlertsSummary";
 import type { RuntimeConfig } from "../types";
 import {
@@ -638,7 +638,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     alerts,
     refresh: refreshAlerts,
     acknowledge: acknowledgeAlertAction,
-  } = useActiveAlerts();
+  } = useAlertsContext();
   const alertsSummary = useMemo(
     () => summarizeAlertsForHome(alerts),
     [alerts],

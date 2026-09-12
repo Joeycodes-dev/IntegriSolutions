@@ -21,7 +21,10 @@ const serviceSupabase = createClient(
 
 const ALERT_TYPES = new Set(['bolo_person', 'bolo_vehicle', 'hazard', 'general']);
 const BOLO_TYPES = new Set(['bolo_person', 'bolo_vehicle']);
-const PRIORITIES = new Set(['high', 'medium', 'low']);
+// critical = immediate emergency / officer-safety / life-safety event.
+// high remains an urgent-but-non-emergency operational priority — it is
+// not renamed or repurposed. Order: critical > high > medium > low.
+const PRIORITIES = new Set(['critical', 'high', 'medium', 'low']);
 const SOURCE_TYPES = new Set(['internal', 'external']);
 const TARGET_SCOPES = new Set(['all_officers', 'shift', 'officers']);
 const STATUSES = new Set(['active', 'expired', 'cancelled', 'resolved']);
@@ -117,7 +120,8 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
 
   const alertType = String(body.alertType ?? '');
-  const priority = typeof body.priority === 'string' && PRIORITIES.has(body.priority) ? body.priority : 'medium';
+  const rawPriority = body.priority;
+  const priority = typeof rawPriority === 'string' && PRIORITIES.has(rawPriority) ? rawPriority : 'medium';
   const description = String(body.description ?? '').trim();
   const sourceType = typeof body.sourceType === 'string' && SOURCE_TYPES.has(body.sourceType) ? body.sourceType : 'internal';
   const sourceAuthority = optionalTrimmedString(body.sourceAuthority) ?? '';
@@ -131,6 +135,9 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
 
   if (!ALERT_TYPES.has(alertType)) {
     return res.status(400).json({ error: 'A valid alert type is required' });
+  }
+  if (rawPriority != null && (typeof rawPriority !== 'string' || !PRIORITIES.has(rawPriority))) {
+    return res.status(400).json({ error: `priority must be one of: ${Array.from(PRIORITIES).join(', ')}` });
   }
   if (!description) {
     return res.status(400).json({ error: 'Description is required' });

@@ -79,7 +79,10 @@ export interface UserProfile {
 }
 
 export type OperationalAlertType = 'bolo_person' | 'bolo_vehicle' | 'hazard' | 'general';
-export type OperationalAlertPriority = 'high' | 'medium' | 'low';
+/** critical = immediate emergency / officer-safety / life-safety event.
+ * high remains an urgent-but-non-emergency operational priority — it is
+ * not renamed or repurposed. Order: critical > high > medium > low. */
+export type OperationalAlertPriority = 'critical' | 'high' | 'medium' | 'low';
 export type OperationalAlertSourceType = 'internal' | 'external';
 export type OperationalAlertStatus = 'active' | 'expired' | 'cancelled' | 'resolved';
 export type OperationalAlertTargetScope = 'all_officers' | 'shift' | 'officers';

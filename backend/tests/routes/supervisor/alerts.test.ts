@@ -221,6 +221,38 @@ describe('Supervisor Operational Alerts Routes', () => {
       expect(res.status).toBe(201);
     });
 
+    it('accepts a critical priority — the emergency/officer-safety/life-safety tier', async () => {
+      const res = await request(app)
+        .post('/api/supervisor/alerts')
+        .set('Authorization', 'Bearer t')
+        .send(validAlertPayload({ priority: 'critical' }));
+
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({ id: 'alert-1' });
+    });
+
+    it.each(['urgent', 'emergency', 'HIGH', ''])('rejects an invalid priority value (%j)', async (priority) => {
+      const res = await request(app)
+        .post('/api/supervisor/alerts')
+        .set('Authorization', 'Bearer t')
+        .send(validAlertPayload({ priority }));
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/priority must be one of/i);
+    });
+
+    it('omitting priority still defaults to medium (backwards compatible)', async () => {
+      const payload = validAlertPayload();
+      delete (payload as Record<string, unknown>).priority;
+
+      const res = await request(app)
+        .post('/api/supervisor/alerts')
+        .set('Authorization', 'Bearer t')
+        .send(payload);
+
+      expect(res.status).toBe(201);
+    });
+
     it('rejects a 13-digit numeric person_reference', async () => {
       const res = await request(app)
         .post('/api/supervisor/alerts')
@@ -377,5 +409,4 @@ describe('Supervisor Operational Alerts Routes', () => {
       expect(res.body).toEqual([]);
     });
   });
-
 });

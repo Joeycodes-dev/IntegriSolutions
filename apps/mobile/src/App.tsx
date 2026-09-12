@@ -13,6 +13,7 @@ import { RoadOffenceScreen } from './screens/RoadOffenceScreen';
 import { AlertsScreen } from './screens/AlertsScreen';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { SyncProvider } from './lib/SyncContext';
+import { AlertsProvider } from './lib/AlertsContext';
 import { getDB } from './db/client';
 
 type RootStackParamList = {
@@ -74,10 +75,12 @@ export default function App() {
   return (
     <AuthProvider>
       <SyncProvider>
-        <NavigationContainer>
-          <AppNavigator />
-          <StatusBar style="auto" />
-        </NavigationContainer>
+        <AlertsProvider>
+          <NavigationContainer>
+            <AppNavigator />
+            <StatusBar style="auto" />
+          </NavigationContainer>
+        </AlertsProvider>
       </SyncProvider>
     </AuthProvider>
   );

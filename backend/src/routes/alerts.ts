@@ -31,7 +31,11 @@ function isMissingTable(error: { message?: string; code?: string } | null | unde
   return !!error && (error.code === '42P01' || /operational_alert/i.test(error.message ?? ''));
 }
 
+// critical > high > medium > low. critical is a genuine emergency/officer-
+// safety/life-safety tier — distinct from (and above) the existing high
+// "urgent operational alert" tier, which is not renamed or repurposed.
 function priorityWeight(priority: unknown): number {
+  if (priority === 'critical') return 4;
   if (priority === 'high') return 3;
   if (priority === 'low') return 1;
   return 2;
