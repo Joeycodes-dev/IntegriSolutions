@@ -1,0 +1,395 @@
+import { Router } from 'express';
+import { createClient } from '@supabase/supabase-js';
+import multer from 'multer';
+import { requireSupervisor, type SupervisorRequest } from '../../middleware/requireSupervisor';
+import { ROLE_SUPERVISOR } from '../../constants/roles';
+import { writeAuditLog } from '../../utilities/auditLog';
+import { asyncHandler } from '../../asyncHandler';
+
+const router = Router();
+
+const serviceSupabase = createClient(
+  process.env.SUPABASE_URL ?? '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+  {
+    auth: {
+      persistSession: false,
+      detectSessionInUrl: false
+    }
+  }
+);
+
+const ALERT_TYPES = new Set(['bolo_person', 'bolo_vehicle', 'hazard', 'general']);
+const BOLO_TYPES = new Set(['bolo_person', 'bolo_vehicle']);
+const PRIORITIES = new Set(['high', 'medium', 'low']);
+const SOURCE_TYPES = new Set(['internal', 'external']);
+const TARGET_SCOPES = new Set(['all_officers', 'shift', 'officers']);
+const STATUSES = new Set(['active', 'expired', 'cancelled', 'resolved']);
+const PERSON_REFERENCE_ID_NUMBER_PATTERN = /^\d{13}$/;
+
+const photoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, callback) => callback(null, ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype))
+});
+
+function isMissingTable(error: { message?: string; code?: string } | null | undefined): boolean {
+  return !!error && (error.code === '42P01' || /operational_alert/i.test(error.message ?? ''));
+}
+
+function optionalTrimmedString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function optionalNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function sanitizeOfficerIds(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const ids = value
+    .map((item) => Number(item))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  return Array.from(new Set(ids));
+}
+
+function parseDate(value: unknown): Date | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function supervisorNameFromEmail(email: string | null | undefined): string {
+  const local = email?.split('@')[0]?.replace(/[._-]+/g, ' ').trim();
+  return local || 'Supervisor';
+}
+
+function toOperationalAlert(row: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  return {
+    id: String(row.id),
+    alertType: String(row.alert_type),
+    priority: String(row.priority),
+    description: String(row.description),
+    vehicleRegistration: row.vehicle_registration == null ? null : String(row.vehicle_registration),
+    vehicleDescription: row.vehicle_description == null ? null : String(row.vehicle_description),
+    personName: row.person_name == null ? null : String(row.person_name),
+    personDescription: row.person_description == null ? null : String(row.person_description),
+    personReference: row.person_reference == null ? null : String(row.person_reference),
+    photoUrl: row.photo_url == null ? null : String(row.photo_url),
+    locationLat: row.location_lat == null ? null : Number(row.location_lat),
+    locationLng: row.location_lng == null ? null : Number(row.location_lng),
+    locationLabel: row.location_label == null ? null : String(row.location_label),
+    issuedBySource: String(row.issued_by_source),
+    issuedById: Number(row.issued_by_id),
+    issuedByName: String(row.issued_by_name),
+    targetScope: String(row.target_scope),
+    targetShiftId: row.target_shift_id == null ? null : String(row.target_shift_id),
+    sourceType: String(row.source_type),
+    sourceAuthority: row.source_authority == null ? null : String(row.source_authority),
+    sourceReference: row.source_reference == null ? null : String(row.source_reference),
+    status: String(row.status),
+    expiresAt: row.expires_at == null ? null : String(row.expires_at),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at ?? row.created_at),
+    ...extra
+  };
+}
+
+/**
+ * requireSupervisor also accepts Admin (for read-only oversight). Issuing, updating,
+ * or photo-attaching an operational alert is a field-command action reserved for
+ * Supervisors — Admin's role is account/system administration and audit visibility,
+ * not originating operational content (see supervisor/shifts.ts, cases.ts, etc.,
+ * none of which Admin has a UI path to author either).
+ */
+function requireSupervisorRole(req: any, res: any, next: any) {
+  const authReq = req as SupervisorRequest;
+  if (authReq.roleId !== ROLE_SUPERVISOR) {
+    return res.status(403).json({ error: 'Only supervisor accounts can issue operational alerts' });
+  }
+  return next();
+}
+
+router.use(requireSupervisor);
+
+router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
+  const authReq = req as SupervisorRequest;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  const alertType = String(body.alertType ?? '');
+  const priority = typeof body.priority === 'string' && PRIORITIES.has(body.priority) ? body.priority : 'medium';
+  const description = String(body.description ?? '').trim();
+  const sourceType = typeof body.sourceType === 'string' && SOURCE_TYPES.has(body.sourceType) ? body.sourceType : 'internal';
+  const sourceAuthority = optionalTrimmedString(body.sourceAuthority) ?? '';
+  const sourceReference = optionalTrimmedString(body.sourceReference) ?? '';
+  const targetScope = String(body.targetScope ?? '');
+  const targetShiftId = optionalTrimmedString(body.targetShiftId);
+  const officerIds = sanitizeOfficerIds(body.officerIds);
+  const personReference = typeof body.personReference === 'string' ? body.personReference.trim() : '';
+  const location = (body.location ?? {}) as { lat?: unknown; lng?: unknown; label?: unknown };
+  const expiresAt = body.expiresAt ? parseDate(body.expiresAt) : null;
+
+  if (!ALERT_TYPES.has(alertType)) {
+    return res.status(400).json({ error: 'A valid alert type is required' });
+  }
+  if (!description) {
+    return res.status(400).json({ error: 'Description is required' });
+  }
+  if (!TARGET_SCOPES.has(targetScope)) {
+    return res.status(400).json({ error: 'A valid target scope is required' });
+  }
+  if (targetScope === 'shift' && !targetShiftId) {
+    return res.status(400).json({ error: 'targetShiftId is required when targetScope is shift' });
+  }
+  if (targetScope === 'officers' && officerIds.length === 0) {
+    return res.status(400).json({ error: 'At least one officer id is required when targetScope is officers' });
+  }
+  if (BOLO_TYPES.has(alertType) && sourceType !== 'external') {
+    return res.status(400).json({
+      error: 'BOLO alerts for a person or vehicle must come from an external authority — set source type to external with an authority and reference'
+    });
+  }
+  if (sourceType === 'external' && (!sourceAuthority || !sourceReference)) {
+    return res.status(400).json({ error: 'External alerts require both a source authority and a source reference' });
+  }
+  if (personReference && PERSON_REFERENCE_ID_NUMBER_PATTERN.test(personReference)) {
+    return res.status(400).json({ error: 'Do not enter a full ID number in the person reference — use a partial reference or description' });
+  }
+
+  const supervisorEmail = authReq.userEmail ?? 'unknown';
+  const insertPayload = {
+    alert_type: alertType,
+    priority,
+    description,
+    vehicle_registration: optionalTrimmedString(body.vehicleRegistration),
+    vehicle_description: optionalTrimmedString(body.vehicleDescription),
+    person_name: optionalTrimmedString(body.personName),
+    person_description: optionalTrimmedString(body.personDescription),
+    person_reference: personReference || null,
+    location_lat: optionalNumber(location.lat),
+    location_lng: optionalNumber(location.lng),
+    location_label: optionalTrimmedString(location.label),
+    issued_by_source: 'supervisor_users',
+    issued_by_id: authReq.supervisorOfficerId,
+    issued_by_name: supervisorNameFromEmail(supervisorEmail),
+    target_scope: targetScope,
+    target_shift_id: targetScope === 'shift' ? targetShiftId : null,
+    source_type: sourceType,
+    source_authority: sourceType === 'external' ? sourceAuthority : null,
+    source_reference: sourceType === 'external' ? sourceReference : null,
+    expires_at: expiresAt ? expiresAt.toISOString() : null
+  };
+
+  const { data: inserted, error: insertError } = await serviceSupabase
+    .from('operational_alerts')
+    .insert([insertPayload])
+    .select('*');
+
+  if (insertError || !inserted?.length) {
+    if (isMissingTable(insertError)) {
+      return res.status(503).json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' });
+    }
+    return res.status(400).json({ error: insertError?.message ?? 'Failed to create operational alert' });
+  }
+
+  const alertRow = inserted[0] as Record<string, unknown>;
+
+  if (targetScope === 'officers') {
+    const { error: targetError } = await serviceSupabase
+      .from('operational_alert_officers')
+      .insert(officerIds.map((officerId) => ({ alert_id: alertRow.id, officer_id: officerId })));
+
+    if (targetError) {
+      await serviceSupabase.from('operational_alerts').delete().eq('id', alertRow.id);
+      return res.status(500).json({ error: targetError.message });
+    }
+  }
+
+  await writeAuditLog(supervisorEmail, `Created operational alert (${alertType})`, String(alertRow.id));
+
+  return res.status(201).json(toOperationalAlert(alertRow, {
+    assignedOfficerIds: targetScope === 'officers' ? officerIds : []
+  }));
+}));
+
+router.get('/', asyncHandler(async (_req, res) => {
+  const { data: rows, error } = await serviceSupabase
+    .from('operational_alerts')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (error) {
+    if (isMissingTable(error)) {
+      return res.status(503).json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+
+  const alertIds = (rows ?? []).map((row) => String(row.id));
+
+  const [ackRes, matchRes, targetRes] = await Promise.all([
+    alertIds.length
+      ? serviceSupabase.from('operational_alert_acknowledgements').select('alert_id').in('alert_id', alertIds)
+      : Promise.resolve({ data: [] as Array<{ alert_id: string }>, error: null }),
+    alertIds.length
+      ? serviceSupabase.from('operational_alert_matches').select('alert_id').in('alert_id', alertIds)
+      : Promise.resolve({ data: [] as Array<{ alert_id: string }>, error: null }),
+    alertIds.length
+      ? serviceSupabase.from('operational_alert_officers').select('alert_id, officer_id').in('alert_id', alertIds)
+      : Promise.resolve({ data: [] as Array<{ alert_id: string; officer_id: number }>, error: null })
+  ]);
+
+  const ackCounts = new Map<string, number>();
+  for (const row of ackRes.data ?? []) {
+    const key = String(row.alert_id);
+    ackCounts.set(key, (ackCounts.get(key) ?? 0) + 1);
+  }
+
+  const matchCounts = new Map<string, number>();
+  for (const row of matchRes.data ?? []) {
+    const key = String(row.alert_id);
+    matchCounts.set(key, (matchCounts.get(key) ?? 0) + 1);
+  }
+
+  const targetsByAlert = new Map<string, number[]>();
+  for (const row of targetRes.data ?? []) {
+    const key = String(row.alert_id);
+    targetsByAlert.set(key, [...(targetsByAlert.get(key) ?? []), Number(row.officer_id)]);
+  }
+
+  return res.json((rows ?? []).map((row) => toOperationalAlert(row as Record<string, unknown>, {
+    acknowledgementCount: ackCounts.get(String(row.id)) ?? 0,
+    matchCount: matchCounts.get(String(row.id)) ?? 0,
+    assignedOfficerIds: targetsByAlert.get(String(row.id)) ?? []
+  })));
+}));
+
+router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
+  const authReq = req as SupervisorRequest;
+  const alertId = String(req.params.id);
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const status = typeof body.status === 'string' ? body.status : undefined;
+  const hasExpiresPatch = Object.prototype.hasOwnProperty.call(body, 'expiresAt');
+
+  if (!status && !hasExpiresPatch) {
+    return res.status(400).json({ error: 'Provide status and/or expiresAt to update' });
+  }
+  if (status && !STATUSES.has(status)) {
+    return res.status(400).json({ error: `Status must be one of: ${Array.from(STATUSES).join(', ')}` });
+  }
+
+  const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (status) updatePayload.status = status;
+  if (hasExpiresPatch) {
+    const expiresAt = parseDate(body.expiresAt);
+    updatePayload.expires_at = expiresAt ? expiresAt.toISOString() : null;
+  }
+
+  const { data, error } = await serviceSupabase
+    .from('operational_alerts')
+    .update(updatePayload)
+    .eq('id', alertId)
+    .select('*')
+    .maybeSingle();
+
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Operational alert not found' });
+
+  await writeAuditLog(
+    authReq.userEmail ?? 'unknown',
+    `Updated operational alert ${alertId}${status ? ` to ${status}` : ''}`,
+    alertId
+  );
+
+  return res.json(toOperationalAlert(data as Record<string, unknown>));
+}));
+
+router.post('/:id/photo', requireSupervisorRole, photoUpload.single('photo'), asyncHandler(async (req, res) => {
+  const authReq = req as SupervisorRequest;
+  const alertId = String(req.params.id);
+  const file = req.file as Express.Multer.File | undefined;
+
+  if (!file) {
+    return res.status(400).json({ error: 'A photo file is required' });
+  }
+
+  const { data: existing, error: existingError } = await serviceSupabase
+    .from('operational_alerts')
+    .select('id')
+    .eq('id', alertId)
+    .maybeSingle();
+
+  if (existingError) return res.status(500).json({ error: existingError.message });
+  if (!existing) return res.status(404).json({ error: 'Operational alert not found' });
+
+  const extension = file.originalname.split('.').pop()?.replace(/[^a-z0-9]/gi, '') || 'jpg';
+  const storagePath = `operational-alerts/${alertId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
+
+  const { error: storageError } = await serviceSupabase.storage
+    .from('evidence')
+    .upload(storagePath, file.buffer, { contentType: file.mimetype, upsert: false });
+
+  if (storageError) {
+    return res.status(500).json({ error: `Alert photo upload failed: ${storageError.message}` });
+  }
+
+  const { data: urlData } = serviceSupabase.storage.from('evidence').getPublicUrl(storagePath);
+
+  const { data, error } = await serviceSupabase
+    .from('operational_alerts')
+    .update({
+      photo_url: urlData.publicUrl,
+      photo_storage_path: storagePath,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', alertId)
+    .select('*')
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  await writeAuditLog(authReq.userEmail ?? 'unknown', `Attached photo to operational alert ${alertId}`, alertId);
+
+  return res.status(201).json(toOperationalAlert(data as Record<string, unknown>));
+}));
+
+router.get('/:id/acknowledgements', asyncHandler(async (req, res) => {
+  const { data, error } = await serviceSupabase
+    .from('operational_alert_acknowledgements')
+    .select('*')
+    .eq('alert_id', req.params.id)
+    .order('acknowledged_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  return res.json((data ?? []).map((row) => ({
+    officerId: Number(row.officer_id),
+    officerName: String(row.officer_name),
+    badgeNumber: String(row.badge_number),
+    acknowledgedAt: String(row.acknowledged_at)
+  })));
+}));
+
+router.get('/:id/matches', asyncHandler(async (req, res) => {
+  const { data, error } = await serviceSupabase
+    .from('operational_alert_matches')
+    .select('*')
+    .eq('alert_id', req.params.id)
+    .order('created_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  return res.json((data ?? []).map((row) => ({
+    id: Number(row.id),
+    officerId: Number(row.officer_id),
+    officerName: String(row.officer_name),
+    badgeNumber: String(row.badge_number),
+    notes: String(row.notes),
+    locationLat: row.location_lat == null ? null : Number(row.location_lat),
+    locationLng: row.location_lng == null ? null : Number(row.location_lng),
+    createdAt: String(row.created_at)
+  })));
+}));
+
+export default router;

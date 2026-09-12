@@ -1,7 +1,18 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
-const ACCESS_TOKEN_KEY = 'backend_access_token';
 export const AUTH_EXPIRED_EVENT = 'integriscan:auth-expired';
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
+
+/**
+ * The bearer token and the caller's role id are kept in memory only — never in
+ * localStorage/sessionStorage. This is a deliberate security control, not an
+ * oversight: this portal grants Supervisor/Admin authority, so anything that can
+ * run JS in this origin (XSS, a compromised dependency, a malicious extension)
+ * must not be able to read a persisted credential straight out of browser
+ * storage. A page refresh therefore always requires signing in again — see
+ * AuthContext's initAuth(), which now always starts from "no token".
+ */
+let currentAccessToken: string | null = null;
+let currentActorRoleId: number | null = null;
 
 if (!import.meta.env.VITE_API_BASE_URL) {
   console.warn('VITE_API_BASE_URL is not defined; falling back to http://localhost:4000');
@@ -83,15 +94,22 @@ async function performRequest<T>(path: string, options: RequestInit, sentToken: 
 }
 
 export function getAccessToken() {
-  return localStorage.getItem(ACCESS_TOKEN_KEY);
+  return currentAccessToken;
 }
 
 export function setAccessToken(token: string) {
-  localStorage.setItem(ACCESS_TOKEN_KEY, token);
+  currentAccessToken = token;
 }
 
 export function clearAccessToken() {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  currentAccessToken = null;
+}
+
+/** Set alongside the token by AuthContext so authHeaders() can attach
+ * X-Actor-Role-Id without reading a persisted profile. Not itself sensitive
+ * (an integer role id, not PII), but still memory-only for consistency. */
+export function setActorRoleId(roleId: number | null) {
+  currentActorRoleId = roleId;
 }
 
 export interface RoadOffenceReviewRecord {
@@ -235,19 +253,10 @@ export async function createTest(payload: Record<string, unknown>) {
 function authHeaders() {
   const token = getAccessToken();
   if (!token) throw new Error('Not authenticated');
-  let roleHeader: Record<string, string> = {};
-  try {
-    const rawProfile = localStorage.getItem('local_auth_profile');
-    if (rawProfile) {
-      const parsed = JSON.parse(rawProfile) as { roleId?: unknown };
-      const roleId = Number(parsed.roleId);
-      if (Number.isInteger(roleId) && (roleId === 1 || roleId === 2 || roleId === 3)) {
-        roleHeader = { 'X-Actor-Role-Id': String(roleId) };
-      }
-    }
-  } catch {
-    roleHeader = {};
-  }
+  const roleHeader: Record<string, string> =
+    currentActorRoleId === 1 || currentActorRoleId === 2 || currentActorRoleId === 3
+      ? { 'X-Actor-Role-Id': String(currentActorRoleId) }
+      : {};
   return { Authorization: `Bearer ${token}`, ...roleHeader };
 }
 
@@ -611,4 +620,82 @@ export async function markChatThreadRead(threadId: string) {
     method: 'POST',
     headers: authHeaders()
   });
+}
+
+export async function getOperationalAlerts() {
+  return request<import('../types').OperationalAlert[]>('/api/supervisor/alerts', {
+    headers: authHeaders()
+  });
+}
+
+export async function createOperationalAlert(payload: import('../types').CreateOperationalAlertPayload) {
+  return request<import('../types').OperationalAlert>('/api/supervisor/alerts', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateOperationalAlert(
+  alertId: string,
+  payload: {
+    status?: import('../types').OperationalAlertStatus;
+    expiresAt?: string | null;
+  }
+) {
+  return request<import('../types').OperationalAlert>(`/api/supervisor/alerts/${encodeURIComponent(alertId)}`, {
+    method: 'PATCH',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function uploadOperationalAlertPhoto(alertId: string, file: File) {
+  const token = getAccessToken();
+  if (!token) throw new Error('Not authenticated');
+
+  const formData = new FormData();
+  formData.append('photo', file);
+
+  const response = await fetch(`${API_BASE}/api/supervisor/alerts/${encodeURIComponent(alertId)}/photo`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: formData
+  });
+
+  const rawText = await response.text();
+  let payload: Record<string, unknown> = {};
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      payload = { error: rawText.slice(0, 500) };
+    }
+  }
+
+  if (!response.ok) {
+    const message =
+      (typeof payload.error === 'string' ? payload.error : null) ||
+      `Upload failed (${response.status} ${response.statusText})`;
+    if (isExpiredTokenResponse(response.status, message)) {
+      emitAuthExpired(message, token);
+    }
+    throw new Error(message);
+  }
+
+  return payload as unknown as import('../types').OperationalAlert;
+}
+
+export async function getOperationalAlertAcknowledgements(alertId: string) {
+  return request<import('../types').OperationalAlertAcknowledgement[]>(
+    `/api/supervisor/alerts/${encodeURIComponent(alertId)}/acknowledgements`,
+    { headers: authHeaders() }
+  );
+}
+
+export async function getOperationalAlertMatches(alertId: string) {
+  return request<import('../types').OperationalAlertMatch[]>(
+    `/api/supervisor/alerts/${encodeURIComponent(alertId)}/matches`,
+    { headers: authHeaders() }
+  );
 }

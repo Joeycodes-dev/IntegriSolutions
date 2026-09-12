@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   LogOut,
   MapPinned,
+  Megaphone,
   Shield,
   ShieldAlert,
   User
@@ -22,6 +23,7 @@ const NAV_ITEMS: { id: SupervisorNavItem; label: string; icon: typeof LayoutDash
   { id: 'logs', label: 'Logs', icon: ClipboardList },
   { id: 'officers', label: 'Officers', icon: User },
   { id: 'shifts', label: 'Shifts', icon: MapPinned },
+  { id: 'alerts', label: 'Alerts', icon: Megaphone },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
   { id: 'roadOffences', label: 'Road Offences', icon: ShieldAlert },
   { id: 'chat', label: 'Emergency Chat', icon: MessageSquareWarning }

@@ -62,6 +62,39 @@ export interface DriverLicenseData {
   };
 }
 
+export type OperationalAlertType = 'bolo_person' | 'bolo_vehicle' | 'hazard' | 'general';
+export type OperationalAlertPriority = 'high' | 'medium' | 'low';
+export type OperationalAlertSourceType = 'internal' | 'external';
+export type OperationalAlertStatus = 'active' | 'expired' | 'cancelled' | 'resolved';
+export type OperationalAlertTargetScope = 'all_officers' | 'shift' | 'officers';
+
+/** BOLO / hazard / general operational bulletins — see GET /api/alerts/active. */
+export interface OperationalAlert {
+  id: string;
+  alertType: OperationalAlertType;
+  priority: OperationalAlertPriority;
+  description: string;
+  vehicleRegistration: string | null;
+  vehicleDescription: string | null;
+  personName: string | null;
+  personDescription: string | null;
+  personReference: string | null;
+  photoUrl: string | null;
+  locationLat: number | null;
+  locationLng: number | null;
+  locationLabel: string | null;
+  issuedByName: string;
+  targetScope: OperationalAlertTargetScope;
+  sourceType: OperationalAlertSourceType;
+  sourceAuthority: string | null;
+  sourceReference: string | null;
+  status: OperationalAlertStatus;
+  expiresAt: string | null;
+  createdAt: string;
+  /** Non-null once the signed-in officer has acknowledged this alert. */
+  acknowledgedAt: string | null;
+}
+
 export interface ChatOfficerContact {
   officerId: number;
   name: string;

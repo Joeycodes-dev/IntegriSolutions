@@ -28,6 +28,8 @@ import {
 import { saveLocally, syncPendingRecords } from "../services/sync";
 import { useSync } from "../lib/SyncContext";
 import { getRuntimeConfig, updateDutyStatus } from "../services/api";
+import { useActiveAlerts } from "../lib/useActiveAlerts";
+import { summarizeAlertsForHome } from "../lib/homeAlertsSummary";
 import type { RuntimeConfig } from "../types";
 import {
   decryptLicensePayload,
@@ -60,6 +62,7 @@ type RootStackParamList = {
   OfficerDashboard: undefined;
   OfficerReports: undefined;
   OfficerShifts: undefined;
+  Alerts: undefined;
   Audit: undefined;
   RoadOffence: undefined;
 };
@@ -631,6 +634,15 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     forceSync,
     refreshCounts,
   } = useSync();
+  const {
+    alerts,
+    refresh: refreshAlerts,
+    acknowledge: acknowledgeAlertAction,
+  } = useActiveAlerts();
+  const alertsSummary = useMemo(
+    () => summarizeAlertsForHome(alerts),
+    [alerts],
+  );
   const [syncModalVisible, setSyncModalVisible] = useState(false);
   const [step, setStep] = useState<OfficerStep>("idle");
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
@@ -685,10 +697,22 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   useFocusEffect(
     React.useCallback(() => {
       void refreshCounts();
+      void refreshAlerts();
       loadRuntimeConfig();
       return undefined;
-    }, [refreshCounts, loadRuntimeConfig]),
+    }, [refreshCounts, refreshAlerts, loadRuntimeConfig]),
   );
+
+  const handleAcknowledgeAlert = async (alertId: string) => {
+    try {
+      await acknowledgeAlertAction(alertId);
+    } catch (error) {
+      Alert.alert(
+        "Acknowledge failed",
+        error instanceof Error ? error.message : "Could not acknowledge this alert.",
+      );
+    }
+  };
 
   const effectiveCategoryKey = scannedData
     ? deriveDriverCategory(scannedData.licenseCodes)
@@ -1113,6 +1137,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             onForceSync={forceSync}
             onOpenReports={() => navigation.navigate("OfficerReports")}
             onOpenAudit={() => navigation.navigate("Audit")}
+            featuredAlert={alertsSummary.featuredAlert}
+            otherAlertsCount={alertsSummary.otherCount}
+            onAcknowledgeAlert={handleAcknowledgeAlert}
+            onViewAlerts={() => navigation.navigate("Alerts")}
           />
         )}
 

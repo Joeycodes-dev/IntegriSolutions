@@ -160,6 +160,106 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600'
   },
+  alertBanner: {
+    backgroundColor: colors.errorBackground,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.errorBorder,
+    marginBottom: 14
+  },
+  alertBannerHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6
+  },
+  alertPriorityBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    backgroundColor: colors.error
+  },
+  alertPriorityBadgeText: {
+    color: colors.background,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.4
+  },
+  alertBannerLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.errorText,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase'
+  },
+  alertDescription: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    lineHeight: 19
+  },
+  alertMetaText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: colors.textSecondary
+  },
+  alertActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10
+  },
+  alertAckButton: {
+    flex: 1,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.error
+  },
+  alertAckButtonDisabled: {
+    opacity: 0.6
+  },
+  alertAckButtonText: {
+    color: colors.background,
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  alertViewButton: {
+    flex: 1,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.errorBorder
+  },
+  alertViewButtonText: {
+    color: colors.errorText,
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  alertsSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surfaceHighlight,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14
+  },
+  alertsSummaryText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textPrimary
+  },
+  alertsSummaryLink: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.accentBlue
+  },
   statsRow: {
     flexDirection: 'row',
     gap: 10,

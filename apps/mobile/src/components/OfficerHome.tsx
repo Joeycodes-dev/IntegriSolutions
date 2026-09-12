@@ -7,7 +7,7 @@ import {
   View
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import type { UserProfile } from '../types';
+import type { OperationalAlert, UserProfile } from '../types';
 
 import { styles } from './OfficerHome.styles';
 import { colors } from '../styles/colors';
@@ -29,6 +29,14 @@ interface Props {
   onForceSync: () => void;
   onOpenReports: () => void;
   onOpenAudit: () => void;
+  /** Single most urgent alert to feature prominently, or null when nothing
+   * currently needs attention. See lib/homeAlertsSummary.ts. */
+  featuredAlert?: OperationalAlert | null;
+  /** Count of other eligible (unacknowledged, active, unexpired) alerts not
+   * shown as the banner — rendered as a compact summary only. */
+  otherAlertsCount?: number;
+  onAcknowledgeAlert?: (alertId: string) => Promise<void> | void;
+  onViewAlerts?: () => void;
 }
 
 type DutyStatus = 'on' | 'off' | 'break';
@@ -71,6 +79,24 @@ function formatLastSync(d: Date | null): string {
   });
 }
 
+function alertProvenanceLabel(alert: OperationalAlert): string {
+  if (alert.sourceType === 'external') {
+    return `External — ${alert.sourceAuthority ?? 'Unknown authority'}`;
+  }
+  return 'Internal';
+}
+
+function formatAlertExpiry(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString([], {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 export function OfficerHome({
   profile,
   pendingCount,
@@ -87,8 +113,23 @@ export function OfficerHome({
   onOpenRoadOffence,
   onForceSync,
   onOpenReports,
-  onOpenAudit
+  onOpenAudit,
+  featuredAlert = null,
+  otherAlertsCount = 0,
+  onAcknowledgeAlert,
+  onViewAlerts
 }: Props) {
+  const [acknowledging, setAcknowledging] = useState(false);
+
+  const handleAcknowledge = async () => {
+    if (!featuredAlert || !onAcknowledgeAlert) return;
+    setAcknowledging(true);
+    try {
+      await onAcknowledgeAlert(featuredAlert.id);
+    } finally {
+      setAcknowledging(false);
+    }
+  };
   const [duty, setDuty] = useState<DutyStatus>(initialDuty);
 
   const todayStats = useMemo(() => {
@@ -186,6 +227,47 @@ export function OfficerHome({
           <Text style={styles.syncButtonText}>Sync</Text>
         </Pressable>
       </View>
+
+      {featuredAlert && (
+        <View style={styles.alertBanner}>
+          <View style={styles.alertBannerHeaderRow}>
+            <View style={styles.alertPriorityBadge}>
+              <Text style={styles.alertPriorityBadgeText}>{featuredAlert.priority.toUpperCase()}</Text>
+            </View>
+            <Text style={styles.alertBannerLabel}>Operational Alert</Text>
+          </View>
+          <Text style={styles.alertDescription}>{featuredAlert.description}</Text>
+          <Text style={styles.alertMetaText}>{alertProvenanceLabel(featuredAlert)}</Text>
+          {featuredAlert.expiresAt && (
+            <Text style={styles.alertMetaText}>Expires {formatAlertExpiry(featuredAlert.expiresAt)}</Text>
+          )}
+          <View style={styles.alertActionsRow}>
+            <Pressable
+              style={[styles.alertAckButton, acknowledging && styles.alertAckButtonDisabled]}
+              onPress={() => void handleAcknowledge()}
+              disabled={acknowledging}
+            >
+              {acknowledging ? (
+                <ActivityIndicator size="small" color={colors.background} />
+              ) : (
+                <Text style={styles.alertAckButtonText}>Acknowledge</Text>
+              )}
+            </Pressable>
+            <Pressable style={styles.alertViewButton} onPress={onViewAlerts}>
+              <Text style={styles.alertViewButtonText}>View Details</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {otherAlertsCount > 0 && (
+        <Pressable style={styles.alertsSummaryRow} onPress={onViewAlerts}>
+          <Text style={styles.alertsSummaryText}>
+            {otherAlertsCount} active alert{otherAlertsCount === 1 ? '' : 's'}
+          </Text>
+          <Text style={styles.alertsSummaryLink}>View all</Text>
+        </Pressable>
+      )}
 
       <View style={styles.statsRow}>
         <View style={styles.statCard}>

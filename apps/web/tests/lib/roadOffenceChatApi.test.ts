@@ -21,17 +21,24 @@ describe('road offence + chat api (new features)', () => {
     vi.restoreAllMocks();
   });
 
-  async function loadApi() {
-    return await import('../../src/services/api');
+  // The token/role id are memory-only (see services/api.ts), so each test
+  // gets a fresh module instance and sets them via the real setters rather
+  // than pre-seeding localStorage.
+  async function loadAuthenticatedApi(roleId?: number) {
+    const api = await import('../../src/services/api');
+    api.setAccessToken('tok-123');
+    if (roleId !== undefined) {
+      api.setActorRoleId(roleId);
+    }
+    return api;
   }
 
   it('getRoadOffences sends the bearer token and returns rows', async () => {
-    localStorage.setItem('backend_access_token', 'tok-123');
     const rows = [{ id: 'off-1', offence_type: 'speeding' }];
     const fetchMock = mockFetchJson(rows);
     vi.stubGlobal('fetch', fetchMock);
 
-    const api = await loadApi();
+    const api = await loadAuthenticatedApi();
     const result = await api.getRoadOffences();
 
     expect(result).toEqual(rows);
@@ -42,21 +49,31 @@ describe('road offence + chat api (new features)', () => {
   });
 
   it('getRoadOffences surfaces server error messages', async () => {
-    localStorage.setItem('backend_access_token', 'tok-123');
     vi.stubGlobal('fetch', mockFetchJson({ error: 'Only supervisor accounts can review' }, false, 403, 'Forbidden'));
 
-    const api = await loadApi();
+    const api = await loadAuthenticatedApi();
     await expect(api.getRoadOffences()).rejects.toThrow('Only supervisor accounts can review');
   });
 
+  it('getRoadOffences sends no Authorization header when no token has been set (fresh page load)', async () => {
+    const fetchMock = mockFetchJson([]);
+    vi.stubGlobal('fetch', fetchMock);
+
+    // No setAccessToken() call — simulates the memory-only token being absent
+    // after a reload, before any sign-in has happened.
+    const api = await import('../../src/services/api');
+    await api.getRoadOffences();
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined();
+  });
+
   it('addRoadOffenceReview POSTs action + reason to the encoded review URL', async () => {
-    localStorage.setItem('backend_access_token', 'tok-123');
-    localStorage.setItem('local_auth_profile', JSON.stringify({ roleId: 2 }));
     const saved = { id: 5, action: 'verified' };
     const fetchMock = mockFetchJson(saved);
     vi.stubGlobal('fetch', fetchMock);
 
-    const api = await loadApi();
+    const api = await loadAuthenticatedApi(2);
     const result = await api.addRoadOffenceReview('off/123', 'verified', 'Confirmed via CCTV');
 
     expect(result).toEqual(saved);
@@ -66,14 +83,25 @@ describe('road offence + chat api (new features)', () => {
     expect(JSON.parse(init.body as string)).toEqual({ action: 'verified', reason: 'Confirmed via CCTV' });
   });
 
+  it('markChatThreadRead attaches X-Actor-Role-Id from the in-memory role, not from storage', async () => {
+    const fetchMock = mockFetchJson({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const api = await loadAuthenticatedApi(2);
+    await api.markChatThreadRead('t-1');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)['X-Actor-Role-Id']).toBe('2');
+    // Role id must never leak into browser storage either.
+    expect(localStorage.getItem('local_auth_profile')).toBeNull();
+  });
+
   it('getChatThreads + createEmergencyChatThread hit the chat endpoints', async () => {
-    localStorage.setItem('backend_access_token', 'tok-123');
-    localStorage.setItem('local_auth_profile', JSON.stringify({ roleId: 1 }));
     const threads = [{ id: 't-1' }];
     const fetchMock = mockFetchJson(threads);
     vi.stubGlobal('fetch', fetchMock);
 
-    const api = await loadApi();
+    const api = await loadAuthenticatedApi(1);
     expect(await api.getChatThreads()).toEqual(threads);
 
     fetchMock.mockResolvedValueOnce({
@@ -88,12 +116,10 @@ describe('road offence + chat api (new features)', () => {
   });
 
   it('getChatThreadMessages clamps limit, encodes the thread id and toggles markRead', async () => {
-    localStorage.setItem('backend_access_token', 'tok-123');
-    localStorage.setItem('local_auth_profile', JSON.stringify({ roleId: 1 }));
     const fetchMock = mockFetchJson([]);
     vi.stubGlobal('fetch', fetchMock);
 
-    const api = await loadApi();
+    const api = await loadAuthenticatedApi(1);
     await api.getChatThreadMessages('thread/1', 9999, false);
 
     const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -103,12 +129,10 @@ describe('road offence + chat api (new features)', () => {
   });
 
   it('sendChatMessage applies emergency/priority/reply/attachment defaults', async () => {
-    localStorage.setItem('backend_access_token', 'tok-123');
-    localStorage.setItem('local_auth_profile', JSON.stringify({ roleId: 1 }));
     const fetchMock = mockFetchJson({ id: 42 });
     vi.stubGlobal('fetch', fetchMock);
 
-    const api = await loadApi();
+    const api = await loadAuthenticatedApi(1);
     await api.sendChatMessage('t-1', 'Backup needed');
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -123,12 +147,10 @@ describe('road offence + chat api (new features)', () => {
   });
 
   it('markChatThreadRead + markAttachmentOpened POST to the read-tracking endpoints', async () => {
-    localStorage.setItem('backend_access_token', 'tok-123');
-    localStorage.setItem('local_auth_profile', JSON.stringify({ roleId: 2 }));
     const fetchMock = mockFetchJson({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
 
-    const api = await loadApi();
+    const api = await loadAuthenticatedApi(2);
     await api.markChatThreadRead('t-1');
     await api.markAttachmentOpened(7);
 

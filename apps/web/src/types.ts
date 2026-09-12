@@ -2,7 +2,7 @@ export type UserRole = 'officer' | 'supervisor' | 'admin';
 
 export type AdminNavItem = 'users' | 'audit' | 'config' | 'roadOffences' | 'chat';
 
-export type SupervisorNavItem = 'dashboard' | 'logs' | 'cases' | 'officers' | 'shifts' | 'reports' | 'roadOffences' | 'chat';
+export type SupervisorNavItem = 'dashboard' | 'logs' | 'cases' | 'officers' | 'shifts' | 'alerts' | 'reports' | 'roadOffences' | 'chat';
 
 export type PdfAccessPolicy = 'admin_only' | 'admin_supervisor' | 'disabled';
 
@@ -75,6 +75,81 @@ export interface UserProfile {
   region: string;
   officerTypeId: number;
   roleId: number;
+  createdAt: string;
+}
+
+export type OperationalAlertType = 'bolo_person' | 'bolo_vehicle' | 'hazard' | 'general';
+export type OperationalAlertPriority = 'high' | 'medium' | 'low';
+export type OperationalAlertSourceType = 'internal' | 'external';
+export type OperationalAlertStatus = 'active' | 'expired' | 'cancelled' | 'resolved';
+export type OperationalAlertTargetScope = 'all_officers' | 'shift' | 'officers';
+
+/** BOLO / hazard / general operational bulletins — see /api/supervisor/alerts. */
+export interface OperationalAlert {
+  id: string;
+  alertType: OperationalAlertType;
+  priority: OperationalAlertPriority;
+  description: string;
+  vehicleRegistration: string | null;
+  vehicleDescription: string | null;
+  personName: string | null;
+  personDescription: string | null;
+  personReference: string | null;
+  photoUrl: string | null;
+  locationLat: number | null;
+  locationLng: number | null;
+  locationLabel: string | null;
+  issuedBySource: 'supervisor_users';
+  issuedById: number;
+  issuedByName: string;
+  targetScope: OperationalAlertTargetScope;
+  targetShiftId: string | null;
+  sourceType: OperationalAlertSourceType;
+  sourceAuthority: string | null;
+  sourceReference: string | null;
+  status: OperationalAlertStatus;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  assignedOfficerIds: number[];
+  acknowledgementCount: number;
+  matchCount: number;
+}
+
+export interface CreateOperationalAlertPayload {
+  alertType: OperationalAlertType;
+  priority: OperationalAlertPriority;
+  description: string;
+  vehicleRegistration?: string;
+  vehicleDescription?: string;
+  personName?: string;
+  personDescription?: string;
+  personReference?: string;
+  location?: { lat?: number; lng?: number; label?: string };
+  targetScope: OperationalAlertTargetScope;
+  targetShiftId?: string | null;
+  officerIds?: number[];
+  sourceType: OperationalAlertSourceType;
+  sourceAuthority?: string;
+  sourceReference?: string;
+  expiresAt?: string | null;
+}
+
+export interface OperationalAlertAcknowledgement {
+  officerId: number;
+  officerName: string;
+  badgeNumber: string;
+  acknowledgedAt: string;
+}
+
+export interface OperationalAlertMatch {
+  id: number;
+  officerId: number;
+  officerName: string;
+  badgeNumber: string;
+  notes: string;
+  locationLat: number | null;
+  locationLng: number | null;
   createdAt: string;
 }
 

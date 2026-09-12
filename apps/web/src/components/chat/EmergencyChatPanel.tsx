@@ -8,6 +8,7 @@ import {
 } from '../../services/api';
 import type { ChatMessage, ChatOfficerContact, ChatThreadSummary, UserProfile } from '../../types';
 import { hasSupabaseRealtimeConfig, supabaseRealtime } from '../../lib/supabaseRealtime';
+import { isAdmin } from '../../lib/roles';
 import { ChatAttachmentUpload } from './ChatAttachmentUpload';
 import { ChatAttachmentsDisplay } from './ChatAttachmentsDisplay';
 
@@ -21,10 +22,42 @@ function formatTime(iso: string): string {
   return value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function roleLabel(roleId: number): string {
+export function roleLabel(roleId: number): string {
   if (roleId === 3) return 'Admin';
   if (roleId === 2) return 'Supervisor';
-  return 'Officer';
+  if (roleId === 1) return 'Officer';
+  return 'Unknown role';
+}
+
+/**
+ * officer_users, supervisor_users, and admin_users each have their own
+ * independent auto-incrementing id, so a Supervisor #3 and an Officer #3 can
+ * both exist — comparing participantId alone is not enough to identify "me"
+ * in a thread. The web portal is Supervisor/Admin only (officers use the
+ * mobile app), so the viewer's source is derived from their role.
+ */
+export function ownParticipantSource(profile: UserProfile | null | undefined): 'supervisor_users' | 'admin_users' {
+  return isAdmin(profile?.roleId ?? 0) ? 'admin_users' : 'supervisor_users';
+}
+
+export function isSelfParticipant(
+  participant: { source: string; participantId: number },
+  profile: UserProfile | null | undefined
+): boolean {
+  if (!profile || profile.officerId == null) return false;
+  return participant.source === ownParticipantSource(profile) && participant.participantId === profile.officerId;
+}
+
+/** getChatOfficerContacts() always returns officer_users rows; this checks
+ * whether one of them is actually the viewer (always false in practice,
+ * since the web portal's viewer is never an officer) rather than comparing
+ * raw ids, which could otherwise collide with an unrelated officer sharing
+ * the viewer's numeric id from a different role table. */
+export function isSelfOfficerContact(
+  contact: { officerId: number },
+  profile: UserProfile | null | undefined
+): boolean {
+  return isSelfParticipant({ source: 'officer_users', participantId: contact.officerId }, profile);
 }
 
 function normalizeThread(thread: ChatThreadSummary): ChatThreadSummary {
@@ -58,14 +91,13 @@ function normalizeMessage(message: ChatMessage): ChatMessage {
   };
 }
 
-function threadTitle(thread: ChatThreadSummary, selfProfile?: UserProfile | null): string {
+export function threadTitle(thread: ChatThreadSummary, selfProfile?: UserProfile | null): string {
   if (thread.title?.trim()) {
     return thread.title.trim();
   }
 
-  const ownParticipantId = selfProfile?.officerId;
   const names = (thread.participants ?? [])
-    .filter((participant) => participant.participantId !== ownParticipantId)
+    .filter((participant) => !isSelfParticipant(participant, selfProfile))
     .map((participant) => participant.name);
 
   if (!names.length) return 'Emergency channel';
@@ -113,7 +145,7 @@ export function EmergencyChatPanel({ profile }: Props) {
       .map(normalizeThread)
       .filter((thread) => thread.latestMessage !== null);
     setThreads(normalizedThreads);
-    setContacts(officerContacts.filter((contact) => contact.officerId !== ownParticipantId));
+    setContacts(officerContacts.filter((contact) => !isSelfOfficerContact(contact, profile)));
     if (!selectedThreadId && normalizedThreads.length) {
       setSelectedThreadId(normalizedThreads[0].id);
     }
@@ -126,7 +158,7 @@ export function EmergencyChatPanel({ profile }: Props) {
 
   function triggerEmergencyNotificationHook(message: ChatMessage) {
     if (!message.isEmergency) return;
-    if (message.sender.participantId === ownParticipantId) return;
+    if (isSelfParticipant(message.sender, profile)) return;
 
     // Push-notification-ready hook for future browser/FCM integration.
     console.log('[chat:emergency-alert:web]', {
@@ -475,7 +507,7 @@ export function EmergencyChatPanel({ profile }: Props) {
 
             <div className="min-h-0 flex-1 overflow-y-auto pr-1">
               {messages.map((message) => {
-                const ownMessage = message.sender.participantId === ownParticipantId;
+                const ownMessage = isSelfParticipant(message.sender, profile);
                 const showSeenDetails = expandedSeenMessageIds.includes(message.id);
                 const seenBy = message.seenBy ?? [];
                 const parsedSeenCount = Number(message.seenCount);

@@ -23,6 +23,7 @@ import publicVerificationRoutes from './routes/publicVerification';
 import configRoutes from './routes/config';
 import chatRoutes from './routes/chat';
 import roadOffenceRoutes from './routes/roadOffences';
+import alertsRoutes from './routes/alerts';
 import { apiLimiter, authLimiter, syncLimiter, verifyLimiter } from './middleware/rateLimiter';
 
 const app = express();
@@ -95,6 +96,7 @@ app.use('/api/shifts', shiftsRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/road-offences', roadOffenceRoutes);
+app.use('/api/alerts', alertsRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });
