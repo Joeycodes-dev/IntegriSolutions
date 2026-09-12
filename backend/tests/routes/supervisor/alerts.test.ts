@@ -33,7 +33,7 @@ app.use('/api/supervisor/alerts', alertsRoutes);
  * enough for these routes without hand-writing one bespoke chain per call site. */
 function chainable(result: { data?: unknown; error?: unknown }) {
   const handler: Record<string, unknown> = {};
-  const methods = ['select', 'eq', 'in', 'order', 'limit', 'insert', 'update', 'upsert', 'delete', 'neq', 'gt', 'gte', 'lte'];
+  const methods = ['select', 'eq', 'in', 'order', 'limit', 'insert', 'update', 'upsert', 'delete', 'neq', 'gt', 'gte', 'lte', 'not'];
   for (const method of methods) {
     handler[method] = jest.fn(() => handler);
   }
@@ -89,6 +89,9 @@ function alertRow(overrides: Record<string, unknown> = {}) {
     person_description: null,
     person_reference: null,
     photo_url: null,
+    location_lat: null,
+    location_lng: null,
+    location_label: null,
     issued_by_source: 'supervisor_users',
     issued_by_id: 7,
     issued_by_name: 'supervisor',
@@ -272,6 +275,84 @@ describe('Supervisor Operational Alerts Routes', () => {
       expect(res.status).toBe(201);
     });
 
+    it('creates an alert with no location at all — optional fields preserve existing (non-location) alerts', async () => {
+      const res = await request(app)
+        .post('/api/supervisor/alerts')
+        .set('Authorization', 'Bearer t')
+        .send(validAlertPayload());
+
+      expect(res.status).toBe(201);
+      expect(res.body.locationLat).toBeNull();
+      expect(res.body.locationRadiusMeters).toBeNull();
+    });
+
+    it('accepts a valid location with lat, lng, and radiusMeters', async () => {
+      const res = await request(app)
+        .post('/api/supervisor/alerts')
+        .set('Authorization', 'Bearer t')
+        .send(validAlertPayload({ location: { lat: -26.2041, lng: 28.0473, label: 'N1 Midrand', radiusMeters: 500 } }));
+
+      expect(res.status).toBe(201);
+    });
+
+    it.each([
+      [{ lat: -91, lng: 28 }, /lat/i],
+      [{ lat: 91, lng: 28 }, /lat/i],
+      [{ lat: -26, lng: -181 }, /lng/i],
+      [{ lat: -26, lng: 181 }, /lng/i],
+    ])('rejects an out-of-range coordinate %j', async (location, expectedMessage) => {
+      const res = await request(app)
+        .post('/api/supervisor/alerts')
+        .set('Authorization', 'Bearer t')
+        .send(validAlertPayload({ location }));
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(expectedMessage);
+    });
+
+    it.each([0, -100, 50001])('rejects an invalid trigger radius (%d)', async (radiusMeters) => {
+      const res = await request(app)
+        .post('/api/supervisor/alerts')
+        .set('Authorization', 'Bearer t')
+        .send(validAlertPayload({ location: { lat: -26.2, lng: 28.0, radiusMeters } }));
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/radiusMeters/i);
+    });
+  });
+
+  describe('PATCH /api/supervisor/alerts/:id — location updates', () => {
+    it('updates location fields including radiusMeters', async () => {
+      const roleHandler = mockAsSupervisor();
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') {
+          return chainable({ data: alertRow({ location_lat: -26.2, location_lng: 28.0, location_radius_meters: 750 }), error: null });
+        }
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ location: { lat: -26.2, lng: 28.0, radiusMeters: 750 } });
+
+      expect(res.status).toBe(200);
+      expect(res.body.locationRadiusMeters).toBe(750);
+    });
+
+    it('rejects an out-of-range coordinate on update', async () => {
+      const roleHandler = mockAsSupervisor();
+      withTableHandlers(roleHandler, () => null);
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ location: { lat: 200, lng: 28.0 } });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/lat/i);
+    });
   });
 
   describe('Authorization model', () => {
@@ -407,6 +488,147 @@ describe('Supervisor Operational Alerts Routes', () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual([]);
+    });
+  });
+
+  describe('GET /api/supervisor/alerts/sightings', () => {
+    function sightingRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 1,
+        alert_id: 'alert-1',
+        officer_id: 23,
+        officer_name: 'John Doe',
+        badge_number: 'B123',
+        notes: 'Vehicle matching description seen',
+        location_lat: -26.2041,
+        location_lng: 28.0473,
+        created_at: '2026-09-11T10:00:00Z',
+        ...overrides,
+      };
+    }
+
+    it('returns sightings joined with their parent alert context (type/priority/description)', async () => {
+      const roleHandler = mockAsSupervisor();
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alert_matches') return chainable({ data: [sightingRow()], error: null });
+        if (table === 'operational_alerts') {
+          return chainable({
+            data: [{ id: 'alert-1', alert_type: 'bolo_vehicle', priority: 'high', description: 'Vehicle linked to robbery', source_type: 'external', source_authority: 'SAPS Klerksdorp', status: 'active' }],
+            error: null,
+          });
+        }
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/sightings')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([
+        expect.objectContaining({
+          id: 1,
+          alertId: 'alert-1',
+          locationLat: -26.2041,
+          locationLng: 28.0473,
+          officerName: 'John Doe',
+          alertType: 'bolo_vehicle',
+          priority: 'high',
+          alertDescription: 'Vehicle linked to robbery',
+          sourceType: 'external',
+          sourceAuthority: 'SAPS Klerksdorp',
+        }),
+      ]);
+    });
+
+    it('excludes sightings whose alert type does not match the alertType filter', async () => {
+      const roleHandler = mockAsSupervisor();
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alert_matches') return chainable({ data: [sightingRow()], error: null });
+        if (table === 'operational_alerts') {
+          return chainable({
+            data: [{ id: 'alert-1', alert_type: 'general', priority: 'high', description: 'd', source_type: 'internal', source_authority: null, status: 'active' }],
+            error: null,
+          });
+        }
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/sightings?alertType=bolo_vehicle')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it('excludes sightings whose alert priority does not match the priority filter', async () => {
+      const roleHandler = mockAsSupervisor();
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alert_matches') return chainable({ data: [sightingRow()], error: null });
+        if (table === 'operational_alerts') {
+          return chainable({
+            data: [{ id: 'alert-1', alert_type: 'general', priority: 'low', description: 'd', source_type: 'internal', source_authority: null, status: 'active' }],
+            error: null,
+          });
+        }
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/sightings?priority=high')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it('filters sightings by the critical priority', async () => {
+      const roleHandler = mockAsSupervisor();
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alert_matches') return chainable({ data: [sightingRow()], error: null });
+        if (table === 'operational_alerts') {
+          return chainable({
+            data: [{ id: 'alert-1', alert_type: 'general', priority: 'critical', description: 'd', source_type: 'internal', source_authority: null, status: 'active' }],
+            error: null,
+          });
+        }
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/sightings?priority=critical')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveLength(1);
+      expect(res.body[0]).toMatchObject({ priority: 'critical' });
+    });
+
+    it('lets an Admin read sightings too (read-only oversight)', async () => {
+      const roleHandler = mockAsAdmin();
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alert_matches') return chainable({ data: [], error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/sightings')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it('does not let an Officer read the sightings endpoint (Officer has no web-portal access at all)', async () => {
+      const roleHandler = mockAsOfficer();
+      withTableHandlers(roleHandler, () => null);
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/sightings')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(403);
     });
   });
 });

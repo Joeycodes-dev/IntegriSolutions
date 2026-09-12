@@ -11,6 +11,7 @@ import type { OperationalAlert, UserProfile } from '../types';
 
 import { styles } from './OfficerHome.styles';
 import { colors } from '../styles/colors';
+import { formatApproxDistance } from '../lib/geoDistance';
 import { alertPriorityStyle } from '../lib/alertPriorityStyle';
 
 interface Props {
@@ -36,6 +37,11 @@ interface Props {
   /** Count of other eligible (unacknowledged, active, unexpired) alerts not
    * shown as the banner — rendered as a compact summary only. */
   otherAlertsCount?: number;
+  /** Whether the officer's last-known position falls inside featuredAlert's
+   * trigger radius. See lib/homeAlertsSummary.ts. */
+  featuredAlertIsNearby?: boolean;
+  /** Approximate distance in metres to featuredAlert, or null if unavailable. */
+  featuredAlertDistanceMeters?: number | null;
   onAcknowledgeAlert?: (alertId: string) => Promise<void> | void;
   onViewAlerts?: () => void;
 }
@@ -117,6 +123,8 @@ export function OfficerHome({
   onOpenAudit,
   featuredAlert = null,
   otherAlertsCount = 0,
+  featuredAlertIsNearby = false,
+  featuredAlertDistanceMeters = null,
   onAcknowledgeAlert,
   onViewAlerts
 }: Props) {
@@ -237,10 +245,19 @@ export function OfficerHome({
               <View style={[styles.alertPriorityBadge, { backgroundColor: priorityStyle.accent }]}>
                 <Text style={styles.alertPriorityBadgeText}>{featuredAlert.priority.toUpperCase()}</Text>
               </View>
+              {featuredAlertIsNearby && (
+                <View style={styles.alertNearbyBadge}>
+                  <Feather name="map-pin" size={10} color={colors.background} />
+                  <Text style={styles.alertNearbyBadgeText}>NEARBY</Text>
+                </View>
+              )}
               <Text style={[styles.alertBannerLabel, { color: priorityStyle.labelText }]}>Operational Alert</Text>
             </View>
             <Text style={styles.alertDescription}>{featuredAlert.description}</Text>
             <Text style={styles.alertMetaText}>{alertProvenanceLabel(featuredAlert)}</Text>
+            {featuredAlertIsNearby && featuredAlertDistanceMeters != null && (
+              <Text style={styles.alertMetaText}>Approx. {formatApproxDistance(featuredAlertDistanceMeters)} away</Text>
+            )}
             {featuredAlert.expiresAt && (
               <Text style={styles.alertMetaText}>Expires {formatAlertExpiry(featuredAlert.expiresAt)}</Text>
             )}

@@ -365,12 +365,12 @@ export async function acknowledgeAlert(alertId: string) {
   });
 }
 
-export async function reportAlertMatch(alertId: string, notes: string) {
+export async function reportAlertMatch(alertId: string, notes: string, location?: { lat: number; lng: number }) {
   return request<{ id: number; alertId: string; notes: string; createdAt: string; disclaimer: string }>(
     `/alerts/${encodeURIComponent(alertId)}/matches`,
     {
       method: 'POST',
-      body: JSON.stringify({ notes })
+      body: JSON.stringify({ notes, ...(location ? { location } : {}) })
     }
   );
 }
@@ -451,9 +451,10 @@ function buildEscalationMessage(alert: AlertMatchEscalationSummary, officerLabel
 export async function reportAlertMatchWithEscalation(
   alert: AlertMatchEscalationSummary,
   notes: string,
-  officer?: AlertMatchEscalationOfficer
+  officer?: AlertMatchEscalationOfficer,
+  location?: { lat: number; lng: number }
 ): Promise<AlertMatchEscalationResult> {
-  await reportAlertMatch(alert.id, notes);
+  await reportAlertMatch(alert.id, notes, location);
 
   const officerLabel = officer?.name
     ? `${officer.name} ${officer.surname ?? ''}`.trim()

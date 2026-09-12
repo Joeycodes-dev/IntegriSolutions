@@ -641,6 +641,7 @@ export async function updateOperationalAlert(
   payload: {
     status?: import('../types').OperationalAlertStatus;
     expiresAt?: string | null;
+    location?: import('../types').UpdateOperationalAlertLocationPayload;
   }
 ) {
   return request<import('../types').OperationalAlert>(`/api/supervisor/alerts/${encodeURIComponent(alertId)}`, {
@@ -698,4 +699,22 @@ export async function getOperationalAlertMatches(alertId: string) {
     `/api/supervisor/alerts/${encodeURIComponent(alertId)}/matches`,
     { headers: authHeaders() }
   );
+}
+
+/**
+ * Reported sightings for the supervisor Map / Heatmap views. Server-side
+ * filters are supported (and used here) for network efficiency, but the
+ * caller is expected to fetch once and re-filter/aggregate client-side for
+ * interactive UI tweaks — see lib/alertSightings.ts.
+ */
+export async function getAlertSightings(filters?: import('../types').AlertSightingFilters) {
+  const params = new URLSearchParams();
+  if (filters?.alertType) params.set('alertType', filters.alertType);
+  if (filters?.priority) params.set('priority', filters.priority);
+  if (filters?.alertId) params.set('alertId', filters.alertId);
+  if (filters?.from) params.set('from', filters.from);
+  if (filters?.to) params.set('to', filters.to);
+  const query = params.toString();
+  const path = query ? `/api/supervisor/alerts/sightings?${query}` : '/api/supervisor/alerts/sightings';
+  return request<import('../types').AlertSighting[]>(path, { headers: authHeaders() });
 }

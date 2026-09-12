@@ -29,6 +29,20 @@ const SOURCE_TYPES = new Set(['internal', 'external']);
 const TARGET_SCOPES = new Set(['all_officers', 'shift', 'officers']);
 const STATUSES = new Set(['active', 'expired', 'cancelled', 'resolved']);
 const PERSON_REFERENCE_ID_NUMBER_PATTERN = /^\d{13}$/;
+// Mirrors backend/migrations/20260911_operational_alert_location.sql's CHECK constraints.
+const MAX_LOCATION_RADIUS_METERS = 50_000;
+
+function isValidLatitude(value: number): boolean {
+  return Number.isFinite(value) && value >= -90 && value <= 90;
+}
+
+function isValidLongitude(value: number): boolean {
+  return Number.isFinite(value) && value >= -180 && value <= 180;
+}
+
+function isValidRadiusMeters(value: number): boolean {
+  return Number.isFinite(value) && value > 0 && value <= MAX_LOCATION_RADIUS_METERS;
+}
 
 const photoUpload = multer({
   storage: multer.memoryStorage(),
@@ -82,6 +96,7 @@ function toOperationalAlert(row: Record<string, unknown>, extra: Record<string, 
     locationLat: row.location_lat == null ? null : Number(row.location_lat),
     locationLng: row.location_lng == null ? null : Number(row.location_lng),
     locationLabel: row.location_label == null ? null : String(row.location_label),
+    locationRadiusMeters: row.location_radius_meters == null ? null : Number(row.location_radius_meters),
     issuedBySource: String(row.issued_by_source),
     issuedById: Number(row.issued_by_id),
     issuedByName: String(row.issued_by_name),
@@ -130,7 +145,7 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
   const targetShiftId = optionalTrimmedString(body.targetShiftId);
   const officerIds = sanitizeOfficerIds(body.officerIds);
   const personReference = typeof body.personReference === 'string' ? body.personReference.trim() : '';
-  const location = (body.location ?? {}) as { lat?: unknown; lng?: unknown; label?: unknown };
+  const location = (body.location ?? {}) as { lat?: unknown; lng?: unknown; label?: unknown; radiusMeters?: unknown };
   const expiresAt = body.expiresAt ? parseDate(body.expiresAt) : null;
 
   if (!ALERT_TYPES.has(alertType)) {
@@ -162,6 +177,15 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
   if (personReference && PERSON_REFERENCE_ID_NUMBER_PATTERN.test(personReference)) {
     return res.status(400).json({ error: 'Do not enter a full ID number in the person reference — use a partial reference or description' });
   }
+  if (location.lat != null && !isValidLatitude(Number(location.lat))) {
+    return res.status(400).json({ error: 'location.lat must be between -90 and 90' });
+  }
+  if (location.lng != null && !isValidLongitude(Number(location.lng))) {
+    return res.status(400).json({ error: 'location.lng must be between -180 and 180' });
+  }
+  if (location.radiusMeters != null && !isValidRadiusMeters(Number(location.radiusMeters))) {
+    return res.status(400).json({ error: `location.radiusMeters must be a positive number up to ${MAX_LOCATION_RADIUS_METERS}` });
+  }
 
   const supervisorEmail = authReq.userEmail ?? 'unknown';
   const insertPayload = {
@@ -176,6 +200,7 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
     location_lat: optionalNumber(location.lat),
     location_lng: optionalNumber(location.lng),
     location_label: optionalTrimmedString(location.label),
+    location_radius_meters: optionalNumber(location.radiusMeters),
     issued_by_source: 'supervisor_users',
     issued_by_id: authReq.supervisorOfficerId,
     issued_by_name: supervisorNameFromEmail(supervisorEmail),
@@ -278,12 +303,23 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const status = typeof body.status === 'string' ? body.status : undefined;
   const hasExpiresPatch = Object.prototype.hasOwnProperty.call(body, 'expiresAt');
+  const hasLocationPatch = Object.prototype.hasOwnProperty.call(body, 'location');
+  const location = hasLocationPatch ? ((body.location ?? {}) as { lat?: unknown; lng?: unknown; label?: unknown; radiusMeters?: unknown }) : null;
 
-  if (!status && !hasExpiresPatch) {
-    return res.status(400).json({ error: 'Provide status and/or expiresAt to update' });
+  if (!status && !hasExpiresPatch && !hasLocationPatch) {
+    return res.status(400).json({ error: 'Provide status, expiresAt, and/or location to update' });
   }
   if (status && !STATUSES.has(status)) {
     return res.status(400).json({ error: `Status must be one of: ${Array.from(STATUSES).join(', ')}` });
+  }
+  if (location?.lat != null && !isValidLatitude(Number(location.lat))) {
+    return res.status(400).json({ error: 'location.lat must be between -90 and 90' });
+  }
+  if (location?.lng != null && !isValidLongitude(Number(location.lng))) {
+    return res.status(400).json({ error: 'location.lng must be between -180 and 180' });
+  }
+  if (location?.radiusMeters != null && !isValidRadiusMeters(Number(location.radiusMeters))) {
+    return res.status(400).json({ error: `location.radiusMeters must be a positive number up to ${MAX_LOCATION_RADIUS_METERS}` });
   }
 
   const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -291,6 +327,12 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
   if (hasExpiresPatch) {
     const expiresAt = parseDate(body.expiresAt);
     updatePayload.expires_at = expiresAt ? expiresAt.toISOString() : null;
+  }
+  if (location) {
+    updatePayload.location_lat = optionalNumber(location.lat);
+    updatePayload.location_lng = optionalNumber(location.lng);
+    updatePayload.location_label = optionalTrimmedString(location.label);
+    updatePayload.location_radius_meters = optionalNumber(location.radiusMeters);
   }
 
   const { data, error } = await serviceSupabase
@@ -397,6 +439,94 @@ router.get('/:id/matches', asyncHandler(async (req, res) => {
     locationLng: row.location_lng == null ? null : Number(row.location_lng),
     createdAt: String(row.created_at)
   })));
+}));
+
+/**
+ * Cross-alert sighting listing for the supervisor Map / Heatmap views.
+ * Deliberately read-only, no new concept: reuses operational_alert_matches
+ * exactly as-is (a "reported sighting" is a possible-match report — never a
+ * confirmed location, wanted/stolen status, or identification). Only
+ * sightings that already carry coordinates are returned — this endpoint
+ * exists purely to feed a map, not as a general audit trail (use
+ * GET /:id/matches for that).
+ */
+router.get('/sightings', asyncHandler(async (req, res) => {
+  const alertTypeFilter = typeof req.query.alertType === 'string' && ALERT_TYPES.has(req.query.alertType)
+    ? req.query.alertType
+    : null;
+  const priorityFilter = typeof req.query.priority === 'string' && PRIORITIES.has(req.query.priority)
+    ? req.query.priority
+    : null;
+  const alertIdFilter = typeof req.query.alertId === 'string' && req.query.alertId.trim() ? req.query.alertId.trim() : null;
+  const fromFilter = parseDate(req.query.from);
+  const toFilter = parseDate(req.query.to);
+
+  let matchesQuery = serviceSupabase
+    .from('operational_alert_matches')
+    .select('*')
+    .not('location_lat', 'is', null)
+    .not('location_lng', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1000);
+
+  if (alertIdFilter) matchesQuery = matchesQuery.eq('alert_id', alertIdFilter);
+  if (fromFilter) matchesQuery = matchesQuery.gte('created_at', fromFilter.toISOString());
+  if (toFilter) matchesQuery = matchesQuery.lte('created_at', toFilter.toISOString());
+
+  const { data: matchRows, error: matchError } = await matchesQuery;
+  if (matchError) {
+    if (isMissingTable(matchError)) {
+      return res.status(503).json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' });
+    }
+    return res.status(500).json({ error: matchError.message });
+  }
+
+  const matches = (matchRows ?? []) as Record<string, unknown>[];
+  const alertIds = Array.from(new Set(matches.map((row) => String(row.alert_id))));
+
+  const alertsById = new Map<string, Record<string, unknown>>();
+  if (alertIds.length) {
+    const { data: alertRows, error: alertError } = await serviceSupabase
+      .from('operational_alerts')
+      .select('id, alert_type, priority, description, source_type, source_authority, status')
+      .in('id', alertIds);
+
+    if (alertError) return res.status(500).json({ error: alertError.message });
+    for (const row of (alertRows ?? []) as Record<string, unknown>[]) {
+      alertsById.set(String(row.id), row);
+    }
+  }
+
+  const sightings = matches
+    .map((row) => {
+      const alert = alertsById.get(String(row.alert_id));
+      return { row, alert };
+    })
+    .filter(({ alert }) => {
+      if (!alert) return false;
+      if (alertTypeFilter && String(alert.alert_type) !== alertTypeFilter) return false;
+      if (priorityFilter && String(alert.priority) !== priorityFilter) return false;
+      return true;
+    })
+    .map(({ row, alert }) => ({
+      id: Number(row.id),
+      alertId: String(row.alert_id),
+      notes: String(row.notes),
+      locationLat: Number(row.location_lat),
+      locationLng: Number(row.location_lng),
+      createdAt: String(row.created_at),
+      officerId: Number(row.officer_id),
+      officerName: String(row.officer_name),
+      badgeNumber: String(row.badge_number),
+      alertType: String(alert!.alert_type),
+      alertDescription: String(alert!.description),
+      priority: String(alert!.priority),
+      alertStatus: String(alert!.status),
+      sourceType: String(alert!.source_type),
+      sourceAuthority: alert!.source_authority == null ? null : String(alert!.source_authority)
+    }));
+
+  return res.json(sightings);
 }));
 
 export default router;

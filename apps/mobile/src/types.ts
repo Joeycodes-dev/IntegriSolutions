@@ -86,6 +86,8 @@ export interface OperationalAlert {
   locationLat: number | null;
   locationLng: number | null;
   locationLabel: string | null;
+  /** Optional geofence trigger radius in metres, paired with locationLat/Lng. */
+  locationRadiusMeters: number | null;
   issuedByName: string;
   targetScope: OperationalAlertTargetScope;
   sourceType: OperationalAlertSourceType;

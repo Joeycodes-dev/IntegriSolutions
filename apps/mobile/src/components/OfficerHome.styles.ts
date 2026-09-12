@@ -186,6 +186,21 @@ export const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.4
   },
+  alertNearbyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    backgroundColor: colors.primaryDark
+  },
+  alertNearbyBadgeText: {
+    color: colors.background,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.4
+  },
   alertBannerLabel: {
     // color applied per-priority — see OfficerHome.tsx.
     fontSize: 11,

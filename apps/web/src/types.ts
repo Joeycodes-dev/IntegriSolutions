@@ -102,6 +102,8 @@ export interface OperationalAlert {
   locationLat: number | null;
   locationLng: number | null;
   locationLabel: string | null;
+  /** Optional geofence trigger radius in metres, paired with locationLat/Lng. */
+  locationRadiusMeters: number | null;
   issuedBySource: 'supervisor_users';
   issuedById: number;
   issuedByName: string;
@@ -128,7 +130,7 @@ export interface CreateOperationalAlertPayload {
   personName?: string;
   personDescription?: string;
   personReference?: string;
-  location?: { lat?: number; lng?: number; label?: string };
+  location?: { lat?: number; lng?: number; label?: string; radiusMeters?: number };
   targetScope: OperationalAlertTargetScope;
   targetShiftId?: string | null;
   officerIds?: number[];
@@ -136,6 +138,13 @@ export interface CreateOperationalAlertPayload {
   sourceAuthority?: string;
   sourceReference?: string;
   expiresAt?: string | null;
+}
+
+export interface UpdateOperationalAlertLocationPayload {
+  lat?: number | null;
+  lng?: number | null;
+  label?: string | null;
+  radiusMeters?: number | null;
 }
 
 export interface OperationalAlertAcknowledgement {
@@ -154,6 +163,41 @@ export interface OperationalAlertMatch {
   locationLat: number | null;
   locationLng: number | null;
   createdAt: string;
+}
+
+/**
+ * A "reported sighting" — an officer's possible-match report, for the
+ * supervisor Map/Heatmap views. This is the exact same underlying record as
+ * OperationalAlertMatch (operational_alert_matches), just always carrying
+ * coordinates and flattened with its parent alert's display context. It is
+ * NOT a confirmed location, wanted/stolen status, or identification — always
+ * render/label it as a reported sighting or possible match, never as
+ * "located"/"found"/"confirmed".
+ */
+export interface AlertSighting {
+  id: number;
+  alertId: string;
+  notes: string;
+  locationLat: number;
+  locationLng: number;
+  createdAt: string;
+  officerId: number;
+  officerName: string;
+  badgeNumber: string;
+  alertType: OperationalAlertType;
+  alertDescription: string;
+  priority: OperationalAlertPriority;
+  alertStatus: OperationalAlertStatus;
+  sourceType: OperationalAlertSourceType;
+  sourceAuthority: string | null;
+}
+
+export interface AlertSightingFilters {
+  alertType?: OperationalAlertType;
+  priority?: OperationalAlertPriority;
+  alertId?: string;
+  from?: string;
+  to?: string;
 }
 
 export interface ChatOfficerContact {

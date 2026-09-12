@@ -92,6 +92,9 @@ function baseAlertRow(overrides: Record<string, unknown> = {}) {
     person_description: null,
     person_reference: null,
     photo_url: null,
+    location_lat: null,
+    location_lng: null,
+    location_label: null,
     issued_by_name: 'supervisor',
     target_scope: 'all_officers',
     source_type: 'internal',
@@ -192,6 +195,26 @@ describe('Officer Operational Alerts Routes', () => {
       expect(res.body).toEqual([]);
     });
 
+    it('includes location and trigger radius on a location-aware alert', async () => {
+      const geoAlert = baseAlertRow({
+        id: 'alert-geo',
+        target_scope: 'all_officers',
+        location_lat: -26.2041,
+        location_lng: 28.0473,
+        location_radius_meters: 500,
+      });
+
+      mockServiceSupabase.from.mockImplementation((table: string) => {
+        if (table === 'roadblock_shift_officers') return chainable({ data: [], error: null });
+        if (table === 'operational_alert_officers') return chainable({ data: [], error: null });
+        if (table === 'operational_alerts') return chainable({ data: [geoAlert], error: null });
+        return chainable({ data: [], error: null });
+      });
+
+      const res = await request(app).get('/api/alerts/active').set('Authorization', 'Bearer t');
+      expect(res.status).toBe(200);
+      expect(res.body[0]).toMatchObject({ locationLat: -26.2041, locationLng: 28.0473, locationRadiusMeters: 500 });
+    });
   });
 
   describe('POST /api/alerts/:id/acknowledge', () => {
@@ -332,7 +355,7 @@ describe('Officer Operational Alerts Routes', () => {
       const res = await request(app)
         .post('/api/alerts/alert-1/matches')
         .set('Authorization', 'Bearer t')
-        .send({ notes: 'Vehicle matching description seen at N1 offramp' });
+        .send({ notes: 'Vehicle matching description seen at N1 offramp', location: { lat: -26.2, lng: 28.0 } });
 
       expect(res.status).toBe(201);
       expect(res.body.disclaimer).toBe(MATCH_ESCALATION_DISCLAIMER);
@@ -383,5 +406,72 @@ describe('Officer Operational Alerts Routes', () => {
       expect(res.body.error).toMatch(/no longer active/i);
     });
 
+    it('accepts a possible-match report with valid coordinates', async () => {
+      const operationalAlertsHandler = chainable({ data: baseAlertRow(), error: null });
+      const matchesHandler = chainable({
+        data: { id: 2, notes: 'Vehicle seen', created_at: '2026-09-11T10:10:00Z' },
+        error: null,
+      });
+      mockServiceSupabase.from.mockImplementation((table: string) => {
+        if (table === 'operational_alerts') return operationalAlertsHandler;
+        if (table === 'operational_alert_matches') return matchesHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return chainable({ data: [], error: null });
+      });
+
+      const res = await request(app)
+        .post('/api/alerts/alert-1/matches')
+        .set('Authorization', 'Bearer t')
+        .send({ notes: 'Vehicle seen', location: { lat: -26.2041, lng: 28.0473 } });
+
+      expect(res.status).toBe(201);
+    });
+
+    it.each([
+      [{ lat: -91, lng: 28 }],
+      [{ lat: 91, lng: 28 }],
+      [{ lat: -26, lng: -181 }],
+      [{ lat: -26, lng: 181 }],
+    ])('rejects an out-of-range coordinate %j on a possible-match report', async (location) => {
+      mockServiceSupabase.from.mockImplementation(() => chainable({ data: baseAlertRow(), error: null }));
+
+      const res = await request(app)
+        .post('/api/alerts/alert-1/matches')
+        .set('Authorization', 'Bearer t')
+        .send({ notes: 'Vehicle seen', location });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('valid coordinates do not bypass out-of-scope eligibility — still 403', async () => {
+      mockServiceSupabase.from.mockImplementation((table: string) => {
+        if (table === 'operational_alerts') return chainable({ data: baseAlertRow({ target_scope: 'officers' }), error: null });
+        if (table === 'operational_alert_officers') return chainable({ data: null, error: null });
+        return chainable({ data: [], error: null });
+      });
+
+      const res = await request(app)
+        .post('/api/alerts/alert-1/matches')
+        .set('Authorization', 'Bearer t')
+        .send({ notes: 'Seen near offramp', location: { lat: -26.2041, lng: 28.0473 } });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('valid coordinates do not bypass an expired alert — still 409, and location data never changes status', async () => {
+      const operationalAlertsHandler = chainable({ data: baseAlertRow({ expires_at: '2020-01-01T00:00:00Z' }), error: null });
+      mockServiceSupabase.from.mockImplementation((table: string) => {
+        if (table === 'operational_alerts') return operationalAlertsHandler;
+        return chainable({ data: [], error: null });
+      });
+
+      const res = await request(app)
+        .post('/api/alerts/alert-1/matches')
+        .set('Authorization', 'Bearer t')
+        .send({ notes: 'Seen near offramp', location: { lat: -26.2041, lng: 28.0473 } });
+
+      expect(res.status).toBe(409);
+      expect(operationalAlertsHandler.update).not.toHaveBeenCalled();
+    });
   });
 });

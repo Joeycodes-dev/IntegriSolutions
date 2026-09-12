@@ -639,9 +639,14 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     refresh: refreshAlerts,
     acknowledge: acknowledgeAlertAction,
   } = useAlertsContext();
+  // Officer's last-known position, used only in-memory to compute proximity
+  // to location-aware alerts for this screen's render — never sent to the
+  // backend or persisted. This is a single fresh GPS read per Home focus, not
+  // continuous tracking; see refreshOfficerLocation below.
+  const [officerLocation, setOfficerLocation] = useState<{ lat: number; lng: number } | null>(null);
   const alertsSummary = useMemo(
-    () => summarizeAlertsForHome(alerts),
-    [alerts],
+    () => summarizeAlertsForHome(alerts, officerLocation),
+    [alerts, officerLocation],
   );
   const [syncModalVisible, setSyncModalVisible] = useState(false);
   const [step, setStep] = useState<OfficerStep>("idle");
@@ -694,13 +699,44 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       });
   }, []);
 
+  /**
+   * One-shot GPS read used only to compute distance to location-aware alerts
+   * on Home. Deliberately NOT continuous/background geofencing: this reuses
+   * the same foreground permission flow as DUI capture (getDeviceLocation
+   * above) and only fires once per Home focus (see useFocusEffect below),
+   * not on a timer. If permission is denied or the read fails, proximity
+   * features simply stay off — nothing else on this screen depends on it.
+   */
+  const refreshOfficerLocation = useCallback(async () => {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        setOfficerLocation(null);
+        return;
+      }
+      const current = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const lat = current.coords.latitude;
+      const lng = current.coords.longitude;
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        setOfficerLocation({ lat, lng });
+      }
+    } catch {
+      // Location unavailable (denied, disabled, no fix yet, dev bypass, etc.)
+      // — leave officerLocation as-is; nearby-alert detection is simply
+      // unavailable this refresh, everything else on Home still works.
+    }
+  }, []);
+
   useFocusEffect(
     React.useCallback(() => {
       void refreshCounts();
       void refreshAlerts();
+      void refreshOfficerLocation();
       loadRuntimeConfig();
       return undefined;
-    }, [refreshCounts, refreshAlerts, loadRuntimeConfig]),
+    }, [refreshCounts, refreshAlerts, refreshOfficerLocation, loadRuntimeConfig]),
   );
 
   const handleAcknowledgeAlert = async (alertId: string) => {
@@ -1138,6 +1174,8 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             onOpenReports={() => navigation.navigate("OfficerReports")}
             onOpenAudit={() => navigation.navigate("Audit")}
             featuredAlert={alertsSummary.featuredAlert}
+            featuredAlertIsNearby={alertsSummary.featuredAlertIsNearby}
+            featuredAlertDistanceMeters={alertsSummary.featuredAlertDistanceMeters}
             otherAlertsCount={alertsSummary.otherCount}
             onAcknowledgeAlert={handleAcknowledgeAlert}
             onViewAlerts={() => navigation.navigate("Alerts")}

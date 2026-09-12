@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Loader2, Megaphone, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Flame, Loader2, MapPin, Megaphone, RefreshCw, XCircle } from 'lucide-react';
 import type {
+  AlertSighting,
+  AlertSightingFilters,
   CreateOperationalAlertPayload,
   FieldOfficer,
   OperationalAlert,
@@ -15,6 +17,7 @@ import type {
 } from '../../types';
 import {
   createOperationalAlert,
+  getAlertSightings,
   getFieldOfficers,
   getOperationalAlertAcknowledgements,
   getOperationalAlertMatches,
@@ -22,11 +25,16 @@ import {
   getRoadblockShifts,
   updateOperationalAlert
 } from '../../services/api';
+import { filterSightings } from '../../lib/alertSightings';
+import { SupervisorAlertsMap } from './SupervisorAlertsMap';
+import { SupervisorAlertsHeatmap } from './SupervisorAlertsHeatmap';
 
 // Photo upload is intentionally out of scope for this component: the backend
 // endpoint (POST /api/supervisor/alerts/:id/photo) and uploadOperationalAlertPhoto
 // client exist, but no file picker is wired up here yet — known limitation.
 import { BORDER, NAVY, PAGE_BG, pageContent, pageShell } from './supervisorStyles';
+
+type AlertsView = 'alerts' | 'map' | 'heatmap';
 
 const inputClassName =
   'h-[32px] w-full rounded-lg border bg-white px-2.5 text-[0.75rem] text-slate-800 outline-none transition focus:border-[#0D2137]/35 focus:ring-1 focus:ring-[#0D2137]/10';
@@ -47,7 +55,7 @@ const ALERT_TYPES: Array<{ value: OperationalAlertType; label: string }> = [
   { value: 'bolo_vehicle', label: 'BOLO — Vehicle' }
 ];
 const BOLO_TYPES = new Set<OperationalAlertType>(['bolo_person', 'bolo_vehicle']);
-const PRIORITIES: OperationalAlertPriority[] = ['high', 'medium', 'low'];
+const PRIORITIES: OperationalAlertPriority[] = ['critical', 'high', 'medium', 'low'];
 
 interface AlertFormState {
   alertType: OperationalAlertType;
@@ -59,6 +67,9 @@ interface AlertFormState {
   personDescription: string;
   personReference: string;
   locationLabel: string;
+  locationLat: string;
+  locationLng: string;
+  locationRadiusMeters: string;
   targetScope: OperationalAlertTargetScope;
   targetShiftId: string;
   sourceType: OperationalAlertSourceType;
@@ -78,6 +89,9 @@ function defaultForm(): AlertFormState {
     personDescription: '',
     personReference: '',
     locationLabel: '',
+    locationLat: '',
+    locationLng: '',
+    locationRadiusMeters: '',
     targetScope: 'all_officers',
     targetShiftId: '',
     sourceType: 'internal',
@@ -140,6 +154,13 @@ export function SupervisorAlerts() {
   const [acksByAlert, setAcksByAlert] = useState<Record<string, OperationalAlertAcknowledgement[]>>({});
   const [acksLoading, setAcksLoading] = useState(false);
 
+  const [view, setView] = useState<AlertsView>('alerts');
+  const [sightings, setSightings] = useState<AlertSighting[]>([]);
+  const [sightingsLoaded, setSightingsLoaded] = useState(false);
+  const [sightingsLoading, setSightingsLoading] = useState(false);
+  const [sightingsError, setSightingsError] = useState<string | null>(null);
+  const [sightingFilters, setSightingFilters] = useState<AlertSightingFilters>({});
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -162,6 +183,38 @@ export function SupervisorAlerts() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadSightings = useCallback(async () => {
+    setSightingsLoading(true);
+    try {
+      const data = await getAlertSightings();
+      setSightings(data);
+      setSightingsError(null);
+      setSightingsLoaded(true);
+    } catch (err) {
+      setSightingsError(err instanceof Error ? err.message : 'Failed to load reported sightings');
+    } finally {
+      setSightingsLoading(false);
+    }
+  }, []);
+
+  // Sightings are fetched lazily on first visit to Map/Heatmap rather than
+  // eagerly on mount — the Alert Board is the primary view and most sessions
+  // never open Map/Heatmap, so this avoids an unnecessary request.
+  useEffect(() => {
+    if ((view === 'map' || view === 'heatmap') && !sightingsLoaded && !sightingsLoading) {
+      void loadSightings();
+    }
+  }, [view, sightingsLoaded, sightingsLoading, loadSightings]);
+
+  const filteredSightings = useMemo(
+    () => filterSightings(sightings, sightingFilters),
+    [sightings, sightingFilters]
+  );
+
+  const updateSightingFilter = <K extends keyof AlertSightingFilters>(key: K, value: AlertSightingFilters[K]) => {
+    setSightingFilters((prev) => ({ ...prev, [key]: value || undefined }));
+  };
 
   // BOLO alerts for a person or vehicle must always originate externally.
   useEffect(() => {
@@ -194,6 +247,28 @@ export function SupervisorAlerts() {
     setError(null);
     setSuccess(null);
     try {
+      const lat = form.locationLat.trim() ? Number(form.locationLat) : undefined;
+      const lng = form.locationLng.trim() ? Number(form.locationLng) : undefined;
+      const radiusMeters = form.locationRadiusMeters.trim() ? Number(form.locationRadiusMeters) : undefined;
+
+      if (lat !== undefined && !Number.isFinite(lat)) {
+        setError('Trigger latitude must be a number between -90 and 90');
+        setSaving(false);
+        return;
+      }
+      if (lng !== undefined && !Number.isFinite(lng)) {
+        setError('Trigger longitude must be a number between -180 and 180');
+        setSaving(false);
+        return;
+      }
+      if (radiusMeters !== undefined && !Number.isFinite(radiusMeters)) {
+        setError('Trigger radius must be a positive number of meters');
+        setSaving(false);
+        return;
+      }
+
+      const hasLocation = form.locationLabel.trim() || lat !== undefined || lng !== undefined || radiusMeters !== undefined;
+
       const payload: CreateOperationalAlertPayload = {
         alertType: form.alertType,
         priority: form.priority,
@@ -203,7 +278,14 @@ export function SupervisorAlerts() {
         personName: form.personName.trim() || undefined,
         personDescription: form.personDescription.trim() || undefined,
         personReference: form.personReference.trim() || undefined,
-        location: form.locationLabel.trim() ? { label: form.locationLabel.trim() } : undefined,
+        location: hasLocation
+          ? {
+              label: form.locationLabel.trim() || undefined,
+              lat,
+              lng,
+              radiusMeters
+            }
+          : undefined,
         targetScope: form.targetScope,
         targetShiftId: form.targetScope === 'shift' ? form.targetShiftId || null : null,
         officerIds: form.targetScope === 'officers' ? selectedOfficerIds : undefined,
@@ -309,6 +391,35 @@ export function SupervisorAlerts() {
           </div>
         )}
 
+        <div className="inline-flex w-fit rounded-lg border bg-white p-1" style={{ borderColor: BORDER }}>
+          {(
+            [
+              { key: 'alerts' as const, label: 'Alerts', icon: Megaphone },
+              { key: 'map' as const, label: 'Map', icon: MapPin },
+              { key: 'heatmap' as const, label: 'Heatmap', icon: Flame }
+            ]
+          ).map((tab) => {
+            const Icon = tab.icon;
+            const active = view === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setView(tab.key)}
+                className={`inline-flex h-[30px] items-center gap-1.5 rounded-md px-3 text-[0.75rem] font-bold transition ${
+                  active ? 'text-white' : 'text-slate-600 hover:bg-slate-50'
+                }`}
+                style={active ? { backgroundColor: NAVY } : undefined}
+              >
+                <Icon size={13} />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {view === 'alerts' && (
+        <>
         <section className="rounded-xl border bg-white p-4" style={{ borderColor: BORDER }}>
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
@@ -415,6 +526,45 @@ export function SupervisorAlerts() {
                 value={form.locationLabel}
                 onChange={(e) => updateForm('locationLabel', e.target.value)}
                 placeholder="N1 Midrand offramp"
+                className={inputClassName}
+                style={{ borderColor: BORDER }}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[0.6875rem] font-semibold text-slate-600">
+                Trigger latitude <span className="font-normal text-slate-400">(optional)</span>
+              </span>
+              <input
+                value={form.locationLat}
+                onChange={(e) => updateForm('locationLat', e.target.value)}
+                placeholder="-26.2041"
+                inputMode="decimal"
+                className={inputClassName}
+                style={{ borderColor: BORDER }}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[0.6875rem] font-semibold text-slate-600">
+                Trigger longitude <span className="font-normal text-slate-400">(optional)</span>
+              </span>
+              <input
+                value={form.locationLng}
+                onChange={(e) => updateForm('locationLng', e.target.value)}
+                placeholder="28.0473"
+                inputMode="decimal"
+                className={inputClassName}
+                style={{ borderColor: BORDER }}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[0.6875rem] font-semibold text-slate-600">
+                Trigger radius (m) <span className="font-normal text-slate-400">(optional, notifies nearby officers)</span>
+              </span>
+              <input
+                value={form.locationRadiusMeters}
+                onChange={(e) => updateForm('locationRadiusMeters', e.target.value)}
+                placeholder="500"
+                inputMode="numeric"
                 className={inputClassName}
                 style={{ borderColor: BORDER }}
               />
@@ -682,6 +832,103 @@ export function SupervisorAlerts() {
             })}
           </div>
         </section>
+        </>
+        )}
+
+        {(view === 'map' || view === 'heatmap') && (
+          <>
+            <section className="rounded-xl border bg-white p-3" style={{ borderColor: BORDER }}>
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="flex flex-col gap-1">
+                  <span className="text-[0.6875rem] font-semibold text-slate-600">Alert type</span>
+                  <select
+                    value={sightingFilters.alertType ?? ''}
+                    onChange={(e) => updateSightingFilter('alertType', (e.target.value || undefined) as OperationalAlertType | undefined)}
+                    className={inputClassName}
+                    style={{ borderColor: BORDER }}
+                  >
+                    <option value="">All types</option>
+                    {ALERT_TYPES.map((item) => (
+                      <option key={item.value} value={item.value}>{item.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[0.6875rem] font-semibold text-slate-600">Priority</span>
+                  <select
+                    value={sightingFilters.priority ?? ''}
+                    onChange={(e) => updateSightingFilter('priority', (e.target.value || undefined) as OperationalAlertPriority | undefined)}
+                    className={inputClassName}
+                    style={{ borderColor: BORDER }}
+                  >
+                    <option value="">All priorities</option>
+                    {PRIORITIES.map((priority) => (
+                      <option key={priority} value={priority}>{priority}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[0.6875rem] font-semibold text-slate-600">Alert</span>
+                  <select
+                    value={sightingFilters.alertId ?? ''}
+                    onChange={(e) => updateSightingFilter('alertId', e.target.value || undefined)}
+                    className={inputClassName}
+                    style={{ borderColor: BORDER }}
+                  >
+                    <option value="">All alerts</option>
+                    {alerts.map((alert) => (
+                      <option key={alert.id} value={alert.id}>{alertTypeLabel(alert.alertType)} — {alert.description.slice(0, 40)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[0.6875rem] font-semibold text-slate-600">From</span>
+                  <input
+                    type="datetime-local"
+                    value={sightingFilters.from ?? ''}
+                    onChange={(e) => updateSightingFilter('from', e.target.value || undefined)}
+                    className={inputClassName}
+                    style={{ borderColor: BORDER }}
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[0.6875rem] font-semibold text-slate-600">To</span>
+                  <input
+                    type="datetime-local"
+                    value={sightingFilters.to ?? ''}
+                    onChange={(e) => updateSightingFilter('to', e.target.value || undefined)}
+                    className={inputClassName}
+                    style={{ borderColor: BORDER }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setSightingFilters({})}
+                  className="inline-flex h-[32px] items-center rounded-lg border bg-white px-3 text-[0.75rem] font-bold text-slate-600 transition hover:bg-slate-50"
+                  style={{ borderColor: BORDER }}
+                >
+                  Clear filters
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void loadSightings()}
+                  className="inline-flex h-[32px] items-center gap-1.5 rounded-lg border bg-white px-3 text-[0.75rem] font-bold text-slate-600 transition hover:bg-slate-50"
+                  style={{ borderColor: BORDER }}
+                >
+                  <RefreshCw size={13} />
+                  Refresh
+                </button>
+                {sightingsLoading && <Loader2 size={15} className="animate-spin text-slate-400" />}
+              </div>
+              {sightingsError && (
+                <p className="mt-2 text-[0.75rem] text-rose-700">{sightingsError}</p>
+              )}
+            </section>
+
+            {view === 'map' && <SupervisorAlertsMap sightings={filteredSightings} />}
+            {view === 'heatmap' && <SupervisorAlertsHeatmap sightings={filteredSightings} />}
+          </>
+        )}
       </div>
     </div>
   );

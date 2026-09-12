@@ -90,6 +90,16 @@ describe('operational alerts api (new mobile feature)', () => {
     expect(body).not.toHaveProperty('status');
   });
 
+  it('reportAlertMatch includes location only when provided', async () => {
+    mockFetchJson({ id: 2, alertId: 'alert-1', notes: 'n', createdAt: 't', disclaimer: 'd' });
+
+    await reportAlertMatch('alert-1', 'Seen near roadblock', { lat: -26.2, lng: 28.0 });
+
+    const [, init] = (global.fetch as jest.Mock).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({ notes: 'Seen near roadblock', location: { lat: -26.2, lng: 28.0 } });
+  });
+
   describe('reportAlertMatchWithEscalation', () => {
     const alert = { id: '2d7c26cb-9612-4585-be18-133b04de05f6', description: 'Vehicle seen at N1 offramp', alertType: 'bolo_vehicle', priority: 'high' as const };
 

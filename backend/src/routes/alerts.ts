@@ -41,6 +41,14 @@ function priorityWeight(priority: unknown): number {
   return 2;
 }
 
+function isValidLatitude(value: number): boolean {
+  return Number.isFinite(value) && value >= -90 && value <= 90;
+}
+
+function isValidLongitude(value: number): boolean {
+  return Number.isFinite(value) && value >= -180 && value <= 180;
+}
+
 function toOperationalAlert(row: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   return {
     id: String(row.id),
@@ -56,6 +64,7 @@ function toOperationalAlert(row: Record<string, unknown>, extra: Record<string, 
     locationLat: row.location_lat == null ? null : Number(row.location_lat),
     locationLng: row.location_lng == null ? null : Number(row.location_lng),
     locationLabel: row.location_label == null ? null : String(row.location_label),
+    locationRadiusMeters: row.location_radius_meters == null ? null : Number(row.location_radius_meters),
     issuedByName: String(row.issued_by_name),
     targetScope: String(row.target_scope),
     sourceType: String(row.source_type),
@@ -278,9 +287,16 @@ router.post('/:id/matches', asyncHandler(async (req, res) => {
   const alertId = String(req.params.id);
   const body = (req.body ?? {}) as Record<string, unknown>;
   const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
+  const location = (body.location ?? {}) as { lat?: unknown; lng?: unknown };
 
   if (!notes) {
     return res.status(400).json({ error: 'Notes are required to report a possible match' });
+  }
+  if (location.lat != null && !isValidLatitude(Number(location.lat))) {
+    return res.status(400).json({ error: 'location.lat must be between -90 and 90' });
+  }
+  if (location.lng != null && !isValidLongitude(Number(location.lng))) {
+    return res.status(400).json({ error: 'location.lng must be between -180 and 180' });
   }
 
   const eligibility = await checkAlertEligibility(alertId, actor.dbId);
@@ -297,7 +313,9 @@ router.post('/:id/matches', asyncHandler(async (req, res) => {
       officer_id: actor.dbId,
       officer_name: `${actor.profile.name} ${actor.profile.surname}`.trim(),
       badge_number: actor.profile.badgeNumber,
-      notes
+      notes,
+      location_lat: typeof location.lat === 'number' ? location.lat : null,
+      location_lng: typeof location.lng === 'number' ? location.lng : null
     }])
     .select('*')
     .single();

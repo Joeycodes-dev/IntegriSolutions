@@ -16,6 +16,7 @@ function makeAlert(overrides: Partial<OperationalAlert> = {}): OperationalAlert 
     locationLat: null,
     locationLng: null,
     locationLabel: null,
+    locationRadiusMeters: null,
     issuedByName: 'supervisor',
     targetScope: 'all_officers',
     sourceType: 'internal',
@@ -188,5 +189,143 @@ describe('summarizeAlertsForHome', () => {
     expect(summary.featuredAlert).toBeNull();
     expect(summary.otherCount).toBe(0);
     expect(summary.totalUnacknowledged).toBe(0);
+  });
+
+  describe('location-aware selection (officerLocation provided)', () => {
+    const officerLocation = { lat: -26.2041, lng: 28.0473 };
+
+    it('detects a nearby high-priority alert and reports it as nearby with a distance', () => {
+      const nearby = makeAlert({
+        id: 'alert-nearby',
+        priority: 'high',
+        locationLat: -26.2045,
+        locationLng: 28.0475,
+        locationRadiusMeters: 500
+      });
+      const summary = summarizeAlertsForHome([nearby], officerLocation);
+
+      expect(summary.featuredAlert?.id).toBe('alert-nearby');
+      expect(summary.featuredAlertIsNearby).toBe(true);
+      expect(summary.featuredAlertDistanceMeters).not.toBeNull();
+      expect(summary.featuredAlertDistanceMeters as number).toBeLessThan(500);
+    });
+
+    it('does not mark a high-priority alert as nearby when the officer is outside its radius', () => {
+      const farAway = makeAlert({
+        id: 'alert-far',
+        priority: 'high',
+        locationLat: -25.7479, // Pretoria — well outside a small radius
+        locationLng: 28.2293,
+        locationRadiusMeters: 500
+      });
+      const summary = summarizeAlertsForHome([farAway], officerLocation);
+
+      expect(summary.featuredAlert?.id).toBe('alert-far');
+      expect(summary.featuredAlertIsNearby).toBe(false);
+    });
+
+    it('prefers a nearby high-priority alert over a non-nearby high-priority alert', () => {
+      const far = makeAlert({
+        id: 'alert-far',
+        priority: 'high',
+        locationLat: -25.7479,
+        locationLng: 28.2293,
+        locationRadiusMeters: 500
+      });
+      const nearby = makeAlert({
+        id: 'alert-nearby',
+        priority: 'high',
+        locationLat: -26.2045,
+        locationLng: 28.0475,
+        locationRadiusMeters: 500
+      });
+
+      const summary = summarizeAlertsForHome([far, nearby], officerLocation);
+      expect(summary.featuredAlert?.id).toBe('alert-nearby');
+      expect(summary.featuredAlertIsNearby).toBe(true);
+      expect(summary.otherCount).toBe(1);
+    });
+
+    it('features a nearby Medium-priority alert when no High alert is eligible', () => {
+      const nearbyMedium = makeAlert({
+        id: 'alert-medium-nearby',
+        priority: 'medium',
+        locationLat: -26.2045,
+        locationLng: 28.0475,
+        locationRadiusMeters: 500
+      });
+      const summary = summarizeAlertsForHome([nearbyMedium], officerLocation);
+
+      expect(summary.featuredAlert?.id).toBe('alert-medium-nearby');
+      expect(summary.featuredAlertIsNearby).toBe(true);
+      expect(summary.otherCount).toBe(0);
+    });
+
+    it('never promotes a nearby Medium-priority alert ahead of a farther High-priority one — priority tier gate is absolute, proximity only breaks ties within a tier', () => {
+      const farHigh = makeAlert({
+        id: 'alert-high-far',
+        priority: 'high',
+        locationLat: -25.7479,
+        locationLng: 28.2293,
+        locationRadiusMeters: 500
+      });
+      const nearbyMedium = makeAlert({
+        id: 'alert-medium-nearby',
+        priority: 'medium',
+        locationLat: -26.2045,
+        locationLng: 28.0475,
+        locationRadiusMeters: 500
+      });
+      const summary = summarizeAlertsForHome([farHigh, nearbyMedium], officerLocation);
+
+      expect(summary.featuredAlert?.id).toBe('alert-high-far');
+      expect(summary.otherCount).toBe(1);
+    });
+
+    it('never promotes a nearby High-priority alert ahead of a farther Critical one', () => {
+      const nearbyHigh = makeAlert({
+        id: 'alert-high-nearby',
+        priority: 'high',
+        locationLat: -26.2045,
+        locationLng: 28.0475,
+        locationRadiusMeters: 500
+      });
+      const farCritical = makeAlert({
+        id: 'alert-critical-far',
+        priority: 'critical',
+        locationLat: -25.7479,
+        locationLng: 28.2293,
+        locationRadiusMeters: 500
+      });
+      const summary = summarizeAlertsForHome([nearbyHigh, farCritical], officerLocation);
+
+      expect(summary.featuredAlert?.id).toBe('alert-critical-far');
+      expect(summary.otherCount).toBe(1);
+    });
+
+    it('still excludes acknowledged/expired/inactive alerts even when nearby', () => {
+      const acknowledgedNearby = makeAlert({
+        id: 'alert-acked-nearby',
+        priority: 'high',
+        acknowledgedAt: '2026-09-11T10:05:00Z',
+        locationLat: -26.2045,
+        locationLng: 28.0475,
+        locationRadiusMeters: 500
+      });
+      const summary = summarizeAlertsForHome([acknowledgedNearby], officerLocation);
+
+      expect(summary.featuredAlert).toBeNull();
+      expect(summary.totalUnacknowledged).toBe(0);
+    });
+
+    it('falls back to the first high-priority alert when officerLocation is not provided (unchanged legacy behavior)', () => {
+      const first = makeAlert({ id: 'alert-high-1', priority: 'high' });
+      const second = makeAlert({ id: 'alert-high-2', priority: 'high' });
+      const summary = summarizeAlertsForHome([first, second]);
+
+      expect(summary.featuredAlert?.id).toBe('alert-high-1');
+      expect(summary.featuredAlertIsNearby).toBe(false);
+      expect(summary.featuredAlertDistanceMeters).toBeNull();
+    });
   });
 });
