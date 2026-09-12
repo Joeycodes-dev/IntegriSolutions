@@ -217,6 +217,47 @@ describe('Officer Operational Alerts Routes', () => {
     });
   });
 
+  describe('GET /api/alerts/active — version-scoped acknowledgement state', () => {
+    it('treats a v1 acknowledgement as not satisfying the alert once it has been materially edited to v2', async () => {
+      const alertV2 = baseAlertRow({ id: 'alert-1', target_scope: 'all_officers', version: 2 });
+
+      mockServiceSupabase.from.mockImplementation((table: string) => {
+        if (table === 'roadblock_shift_officers') return chainable({ data: [], error: null });
+        if (table === 'operational_alert_officers') return chainable({ data: [], error: null });
+        if (table === 'operational_alerts') return chainable({ data: [alertV2], error: null });
+        if (table === 'operational_alert_acknowledgements') {
+          return chainable({ data: [{ alert_id: 'alert-1', acknowledged_at: '2026-09-09T10:05:00Z', alert_version: 1 }], error: null });
+        }
+        return chainable({ data: [], error: null });
+      });
+
+      const res = await request(app).get('/api/alerts/active').set('Authorization', 'Bearer t');
+      expect(res.status).toBe(200);
+      // The alert reappears as unacknowledged (acknowledgedAt: null) through the normal
+      // API response — this is exactly what drives the Home banner and bottom-nav badge
+      // back to "unacknowledged" after a material update, with no client-side special-casing.
+      expect(res.body[0]).toMatchObject({ id: 'alert-1', version: 2, acknowledgedAt: null });
+    });
+
+    it('still reports an alert as acknowledged when the acknowledgement matches the current version', async () => {
+      const alertV1 = baseAlertRow({ id: 'alert-1', target_scope: 'all_officers', version: 1 });
+
+      mockServiceSupabase.from.mockImplementation((table: string) => {
+        if (table === 'roadblock_shift_officers') return chainable({ data: [], error: null });
+        if (table === 'operational_alert_officers') return chainable({ data: [], error: null });
+        if (table === 'operational_alerts') return chainable({ data: [alertV1], error: null });
+        if (table === 'operational_alert_acknowledgements') {
+          return chainable({ data: [{ alert_id: 'alert-1', acknowledged_at: '2026-09-09T10:05:00Z', alert_version: 1 }], error: null });
+        }
+        return chainable({ data: [], error: null });
+      });
+
+      const res = await request(app).get('/api/alerts/active').set('Authorization', 'Bearer t');
+      expect(res.status).toBe(200);
+      expect(res.body[0]).toMatchObject({ id: 'alert-1', version: 1, acknowledgedAt: '2026-09-09T10:05:00Z' });
+    });
+  });
+
   describe('POST /api/alerts/:id/acknowledge', () => {
     it('acknowledges an eligible alert', async () => {
       mockServiceSupabase.from.mockImplementation((table: string) => {
@@ -250,7 +291,52 @@ describe('Officer Operational Alerts Routes', () => {
       expect(second.status).toBe(200);
       expect(ackHandler.upsert).toHaveBeenCalledTimes(2);
       const [, upsertOptions] = ackHandler.upsert.mock.calls[0];
-      expect(upsertOptions).toMatchObject({ onConflict: 'alert_id,officer_id' });
+      expect(upsertOptions).toMatchObject({ onConflict: 'alert_id,officer_id,alert_version' });
+    });
+
+    it('is idempotent for a duplicate acknowledgement of the same alert_version — same officer, same version, no error', async () => {
+      const ackHandler = chainable({ data: { acknowledged_at: '2026-09-09T10:05:00Z' }, error: null });
+      mockServiceSupabase.from.mockImplementation((table: string) => {
+        if (table === 'operational_alerts') return chainable({ data: baseAlertRow({ version: 2 }), error: null });
+        if (table === 'operational_alert_acknowledgements') return ackHandler;
+        return chainable({ data: [], error: null });
+      });
+
+      const first = await request(app).post('/api/alerts/alert-1/acknowledge').set('Authorization', 'Bearer t');
+      const second = await request(app).post('/api/alerts/alert-1/acknowledge').set('Authorization', 'Bearer t');
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      for (const call of ackHandler.upsert.mock.calls) {
+        expect(call[0]).toMatchObject({ alert_version: 2 });
+      }
+    });
+
+    it('lets the same officer acknowledge v1 and then v2 of the same alert as two distinct rows', async () => {
+      const ackHandler = chainable({ data: { acknowledged_at: '2026-09-09T10:05:00Z' }, error: null });
+
+      mockServiceSupabase.from.mockImplementation((table: string) => {
+        if (table === 'operational_alerts') return chainable({ data: baseAlertRow({ version: 1 }), error: null });
+        if (table === 'operational_alert_acknowledgements') return ackHandler;
+        return chainable({ data: [], error: null });
+      });
+      const v1Res = await request(app).post('/api/alerts/alert-1/acknowledge').set('Authorization', 'Bearer t');
+      expect(v1Res.status).toBe(200);
+      expect(ackHandler.upsert.mock.calls[0][0]).toMatchObject({ alert_version: 1 });
+
+      // Supervisor makes a material edit — the alert is now at version 2.
+      mockServiceSupabase.from.mockImplementation((table: string) => {
+        if (table === 'operational_alerts') return chainable({ data: baseAlertRow({ version: 2 }), error: null });
+        if (table === 'operational_alert_acknowledgements') return ackHandler;
+        return chainable({ data: [], error: null });
+      });
+      const v2Res = await request(app).post('/api/alerts/alert-1/acknowledge').set('Authorization', 'Bearer t');
+      expect(v2Res.status).toBe(200);
+      expect(ackHandler.upsert.mock.calls[1][0]).toMatchObject({ alert_version: 2 });
+
+      // Two distinct (alert_id, officer_id, alert_version) rows — not the same row upserted twice.
+      expect(ackHandler.upsert.mock.calls[0][1]).toMatchObject({ onConflict: 'alert_id,officer_id,alert_version' });
+      expect(ackHandler.upsert.mock.calls[1][1]).toMatchObject({ onConflict: 'alert_id,officer_id,alert_version' });
     });
 
     it('returns 404 for an unknown alert', async () => {

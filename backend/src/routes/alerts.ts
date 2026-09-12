@@ -4,6 +4,7 @@ import { requireAuth, type AuthRequest } from '../middleware/auth';
 import { resolveProfileByEmail } from '../utilities/resolveProfile';
 import { writeAuditLog } from '../utilities/auditLog';
 import { asyncHandler } from '../asyncHandler';
+import { priorityWeight } from '../utilities/alertPriority';
 
 const router = Router();
 
@@ -29,16 +30,6 @@ export const MATCH_ESCALATION_DISCLAIMER =
 
 function isMissingTable(error: { message?: string; code?: string } | null | undefined): boolean {
   return !!error && (error.code === '42P01' || /operational_alert/i.test(error.message ?? ''));
-}
-
-// critical > high > medium > low. critical is a genuine emergency/officer-
-// safety/life-safety tier — distinct from (and above) the existing high
-// "urgent operational alert" tier, which is not renamed or repurposed.
-function priorityWeight(priority: unknown): number {
-  if (priority === 'critical') return 4;
-  if (priority === 'high') return 3;
-  if (priority === 'low') return 1;
-  return 2;
 }
 
 function isValidLatitude(value: number): boolean {
@@ -73,6 +64,7 @@ function toOperationalAlert(row: Record<string, unknown>, extra: Record<string, 
     status: String(row.status),
     expiresAt: row.expires_at == null ? null : String(row.expires_at),
     createdAt: String(row.created_at),
+    version: row.version == null ? 1 : Number(row.version),
     ...extra
   };
 }
@@ -220,14 +212,27 @@ router.get('/active', asyncHandler(async (req, res) => {
   const { data: ackRows, error: ackError } = alertIds.length
     ? await serviceSupabase
       .from('operational_alert_acknowledgements')
-      .select('alert_id, acknowledged_at')
+      .select('alert_id, acknowledged_at, alert_version')
       .eq('officer_id', officerId)
       .in('alert_id', alertIds)
-    : { data: [] as Array<{ alert_id: string; acknowledged_at: string }>, error: null };
+    : { data: [] as Array<{ alert_id: string; acknowledged_at: string; alert_version?: number }>, error: null };
 
   if (ackError) return res.status(500).json({ error: ackError.message });
 
-  const ackByAlert = new Map((ackRows ?? []).map((row) => [String(row.alert_id), String(row.acknowledged_at)]));
+  // An acknowledgement only counts against the alert's *current* version —
+  // a material edit bumps operational_alerts.version, and an officer's
+  // acknowledgement of an earlier version does not carry forward. This is
+  // what makes the alert naturally reappear as unacknowledged after a
+  // material update, with no special-case logic needed on the client.
+  const currentVersionByAlert = new Map(rows.map((row) => [String(row.id), row.version == null ? 1 : Number(row.version)]));
+  const ackByAlert = new Map<string, string>();
+  for (const row of ackRows ?? []) {
+    const alertId = String(row.alert_id);
+    const ackVersion = row.alert_version == null ? 1 : Number(row.alert_version);
+    if (ackVersion === (currentVersionByAlert.get(alertId) ?? 1)) {
+      ackByAlert.set(alertId, String(row.acknowledged_at));
+    }
+  }
 
   const sorted = rows.sort((a, b) => {
     const priorityDelta = priorityWeight(b.priority) - priorityWeight(a.priority);
@@ -254,6 +259,8 @@ router.post('/:id/acknowledge', asyncHandler(async (req, res) => {
     return res.status(eligibility.status).json({ error: eligibility.error });
   }
 
+  const alertVersion = eligibility.alert.version == null ? 1 : Number(eligibility.alert.version);
+
   const acknowledgedAt = new Date().toISOString();
   const { data, error } = await serviceSupabase
     .from('operational_alert_acknowledgements')
@@ -263,9 +270,15 @@ router.post('/:id/acknowledge', asyncHandler(async (req, res) => {
         officer_id: actor.dbId,
         officer_name: `${actor.profile.name} ${actor.profile.surname}`.trim(),
         badge_number: actor.profile.badgeNumber,
-        acknowledged_at: acknowledgedAt
+        acknowledged_at: acknowledgedAt,
+        alert_version: alertVersion
       },
-      { onConflict: 'alert_id,officer_id' }
+      // Scoped to the specific version the officer is acknowledging: the same
+      // officer can hold one acknowledgement row per version of the same
+      // alert (v1, v2, ...), and re-sending the same version's acknowledgement
+      // stays idempotent (upserts onto the same row) rather than creating a
+      // duplicate or clobbering a different version's record.
+      { onConflict: 'alert_id,officer_id,alert_version' }
     )
     .select('*')
     .single();
@@ -274,7 +287,7 @@ router.post('/:id/acknowledge', asyncHandler(async (req, res) => {
 
   await writeAuditLog(authReq.userEmail ?? 'unknown', `Acknowledged operational alert ${alertId}`, alertId);
 
-  return res.json({ alertId, acknowledgedAt: String(data.acknowledged_at) });
+  return res.json({ alertId, acknowledgedAt: String(data.acknowledged_at), alertVersion });
 }));
 
 router.post('/:id/matches', asyncHandler(async (req, res) => {

@@ -98,6 +98,10 @@ export interface OperationalAlert {
   createdAt: string;
   /** Non-null once the signed-in officer has acknowledged this alert. */
   acknowledgedAt: string | null;
+  /** Bumped by the backend on a material edit — acknowledgedAt above is
+   * already scoped to this version, so no client-side version handling is
+   * needed for badge/Home unacknowledged-again behavior. */
+  version: number;
 }
 
 export interface ChatOfficerContact {

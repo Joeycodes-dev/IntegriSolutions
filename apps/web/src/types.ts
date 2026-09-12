@@ -119,6 +119,10 @@ export interface OperationalAlert {
   assignedOfficerIds: number[];
   acknowledgementCount: number;
   matchCount: number;
+  /** Bumped by the backend on a material edit (see computeMaterialChange in
+   * routes/supervisor/alerts.ts) — an acknowledgement recorded against an
+   * earlier version does not count toward this one. */
+  version: number;
 }
 
 export interface CreateOperationalAlertPayload {
@@ -145,6 +149,29 @@ export interface UpdateOperationalAlertLocationPayload {
   lng?: number | null;
   label?: string | null;
   radiusMeters?: number | null;
+}
+
+/**
+ * PATCH /api/supervisor/alerts/:id. Fields beyond status/expiresAt/location
+ * are optional edits — priority, target scope/officers, and source fields
+ * always trigger re-acknowledgement when materially changed; a description
+ * edit only does when materialChangeOverride is explicitly set (the "This
+ * changes operational meaning — require re-acknowledgement" checkbox,
+ * default OFF).
+ */
+export interface UpdateOperationalAlertPayload {
+  status?: OperationalAlertStatus;
+  expiresAt?: string | null;
+  location?: UpdateOperationalAlertLocationPayload;
+  priority?: OperationalAlertPriority;
+  description?: string;
+  targetScope?: OperationalAlertTargetScope;
+  targetShiftId?: string | null;
+  officerIds?: number[];
+  sourceType?: OperationalAlertSourceType;
+  sourceAuthority?: string;
+  sourceReference?: string;
+  materialChangeOverride?: boolean;
 }
 
 export interface OperationalAlertAcknowledgement {

@@ -5,6 +5,7 @@ import { requireSupervisor, type SupervisorRequest } from '../../middleware/requ
 import { ROLE_SUPERVISOR } from '../../constants/roles';
 import { writeAuditLog } from '../../utilities/auditLog';
 import { asyncHandler } from '../../asyncHandler';
+import { priorityWeight } from '../../utilities/alertPriority';
 
 const router = Router();
 
@@ -42,6 +43,70 @@ function isValidLongitude(value: number): boolean {
 
 function isValidRadiusMeters(value: number): boolean {
   return Number.isFinite(value) && value > 0 && value <= MAX_LOCATION_RADIUS_METERS;
+}
+
+function sameOfficerIdSet(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  const setA = new Set(a);
+  return b.every((id) => setA.has(id));
+}
+
+// A minor expiry adjustment (e.g. correcting a typo'd end time by a few
+// minutes, or shortening the window) should not force re-acknowledgement.
+// Meaningfully extending how long an alert stays operationally relevant
+// should. This is a deterministic, tunable *operational* default — not a
+// legal retention period — kept simple and explicit rather than AI-inferred.
+const MATERIAL_EXPIRY_EXTENSION_MS = 60 * 60 * 1000; // 1 hour
+
+function isExpiryChangeMaterial(previousExpiresAt: string | null, nextExpiresAt: string | null): boolean {
+  // Removing an expiry (making the alert indefinite) always meaningfully
+  // extends its operational relevance.
+  if (previousExpiresAt && !nextExpiresAt) return true;
+  // Adding an expiry to a previously indefinite alert narrows relevance, and
+  // shortening an existing window ends relevance sooner — neither is treated
+  // as extending operational relevance.
+  if (!previousExpiresAt || !nextExpiresAt) return false;
+  const previousMs = new Date(previousExpiresAt).getTime();
+  const nextMs = new Date(nextExpiresAt).getTime();
+  if (Number.isNaN(previousMs) || Number.isNaN(nextMs)) return false;
+  return nextMs - previousMs >= MATERIAL_EXPIRY_EXTENSION_MS;
+}
+
+/**
+ * Deterministic (never AI-inferred) classification of whether a Supervisor's
+ * edit changes the alert's operational meaning enough to require every
+ * officer who already acknowledged it to acknowledge again:
+ *
+ *  - priority increase, target/shift/officer targeting change, location or
+ *    trigger-radius change, and source authority/reference/type change are
+ *    always material.
+ *  - a meaningful expiry extension (see isExpiryChangeMaterial) is material;
+ *    a minor correction or a shortened window is not.
+ *  - a description/instruction-only edit is material only when the
+ *    Supervisor explicitly flags it via the "This changes operational
+ *    meaning — require re-acknowledgement" checkbox (default OFF) — typo and
+ *    formatting fixes must not force re-acknowledgement on their own.
+ *  - a priority decrease is never material on its own.
+ */
+export function computeMaterialChange(input: {
+  priorityIncreased: boolean;
+  targetChanged: boolean;
+  locationChanged: boolean;
+  sourceChanged: boolean;
+  descriptionChanged: boolean;
+  materialChangeOverride: boolean;
+  expiryMaterial: boolean;
+}): { material: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+  if (input.priorityIncreased) reasons.push('priority increased');
+  if (input.targetChanged) reasons.push('target scope/assignment changed');
+  if (input.locationChanged) reasons.push('location/radius changed');
+  if (input.sourceChanged) reasons.push('source authority/reference changed');
+  if (input.descriptionChanged && input.materialChangeOverride) {
+    reasons.push('description/instructions materially changed (marked by supervisor)');
+  }
+  if (input.expiryMaterial) reasons.push('expiry meaningfully extended');
+  return { material: reasons.length > 0, reasons };
 }
 
 const photoUpload = multer({
@@ -109,6 +174,7 @@ function toOperationalAlert(row: Record<string, unknown>, extra: Record<string, 
     expiresAt: row.expires_at == null ? null : String(row.expires_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at ?? row.created_at),
+    version: row.version == null ? 1 : Number(row.version),
     ...extra
   };
 }
@@ -301,13 +367,32 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
   const authReq = req as SupervisorRequest;
   const alertId = String(req.params.id);
   const body = (req.body ?? {}) as Record<string, unknown>;
+
+  const { data: existingRow, error: existingError } = await serviceSupabase
+    .from('operational_alerts')
+    .select('*')
+    .eq('id', alertId)
+    .maybeSingle();
+
+  if (existingError) return res.status(500).json({ error: existingError.message });
+  if (!existingRow) return res.status(404).json({ error: 'Operational alert not found' });
+  const existing = existingRow as Record<string, unknown>;
+
   const status = typeof body.status === 'string' ? body.status : undefined;
   const hasExpiresPatch = Object.prototype.hasOwnProperty.call(body, 'expiresAt');
   const hasLocationPatch = Object.prototype.hasOwnProperty.call(body, 'location');
   const location = hasLocationPatch ? ((body.location ?? {}) as { lat?: unknown; lng?: unknown; label?: unknown; radiusMeters?: unknown }) : null;
+  const hasPriorityPatch = Object.prototype.hasOwnProperty.call(body, 'priority');
+  const hasDescriptionPatch = Object.prototype.hasOwnProperty.call(body, 'description');
+  const hasTargetPatch = ['targetScope', 'targetShiftId', 'officerIds'].some((key) => Object.prototype.hasOwnProperty.call(body, key));
+  const hasSourcePatch = ['sourceType', 'sourceAuthority', 'sourceReference'].some((key) => Object.prototype.hasOwnProperty.call(body, key));
+  // "This changes operational meaning — require re-acknowledgement" checkbox,
+  // shown by the Supervisor UI alongside a description/instructions edit.
+  // Default OFF: only forces materiality when the description actually changed.
+  const materialChangeOverride = body.materialChangeOverride === true;
 
-  if (!status && !hasExpiresPatch && !hasLocationPatch) {
-    return res.status(400).json({ error: 'Provide status, expiresAt, and/or location to update' });
+  if (!status && !hasExpiresPatch && !hasLocationPatch && !hasPriorityPatch && !hasDescriptionPatch && !hasTargetPatch && !hasSourcePatch) {
+    return res.status(400).json({ error: 'Provide at least one field to update' });
   }
   if (status && !STATUSES.has(status)) {
     return res.status(400).json({ error: `Status must be one of: ${Array.from(STATUSES).join(', ')}` });
@@ -322,18 +407,148 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
     return res.status(400).json({ error: `location.radiusMeters must be a positive number up to ${MAX_LOCATION_RADIUS_METERS}` });
   }
 
+  let priority: string | undefined;
+  if (hasPriorityPatch) {
+    if (typeof body.priority !== 'string' || !PRIORITIES.has(body.priority)) {
+      return res.status(400).json({ error: `priority must be one of: ${Array.from(PRIORITIES).join(', ')}` });
+    }
+    priority = body.priority;
+  }
+
+  let description: string | undefined;
+  if (hasDescriptionPatch) {
+    description = String(body.description ?? '').trim();
+    if (!description) {
+      return res.status(400).json({ error: 'Description cannot be empty' });
+    }
+  }
+
+  const existingAlertType = String(existing.alert_type);
+  const existingTargetScope = String(existing.target_scope);
+
+  let targetScope: string | undefined;
+  let targetShiftId: string | null = null;
+  let officerIds: number[] | undefined;
+  if (hasTargetPatch) {
+    targetScope = typeof body.targetScope === 'string' ? body.targetScope : existingTargetScope;
+    if (!TARGET_SCOPES.has(targetScope)) {
+      return res.status(400).json({ error: 'A valid target scope is required' });
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'targetShiftId')) {
+      targetShiftId = optionalTrimmedString(body.targetShiftId);
+    } else if (targetScope === existingTargetScope) {
+      targetShiftId = existing.target_shift_id == null ? null : String(existing.target_shift_id);
+    }
+    officerIds = Object.prototype.hasOwnProperty.call(body, 'officerIds') ? sanitizeOfficerIds(body.officerIds) : undefined;
+
+    if (targetScope === 'shift' && !targetShiftId) {
+      return res.status(400).json({ error: 'targetShiftId is required when targetScope is shift' });
+    }
+    if (targetScope === 'officers' && (!officerIds || officerIds.length === 0)) {
+      return res.status(400).json({ error: 'At least one officer id is required when targetScope is officers' });
+    }
+  }
+
+  let sourceType: string | undefined;
+  let sourceAuthority = '';
+  let sourceReference = '';
+  if (hasSourcePatch) {
+    sourceType = typeof body.sourceType === 'string' && SOURCE_TYPES.has(body.sourceType) ? body.sourceType : String(existing.source_type);
+    sourceAuthority = Object.prototype.hasOwnProperty.call(body, 'sourceAuthority')
+      ? (optionalTrimmedString(body.sourceAuthority) ?? '')
+      : (existing.source_authority == null ? '' : String(existing.source_authority));
+    sourceReference = Object.prototype.hasOwnProperty.call(body, 'sourceReference')
+      ? (optionalTrimmedString(body.sourceReference) ?? '')
+      : (existing.source_reference == null ? '' : String(existing.source_reference));
+
+    if (BOLO_TYPES.has(existingAlertType) && sourceType !== 'external') {
+      return res.status(400).json({
+        error: 'BOLO alerts for a person or vehicle must come from an external authority — set source type to external with an authority and reference'
+      });
+    }
+    if (sourceType === 'external' && (!sourceAuthority || !sourceReference)) {
+      return res.status(400).json({ error: 'External alerts require both a source authority and a source reference' });
+    }
+  }
+
+  // ---- Material-change classification (deterministic, never AI-inferred) ----
+  const priorityIncreased = hasPriorityPatch && priority !== undefined
+    && priorityWeight(priority) > priorityWeight(String(existing.priority));
+
+  let existingOfficerIds: number[] = [];
+  if (hasTargetPatch && (targetScope === 'officers' || existingTargetScope === 'officers')) {
+    const { data: existingTargetRows, error: existingTargetError } = await serviceSupabase
+      .from('operational_alert_officers')
+      .select('officer_id')
+      .eq('alert_id', alertId);
+    if (existingTargetError) return res.status(500).json({ error: existingTargetError.message });
+    existingOfficerIds = ((existingTargetRows ?? []) as Array<{ officer_id: unknown }>).map((row) => Number(row.officer_id));
+  }
+
+  const targetChanged = hasTargetPatch && (
+    targetScope !== existingTargetScope
+    || (targetScope === 'shift' && targetShiftId !== (existing.target_shift_id == null ? null : String(existing.target_shift_id)))
+    || (targetScope === 'officers' && officerIds !== undefined && !sameOfficerIdSet(officerIds, existingOfficerIds))
+  );
+
+  const existingLocationLat = existing.location_lat == null ? null : Number(existing.location_lat);
+  const existingLocationLng = existing.location_lng == null ? null : Number(existing.location_lng);
+  const existingLocationRadius = existing.location_radius_meters == null ? null : Number(existing.location_radius_meters);
+  const locationChanged = hasLocationPatch && (
+    optionalNumber(location?.lat) !== existingLocationLat
+    || optionalNumber(location?.lng) !== existingLocationLng
+    || optionalNumber(location?.radiusMeters) !== existingLocationRadius
+  );
+
+  const sourceChanged = hasSourcePatch && (
+    sourceType !== String(existing.source_type)
+    || (sourceAuthority || null) !== (existing.source_authority == null ? null : String(existing.source_authority))
+    || (sourceReference || null) !== (existing.source_reference == null ? null : String(existing.source_reference))
+  );
+
+  const descriptionChanged = hasDescriptionPatch && description !== String(existing.description);
+
+  const existingExpiresAtIso = existing.expires_at == null ? null : String(existing.expires_at);
+  const nextExpiresAtIso = hasExpiresPatch ? (parseDate(body.expiresAt)?.toISOString() ?? null) : undefined;
+  const expiryChanged = hasExpiresPatch && nextExpiresAtIso !== existingExpiresAtIso;
+  const expiryMaterial = expiryChanged && isExpiryChangeMaterial(existingExpiresAtIso, nextExpiresAtIso ?? null);
+
+  const { material, reasons } = computeMaterialChange({
+    priorityIncreased,
+    targetChanged,
+    locationChanged,
+    sourceChanged,
+    descriptionChanged,
+    materialChangeOverride,
+    expiryMaterial
+  });
+
+  const existingVersion = existing.version == null ? 1 : Number(existing.version);
+  const nextVersion = material ? existingVersion + 1 : existingVersion;
+
+  // ---- Build and apply the update ----
   const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (status) updatePayload.status = status;
-  if (hasExpiresPatch) {
-    const expiresAt = parseDate(body.expiresAt);
-    updatePayload.expires_at = expiresAt ? expiresAt.toISOString() : null;
-  }
+  if (hasExpiresPatch) updatePayload.expires_at = nextExpiresAtIso ?? null;
   if (location) {
     updatePayload.location_lat = optionalNumber(location.lat);
     updatePayload.location_lng = optionalNumber(location.lng);
     updatePayload.location_label = optionalTrimmedString(location.label);
     updatePayload.location_radius_meters = optionalNumber(location.radiusMeters);
   }
+  if (hasPriorityPatch) updatePayload.priority = priority;
+  if (hasDescriptionPatch) updatePayload.description = description;
+  if (hasTargetPatch) {
+    updatePayload.target_scope = targetScope;
+    updatePayload.target_shift_id = targetScope === 'shift' ? targetShiftId : null;
+  }
+  if (hasSourcePatch) {
+    updatePayload.source_type = sourceType;
+    updatePayload.source_authority = sourceType === 'external' ? sourceAuthority : null;
+    updatePayload.source_reference = sourceType === 'external' ? sourceReference : null;
+  }
+  // Never decremented, never reset by a non-material edit — only bumped here.
+  if (material) updatePayload.version = nextVersion;
 
   const { data, error } = await serviceSupabase
     .from('operational_alerts')
@@ -345,13 +560,32 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Operational alert not found' });
 
+  if (hasTargetPatch) {
+    const { error: deleteTargetError } = await serviceSupabase
+      .from('operational_alert_officers')
+      .delete()
+      .eq('alert_id', alertId);
+    if (deleteTargetError) return res.status(500).json({ error: deleteTargetError.message });
+
+    if (targetScope === 'officers' && officerIds && officerIds.length) {
+      const { error: insertTargetError } = await serviceSupabase
+        .from('operational_alert_officers')
+        .insert(officerIds.map((officerId) => ({ alert_id: alertId, officer_id: officerId })));
+      if (insertTargetError) return res.status(500).json({ error: insertTargetError.message });
+    }
+  }
+
   await writeAuditLog(
     authReq.userEmail ?? 'unknown',
-    `Updated operational alert ${alertId}${status ? ` to ${status}` : ''}`,
+    `Updated operational alert ${alertId}${status ? ` to ${status}` : ''}`
+      + (material ? ` (material change — now v${nextVersion}, re-acknowledgement required: ${reasons.join('; ')})` : ''),
     alertId
   );
 
-  return res.json(toOperationalAlert(data as Record<string, unknown>));
+  return res.json(toOperationalAlert(data as Record<string, unknown>, {
+    ...(hasTargetPatch && targetScope === 'officers' ? { assignedOfficerIds: officerIds ?? [] } : {}),
+    materialChange: material
+  }));
 }));
 
 router.post('/:id/photo', requireSupervisorRole, photoUpload.single('photo'), asyncHandler(async (req, res) => {
@@ -404,20 +638,38 @@ router.post('/:id/photo', requireSupervisorRole, photoUpload.single('photo'), as
 }));
 
 router.get('/:id/acknowledgements', asyncHandler(async (req, res) => {
+  const alertId = req.params.id;
+
+  const { data: alertRow, error: alertError } = await serviceSupabase
+    .from('operational_alerts')
+    .select('version')
+    .eq('id', alertId)
+    .maybeSingle();
+  if (alertError) return res.status(500).json({ error: alertError.message });
+  const currentVersion = alertRow && !Array.isArray(alertRow) && (alertRow as Record<string, unknown>).version != null
+    ? Number((alertRow as Record<string, unknown>).version)
+    : 1;
+
   const { data, error } = await serviceSupabase
     .from('operational_alert_acknowledgements')
     .select('*')
-    .eq('alert_id', req.params.id)
+    .eq('alert_id', alertId)
     .order('acknowledged_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
 
-  return res.json((data ?? []).map((row) => ({
-    officerId: Number(row.officer_id),
-    officerName: String(row.officer_name),
-    badgeNumber: String(row.badge_number),
-    acknowledgedAt: String(row.acknowledged_at)
-  })));
+  // A material edit bumps the alert's version — an acknowledgement recorded
+  // against an earlier version no longer counts as coverage for the alert as
+  // it exists today, so it's excluded here rather than being surfaced as if
+  // the officer had seen the current content.
+  return res.json((data ?? [])
+    .filter((row) => (row.alert_version == null ? 1 : Number(row.alert_version)) === currentVersion)
+    .map((row) => ({
+      officerId: Number(row.officer_id),
+      officerName: String(row.officer_name),
+      badgeNumber: String(row.badge_number),
+      acknowledgedAt: String(row.acknowledged_at)
+    })));
 }));
 
 router.get('/:id/matches', asyncHandler(async (req, res) => {

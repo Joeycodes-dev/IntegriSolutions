@@ -26,6 +26,7 @@ function makeAlert(overrides: Partial<OperationalAlert> = {}): OperationalAlert 
     expiresAt: null,
     createdAt: '2026-09-11T10:00:00Z',
     acknowledgedAt: null,
+    version: 1,
     ...overrides
   };
 }

@@ -638,11 +638,7 @@ export async function createOperationalAlert(payload: import('../types').CreateO
 
 export async function updateOperationalAlert(
   alertId: string,
-  payload: {
-    status?: import('../types').OperationalAlertStatus;
-    expiresAt?: string | null;
-    location?: import('../types').UpdateOperationalAlertLocationPayload;
-  }
+  payload: import('../types').UpdateOperationalAlertPayload
 ) {
   return request<import('../types').OperationalAlert>(`/api/supervisor/alerts/${encodeURIComponent(alertId)}`, {
     method: 'PATCH',

@@ -355,6 +355,220 @@ describe('Supervisor Operational Alerts Routes', () => {
     });
   });
 
+  describe('PATCH /api/supervisor/alerts/:id — material-change versioning (Phase A1)', () => {
+    it('increments version and requires re-acknowledgement on a priority increase', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: alertRow({ priority: 'medium', version: 1 }), error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ priority: 'critical' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.materialChange).toBe(true);
+      expect(alertsHandler.update.mock.calls[0][0]).toMatchObject({ priority: 'critical', version: 2 });
+    });
+
+    it('does not increment version on a priority decrease', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: alertRow({ priority: 'high', version: 1 }), error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ priority: 'low' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.materialChange).toBe(false);
+      expect(alertsHandler.update.mock.calls[0][0]).not.toHaveProperty('version');
+    });
+
+    it('increments version on a target scope / assignment change', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: alertRow({ target_scope: 'all_officers', version: 1 }), error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'operational_alert_officers') return chainable({ data: [], error: null });
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ targetScope: 'officers', officerIds: [23, 24] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.materialChange).toBe(true);
+      expect(alertsHandler.update.mock.calls[0][0]).toMatchObject({ target_scope: 'officers', version: 2 });
+    });
+
+    it('increments version on a location / trigger-radius change', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({
+        data: alertRow({ location_lat: null, location_lng: null, location_radius_meters: null, version: 1 }),
+        error: null,
+      });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ location: { lat: -26.2, lng: 28.0, radiusMeters: 500 } });
+
+      expect(res.status).toBe(200);
+      expect(res.body.materialChange).toBe(true);
+      expect(alertsHandler.update.mock.calls[0][0]).toMatchObject({ version: 2 });
+    });
+
+    it('increments version on a source authority/reference change', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({
+        data: alertRow({
+          alert_type: 'bolo_vehicle',
+          source_type: 'external',
+          source_authority: 'SAPS Klerksdorp',
+          source_reference: 'CAS 100/01/2026',
+          version: 1,
+        }),
+        error: null,
+      });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ sourceType: 'external', sourceAuthority: 'SAPS Klerksdorp', sourceReference: 'CAS 999/09/2026' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.materialChange).toBe(true);
+      expect(alertsHandler.update.mock.calls[0][0]).toMatchObject({ version: 2 });
+    });
+
+    it('does not increment version for a description-only edit without the material-change override (typo/formatting)', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: alertRow({ description: 'Be advised: flooding on N1', version: 1 }), error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ description: 'Be advised: flooding on the N1 (typo fix)' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.materialChange).toBe(false);
+      expect(alertsHandler.update.mock.calls[0][0]).not.toHaveProperty('version');
+    });
+
+    it('increments version for a description edit when the Supervisor sets the material-change override', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: alertRow({ description: 'Be advised: flooding on N1', version: 1 }), error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ description: 'Road now fully closed — detour via R21', materialChangeOverride: true });
+
+      expect(res.status).toBe(200);
+      expect(res.body.materialChange).toBe(true);
+      expect(alertsHandler.update.mock.calls[0][0]).toMatchObject({ version: 2 });
+    });
+
+    it('does not increment version for a minor expiry correction', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: alertRow({ expires_at: '2026-09-09T12:00:00Z', version: 1 }), error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ expiresAt: '2026-09-09T12:10:00Z' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.materialChange).toBe(false);
+      expect(alertsHandler.update.mock.calls[0][0]).not.toHaveProperty('version');
+    });
+
+    it('increments version when the expiry is meaningfully extended', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: alertRow({ expires_at: '2026-09-09T12:00:00Z', version: 1 }), error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ expiresAt: '2026-09-09T20:00:00Z' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.materialChange).toBe(true);
+      expect(alertsHandler.update.mock.calls[0][0]).toMatchObject({ version: 2 });
+    });
+  });
+
+  describe('GET /api/supervisor/alerts/:id/acknowledgements — version-scoped coverage (Phase A1)', () => {
+    it('excludes acknowledgements recorded against an earlier version of the alert', async () => {
+      const roleHandler = mockAsSupervisor();
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return chainable({ data: alertRow({ version: 2 }), error: null });
+        if (table === 'operational_alert_acknowledgements') {
+          return chainable({
+            data: [
+              { officer_id: 23, officer_name: 'John Doe', badge_number: 'B123', acknowledged_at: '2026-09-09T09:00:00Z', alert_version: 1 },
+              { officer_id: 24, officer_name: 'Jane Smith', badge_number: 'B124', acknowledged_at: '2026-09-09T10:05:00Z', alert_version: 2 },
+            ],
+            error: null,
+          });
+        }
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/alert-1/acknowledgements')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([
+        { officerId: 24, officerName: 'Jane Smith', badgeNumber: 'B124', acknowledgedAt: '2026-09-09T10:05:00Z' },
+      ]);
+    });
+  });
+
   describe('Authorization model', () => {
     it('lets a Supervisor create an alert', async () => {
       const roleHandler = mockAsSupervisor();
