@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -30,6 +30,8 @@ import { useSync } from "../lib/SyncContext";
 import { getRuntimeConfig, updateDutyStatus } from "../services/api";
 import { useAlertsContext } from "../lib/AlertsContext";
 import { summarizeAlertsForHome } from "../lib/homeAlertsSummary";
+import { evaluateNearbyWithCooldown, type ProximityCooldownMap } from "../lib/alertProximityGuard";
+import { LOCATION_ACCURACY_THRESHOLD_METERS } from "../lib/geo";
 import type { RuntimeConfig } from "../types";
 import {
   decryptLicensePayload,
@@ -648,6 +650,21 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     () => summarizeAlertsForHome(alerts, officerLocation),
     [alerts, officerLocation],
   );
+  // Per-alert cooldown so a jittery GPS fix doesn't flap the NEARBY badge on
+  // and off across focuses; owned here (not persisted) since it's purely a
+  // render-smoothing concern, not officer tracking. See alertProximityGuard.ts.
+  const proximityCooldownRef = useRef<ProximityCooldownMap>(new Map());
+  // Deliberately not memoized: the cooldown can expire purely from time
+  // passing (no dependency change), so this needs to re-evaluate on every
+  // render, not just when the featured alert or raw nearby reading changes.
+  const featuredAlertIsNearby = alertsSummary.featuredAlert
+    ? evaluateNearbyWithCooldown(
+        proximityCooldownRef.current,
+        alertsSummary.featuredAlert.id,
+        alertsSummary.featuredAlert.version,
+        alertsSummary.featuredAlertIsNearby,
+      )
+    : false;
   const [syncModalVisible, setSyncModalVisible] = useState(false);
   const [step, setStep] = useState<OfficerStep>("idle");
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
@@ -719,6 +736,12 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       });
       const lat = current.coords.latitude;
       const lng = current.coords.longitude;
+      const accuracy = current.coords.accuracy;
+      if (accuracy != null && accuracy > LOCATION_ACCURACY_THRESHOLD_METERS) {
+        // Fix too coarse to trust for proximity — leave officerLocation as-is,
+        // same as a denied/failed read.
+        return;
+      }
       if (Number.isFinite(lat) && Number.isFinite(lng)) {
         setOfficerLocation({ lat, lng });
       }
@@ -1174,7 +1197,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             onOpenReports={() => navigation.navigate("OfficerReports")}
             onOpenAudit={() => navigation.navigate("Audit")}
             featuredAlert={alertsSummary.featuredAlert}
-            featuredAlertIsNearby={alertsSummary.featuredAlertIsNearby}
+            featuredAlertIsNearby={featuredAlertIsNearby}
             featuredAlertDistanceMeters={alertsSummary.featuredAlertDistanceMeters}
             otherAlertsCount={alertsSummary.otherCount}
             onAcknowledgeAlert={handleAcknowledgeAlert}

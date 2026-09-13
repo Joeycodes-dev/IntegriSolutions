@@ -10,7 +10,10 @@ export type AuditAction =
   | 'test.invalidated'
   | 'test.invalidation.failed'
   | 'sync.batch.completed'
-  | 'sync.batch.failed';
+  | 'sync.batch.failed'
+  | 'alert.received'
+  | 'alert.acknowledged.queued'
+  | 'alert.acknowledged.synced';
 
 export type AuditOutcome = 'success' | 'failure';
 export type AuditSeverity = 'info' | 'warning' | 'critical';
@@ -285,6 +288,109 @@ export async function getTestById(id: string): Promise<LocalTestRecord | null> {
     `SELECT * FROM tests WHERE id = ?`,
     [id]
   );
+}
+
+export interface CachedAlertRecord {
+  id: string;
+  officerId: number | null;
+  version: number;
+  alertJson: string;
+  receivedAt: string;
+  acknowledgedAt: string | null;
+  updatedAt: string;
+}
+
+/**
+ * Upserts the officer's active-alerts snapshot for offline reads. receivedAt
+ * is stamped once per (id, version) — untouched on refreshes that don't
+ * change the alert's version — so it reflects when this device first saw
+ * that version, distinct from the alert's server-side createdAt.
+ */
+export async function upsertCachedAlerts(
+  officerId: number | null,
+  alerts: Array<{ id: string; version: number; acknowledgedAt: string | null; payload: unknown }>
+): Promise<Array<{ id: string; version: number; receivedAt: string; isNewReceipt: boolean }>> {
+  const db = await getDB();
+  const now = new Date().toISOString();
+  const receipts: Array<{ id: string; version: number; receivedAt: string; isNewReceipt: boolean }> = [];
+  for (const alert of alerts) {
+    const existing = await db.getFirstAsync<CachedAlertRecord>(
+      `SELECT * FROM alert_cache WHERE id = ?`,
+      [alert.id]
+    );
+    const isNewReceipt = !existing || existing.version !== alert.version;
+    const receivedAt = isNewReceipt ? now : existing!.receivedAt;
+    const alertJson = JSON.stringify(alert.payload);
+    if (existing) {
+      await db.runAsync(
+        `UPDATE alert_cache SET officerId = ?, version = ?, alertJson = ?, receivedAt = ?, acknowledgedAt = ?, updatedAt = ? WHERE id = ?`,
+        [officerId, alert.version, alertJson, receivedAt, alert.acknowledgedAt, now, alert.id]
+      );
+    } else {
+      await db.runAsync(
+        `INSERT INTO alert_cache (id, officerId, version, alertJson, receivedAt, acknowledgedAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [alert.id, officerId, alert.version, alertJson, receivedAt, alert.acknowledgedAt, now]
+      );
+    }
+    receipts.push({ id: alert.id, version: alert.version, receivedAt, isNewReceipt });
+  }
+  return receipts;
+}
+
+export async function getCachedAlerts(officerId?: number | null): Promise<CachedAlertRecord[]> {
+  const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    return db.getAllAsync<CachedAlertRecord>(
+      `SELECT * FROM alert_cache WHERE officerId = ? OR officerId IS NULL ORDER BY updatedAt DESC`,
+      [officerId]
+    );
+  }
+  return db.getAllAsync<CachedAlertRecord>(
+    `SELECT * FROM alert_cache WHERE officerId IS NULL ORDER BY updatedAt DESC`
+  );
+}
+
+/** Reflects an optimistic (or confirmed) acknowledgement into the offline cache. */
+export async function updateCachedAlertAcknowledgement(id: string, acknowledgedAt: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(`UPDATE alert_cache SET acknowledgedAt = ? WHERE id = ?`, [acknowledgedAt, id]);
+}
+
+export interface PendingAlertAck {
+  alertId: string;
+  officerId: number | null;
+  requestedAt: string;
+  retryCount: number;
+}
+
+/** One pending ack per alert — acknowledgement is idempotent server-side, so
+ * a second offline tap on the same alert doesn't need its own queue row. */
+export async function queueAlertAck(alertId: string, officerId: number | null, requestedAt: string): Promise<void> {
+  const db = await getDB();
+  const existing = await db.getFirstAsync<PendingAlertAck>(
+    `SELECT * FROM alert_ack_queue WHERE alertId = ?`,
+    [alertId]
+  );
+  if (existing) return;
+  await db.runAsync(
+    `INSERT INTO alert_ack_queue (alertId, officerId, requestedAt, retryCount) VALUES (?, ?, ?, 0)`,
+    [alertId, officerId, requestedAt]
+  );
+}
+
+export async function getPendingAlertAcks(): Promise<PendingAlertAck[]> {
+  const db = await getDB();
+  return db.getAllAsync<PendingAlertAck>(`SELECT * FROM alert_ack_queue ORDER BY requestedAt ASC`);
+}
+
+export async function removeAlertAckFromQueue(alertId: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(`DELETE FROM alert_ack_queue WHERE alertId = ?`, [alertId]);
+}
+
+export async function incrementAlertAckRetry(alertId: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(`UPDATE alert_ack_queue SET retryCount = retryCount + 1 WHERE alertId = ?`, [alertId]);
 }
 
 export async function insertDraft(draft: LocalDraft): Promise<void> {

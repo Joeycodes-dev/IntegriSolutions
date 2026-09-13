@@ -32,6 +32,13 @@ export function onAuthExpired(listener: AuthExpiredListener) {
   };
 }
 
+/** True when `request()` failed before reaching the server (see the `doFetch`
+ * catch below) rather than the server responding with a 4xx/5xx — callers use
+ * this to decide whether a failure is worth queuing for retry. */
+export function isNetworkRequestError(err: unknown): boolean {
+  return err instanceof Error && /^Network error requesting/.test(err.message);
+}
+
 function extractErrorMessage(payload: unknown): string {
   const candidate = (payload as { error?: unknown })?.error;
   return typeof candidate === 'string' && candidate.trim() ? candidate : 'API request failed';

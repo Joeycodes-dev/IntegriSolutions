@@ -12,7 +12,19 @@ jest.mock('../../src/lib/AuthContext', () => ({
 
 jest.mock('../../src/services/api', () => ({
   getActiveAlerts: jest.fn(),
-  acknowledgeAlert: jest.fn()
+  acknowledgeAlert: jest.fn(),
+  isNetworkRequestError: jest.fn((err: unknown) => err instanceof Error && /^Network error requesting/.test(err.message))
+}));
+
+jest.mock('../../src/db/repository', () => ({
+  getCachedAlerts: jest.fn().mockResolvedValue([]),
+  upsertCachedAlerts: jest.fn().mockResolvedValue([]),
+  updateCachedAlertAcknowledgement: jest.fn().mockResolvedValue(undefined),
+  queueAlertAck: jest.fn().mockResolvedValue(undefined)
+}));
+
+jest.mock('../../src/services/audit', () => ({
+  logAuditEvent: jest.fn().mockResolvedValue(undefined)
 }));
 
 function alertFixture(overrides: Partial<Record<string, unknown>> = {}) {

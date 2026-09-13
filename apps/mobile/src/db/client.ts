@@ -70,6 +70,25 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_attachments_test ON evidence_attachments(testId);
   CREATE INDEX IF NOT EXISTS idx_attachments_sync ON evidence_attachments(syncStatus);
 
+  CREATE TABLE IF NOT EXISTS alert_cache (
+    id TEXT PRIMARY KEY NOT NULL,
+    officerId INTEGER,
+    version INTEGER NOT NULL DEFAULT 1,
+    alertJson TEXT NOT NULL,
+    receivedAt TEXT NOT NULL,
+    acknowledgedAt TEXT,
+    updatedAt TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_alert_cache_officer ON alert_cache(officerId);
+
+  CREATE TABLE IF NOT EXISTS alert_ack_queue (
+    alertId TEXT PRIMARY KEY NOT NULL,
+    officerId INTEGER,
+    requestedAt TEXT NOT NULL,
+    retryCount INTEGER NOT NULL DEFAULT 0
+  );
+
   CREATE TRIGGER IF NOT EXISTS audit_no_update
   BEFORE UPDATE ON audit_events
   BEGIN
