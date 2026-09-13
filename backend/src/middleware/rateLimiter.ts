@@ -36,3 +36,13 @@ export const verifyLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Per-user cap on top of the global Nominatim throttle in routes/geocode.ts —
+// this just stops one signed-in user from spamming searches.
+export const geocodeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: { error: 'Too many location searches, please try again shortly' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

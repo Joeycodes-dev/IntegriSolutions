@@ -29,6 +29,8 @@ import {
   updateOperationalAlert
 } from '../../services/api';
 import { filterSightings } from '../../lib/alertSightings';
+import { isValidLatitude, isValidLongitude } from '../../lib/geo';
+import { LocationInput } from '../LocationInput';
 import { SupervisorAlertsMap } from './SupervisorAlertsMap';
 import { SupervisorAlertsHeatmap } from './SupervisorAlertsHeatmap';
 
@@ -422,12 +424,12 @@ export function SupervisorAlerts() {
       const lng = form.locationLng.trim() ? Number(form.locationLng) : undefined;
       const radiusMeters = form.locationRadiusMeters.trim() ? Number(form.locationRadiusMeters) : undefined;
 
-      if (lat !== undefined && !Number.isFinite(lat)) {
+      if (lat !== undefined && !isValidLatitude(lat)) {
         setError('Trigger latitude must be a number between -90 and 90');
         setSaving(false);
         return;
       }
-      if (lng !== undefined && !Number.isFinite(lng)) {
+      if (lng !== undefined && !isValidLongitude(lng)) {
         setError('Trigger longitude must be a number between -180 and 180');
         setSaving(false);
         return;
@@ -834,42 +836,14 @@ export function SupervisorAlerts() {
                 style={{ borderColor: BORDER }}
               />
             </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[0.6875rem] font-semibold text-slate-600">Location</span>
-              <input
-                value={form.locationLabel}
-                onChange={(e) => updateForm('locationLabel', e.target.value)}
-                placeholder="N1 Midrand offramp"
-                className={inputClassName}
-                style={{ borderColor: BORDER }}
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[0.6875rem] font-semibold text-slate-600">
-                Trigger latitude <span className="font-normal text-slate-400">(optional)</span>
-              </span>
-              <input
-                value={form.locationLat}
-                onChange={(e) => updateForm('locationLat', e.target.value)}
-                placeholder="-26.2041"
-                inputMode="decimal"
-                className={inputClassName}
-                style={{ borderColor: BORDER }}
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[0.6875rem] font-semibold text-slate-600">
-                Trigger longitude <span className="font-normal text-slate-400">(optional)</span>
-              </span>
-              <input
-                value={form.locationLng}
-                onChange={(e) => updateForm('locationLng', e.target.value)}
-                placeholder="28.0473"
-                inputMode="decimal"
-                className={inputClassName}
-                style={{ borderColor: BORDER }}
-              />
-            </label>
+            <LocationInput
+              value={{ label: form.locationLabel, lat: form.locationLat, lng: form.locationLng }}
+              onChange={(next) =>
+                setForm((prev) => ({ ...prev, locationLabel: next.label, locationLat: next.lat, locationLng: next.lng }))
+              }
+              inputClassName={inputClassName}
+              borderColor={BORDER}
+            />
             <label className="flex flex-col gap-1">
               <span className="text-[0.6875rem] font-semibold text-slate-600">
                 Trigger radius (m) <span className="font-normal text-slate-400">(optional, notifies nearby officers)</span>

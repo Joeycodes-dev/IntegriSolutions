@@ -24,7 +24,8 @@ import configRoutes from './routes/config';
 import chatRoutes from './routes/chat';
 import roadOffenceRoutes from './routes/roadOffences';
 import alertsRoutes from './routes/alerts';
-import { apiLimiter, authLimiter, syncLimiter, verifyLimiter } from './middleware/rateLimiter';
+import geocodeRoutes from './routes/geocode';
+import { apiLimiter, authLimiter, syncLimiter, verifyLimiter, geocodeLimiter } from './middleware/rateLimiter';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -97,6 +98,7 @@ app.use('/api/config', configRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/road-offences', roadOffenceRoutes);
 app.use('/api/alerts', alertsRoutes);
+app.use('/api/geocode', geocodeLimiter, geocodeRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });

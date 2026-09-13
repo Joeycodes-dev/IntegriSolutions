@@ -358,6 +358,21 @@ export async function updateFieldOfficer(
   });
 }
 
+export interface GeocodeSearchResult {
+  lat: number;
+  lng: number;
+  label: string;
+}
+
+/** Backed by our own /api/geocode proxy (see backend/src/routes/geocode.ts),
+ * not called directly against the provider — keeps the provider swappable
+ * and never ships a provider key to the browser. */
+export async function searchLocation(query: string) {
+  return request<GeocodeSearchResult[]>(`/api/geocode/search?q=${encodeURIComponent(query)}`, {
+    headers: authHeaders()
+  });
+}
+
 export async function getRoadblockShifts() {
   return request<import('../types').RoadblockShift[]>('/api/supervisor/shifts', {
     headers: authHeaders()

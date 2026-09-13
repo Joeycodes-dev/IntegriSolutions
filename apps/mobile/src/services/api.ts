@@ -362,6 +362,19 @@ export async function uploadRoadOffencePhotos(roadOffenceId: string, photos: Arr
   return request(`/road-offences/${encodeURIComponent(roadOffenceId)}/evidence`, { method: 'POST', body: formData });
 }
 
+export interface GeocodeSearchResult {
+  lat: number;
+  lng: number;
+  label: string;
+}
+
+/** Backed by our own /api/geocode proxy (see backend/src/routes/geocode.ts),
+ * not called directly against the provider — same client used by the web
+ * app's searchLocation (apps/web/src/services/api.ts). */
+export async function searchLocation(query: string) {
+  return request<GeocodeSearchResult[]>(`/geocode/search?q=${encodeURIComponent(query)}`);
+}
+
 export async function getActiveAlerts() {
   return request<import('../types').OperationalAlert[]>('/alerts/active');
 }

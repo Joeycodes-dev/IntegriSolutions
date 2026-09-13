@@ -91,6 +91,8 @@ vi.mock('../../src/services/api', () => ({
   getOperationalAlertMatches: vi.fn(),
   getOperationalAlertAcknowledgements: vi.fn(),
   getOperationalAlertCoverage: vi.fn(),
+  getAlertSightings: vi.fn(),
+  searchLocation: vi.fn(),
 }));
 
 describe('SupervisorAlerts', () => {
@@ -152,6 +154,117 @@ describe('SupervisorAlerts', () => {
           sourceType: 'external',
           sourceAuthority: 'SAPS Klerksdorp',
           sourceReference: 'CAS 999/09/2026'
+        })
+      );
+    });
+  });
+
+  it('creates an alert with a searched location resolved to label + coordinates', async () => {
+    (api.searchLocation as any).mockResolvedValue([
+      { lat: -25.9895, lng: 28.1265, label: 'N1, Midrand, Gauteng, South Africa' }
+    ]);
+    (api.createOperationalAlert as any).mockResolvedValue({ ...mockAlerts[0], id: 'alert-new' });
+
+    render(<SupervisorAlerts />);
+    await waitFor(() => expect(screen.getByText('Be advised: flooding on N1')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('Search address, road, landmark or area'), {
+      target: { value: 'N1 Midrand offramp' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
+    await waitFor(() => screen.getByText('N1, Midrand, Gauteng, South Africa'));
+    fireEvent.click(screen.getByText('N1, Midrand, Gauteng, South Africa'));
+
+    fireEvent.change(screen.getByPlaceholderText('Be advised: flooding on N1 southbound'), {
+      target: { value: 'Flooding reported' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: /issue alert/i }));
+
+    await waitFor(() => {
+      expect(api.createOperationalAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          location: expect.objectContaining({
+            label: 'N1, Midrand, Gauteng, South Africa',
+            lat: -25.9895,
+            lng: 28.1265
+          })
+        })
+      );
+    });
+  });
+
+  it('still allows entering coordinates manually as a fallback for the location', async () => {
+    (api.createOperationalAlert as any).mockResolvedValue({ ...mockAlerts[0], id: 'alert-new' });
+
+    render(<SupervisorAlerts />);
+    await waitFor(() => expect(screen.getByText('Be advised: flooding on N1')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText('Enter coordinates'));
+    fireEvent.change(screen.getByPlaceholderText('-26.2041'), { target: { value: '-26.2041' } });
+    fireEvent.change(screen.getByPlaceholderText('28.0473'), { target: { value: '28.0473' } });
+
+    fireEvent.change(screen.getByPlaceholderText('Be advised: flooding on N1 southbound'), {
+      target: { value: 'Flooding reported' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: /issue alert/i }));
+
+    await waitFor(() => {
+      expect(api.createOperationalAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          location: expect.objectContaining({ lat: -26.2041, lng: 28.0473 })
+        })
+      );
+    });
+  });
+
+  it('rejects an out-of-range manually entered latitude on submit', async () => {
+    render(<SupervisorAlerts />);
+    await waitFor(() => expect(screen.getByText('Be advised: flooding on N1')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText('Enter coordinates'));
+    fireEvent.change(screen.getByPlaceholderText('-26.2041'), { target: { value: '95' } });
+    fireEvent.change(screen.getByPlaceholderText('Be advised: flooding on N1 southbound'), {
+      target: { value: 'Flooding reported' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: /issue alert/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Trigger latitude must be a number between -90 and 90')).toBeInTheDocument();
+    });
+    expect(api.createOperationalAlert).not.toHaveBeenCalled();
+  });
+
+  it('sends the trigger radius unchanged alongside a searched location — radius is a separate field from the location picker', async () => {
+    (api.searchLocation as any).mockResolvedValue([
+      { lat: -25.9895, lng: 28.1265, label: 'N1, Midrand, Gauteng, South Africa' }
+    ]);
+    (api.createOperationalAlert as any).mockResolvedValue({ ...mockAlerts[0], id: 'alert-new' });
+
+    render(<SupervisorAlerts />);
+    await waitFor(() => expect(screen.getByText('Be advised: flooding on N1')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('Search address, road, landmark or area'), {
+      target: { value: 'N1 Midrand offramp' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }));
+    await waitFor(() => screen.getByText('N1, Midrand, Gauteng, South Africa'));
+    fireEvent.click(screen.getByText('N1, Midrand, Gauteng, South Africa'));
+
+    fireEvent.change(screen.getByPlaceholderText('500'), { target: { value: '750' } });
+    fireEvent.change(screen.getByPlaceholderText('Be advised: flooding on N1 southbound'), {
+      target: { value: 'Flooding reported' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: /issue alert/i }));
+
+    await waitFor(() => {
+      expect(api.createOperationalAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          location: expect.objectContaining({
+            label: 'N1, Midrand, Gauteng, South Africa',
+            lat: -25.9895,
+            lng: 28.1265,
+            radiusMeters: 750
+          })
         })
       );
     });

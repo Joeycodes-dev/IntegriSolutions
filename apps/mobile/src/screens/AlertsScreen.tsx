@@ -10,6 +10,8 @@ import { reportAlertMatchWithEscalation } from '../services/api';
 import type { OperationalAlert } from '../types';
 import { colors } from '../styles/colors';
 import { alertPriorityStyle } from '../lib/alertPriorityStyle';
+import { LocationInput, EMPTY_LOCATION_VALUE, type LocationInputValue } from '../components/LocationInput';
+import { isValidLatitude, isValidLongitude } from '../lib/geo';
 import { styles } from './AlertsScreen.styles';
 
 type RootStackParamList = {
@@ -48,6 +50,7 @@ export function AlertsScreen({ navigation: _navigation }: Props) {
   const [ackingId, setAckingId] = useState<string | null>(null);
   const [matchFormAlertId, setMatchFormAlertId] = useState<string | null>(null);
   const [matchNotes, setMatchNotes] = useState('');
+  const [matchLocation, setMatchLocation] = useState<LocationInputValue>(EMPTY_LOCATION_VALUE);
   const [submittingMatch, setSubmittingMatch] = useState(false);
 
   useFocusEffect(
@@ -70,11 +73,13 @@ export function AlertsScreen({ navigation: _navigation }: Props) {
   const openMatchForm = (alertId: string) => {
     setMatchFormAlertId(alertId);
     setMatchNotes('');
+    setMatchLocation(EMPTY_LOCATION_VALUE);
   };
 
   const closeMatchForm = () => {
     setMatchFormAlertId(null);
     setMatchNotes('');
+    setMatchLocation(EMPTY_LOCATION_VALUE);
   };
 
   const submitMatch = async (alert: OperationalAlert) => {
@@ -82,12 +87,26 @@ export function AlertsScreen({ navigation: _navigation }: Props) {
       Alert.alert('Notes required', 'Describe what you observed before reporting a possible match.');
       return;
     }
+
+    const lat = matchLocation.lat.trim() ? Number(matchLocation.lat) : undefined;
+    const lng = matchLocation.lng.trim() ? Number(matchLocation.lng) : undefined;
+    if (lat !== undefined && !isValidLatitude(lat)) {
+      Alert.alert('Invalid location', 'Latitude must be a number between -90 and 90.');
+      return;
+    }
+    if (lng !== undefined && !isValidLongitude(lng)) {
+      Alert.alert('Invalid location', 'Longitude must be a number between -180 and 180.');
+      return;
+    }
+    const location = lat !== undefined && lng !== undefined ? { lat, lng } : undefined;
+
     setSubmittingMatch(true);
     try {
       const result = await reportAlertMatchWithEscalation(
         { id: alert.id, description: alert.description, alertType: alert.alertType, priority: alert.priority },
         matchNotes.trim(),
-        profile ? { name: profile.name, surname: profile.surname } : undefined
+        profile ? { name: profile.name, surname: profile.surname } : undefined,
+        location
       );
       closeMatchForm();
       if (result.escalated) {
@@ -172,6 +191,9 @@ export function AlertsScreen({ navigation: _navigation }: Props) {
               value={matchNotes}
               onChangeText={setMatchNotes}
             />
+            <View style={{ marginTop: 10 }}>
+              <LocationInput value={matchLocation} onChange={setMatchLocation} />
+            </View>
             <Pressable
               style={styles.matchSubmitButton}
               onPress={() => void submitMatch(item)}
