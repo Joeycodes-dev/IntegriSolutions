@@ -118,6 +118,44 @@ function withTableHandlers(roleHandler: (table: string) => any, extra: (table: s
   });
 }
 
+/**
+ * Coverage tests need `officer_users` to return real roster rows — but that
+ * table is also queried once per request during role resolution
+ * (resolveRoleByEmail checks admin_users, then officer_users, then
+ * supervisor_users, using the first non-empty match), and a non-empty
+ * officer_users match there would misidentify the Supervisor actor as an
+ * Officer. This mock keeps the *first* officer_users call empty (so role
+ * resolution correctly falls through to supervisor_users) and returns
+ * `officerRows` from the second call onward (the route's own roster/profile
+ * lookups).
+ */
+function withSupervisorAndOfficerRows(officerRows: Array<Record<string, unknown>>, extra: (table: string) => any) {
+  (supabase.auth.getUser as jest.Mock).mockResolvedValue({
+    data: { user: { id: 'sup-123', email: 'supervisor@example.com' } },
+    error: null,
+  });
+  let officerCallCount = 0;
+  mockServiceSupabase.from.mockImplementation((table: string) => {
+    if (table === 'admin_users') return chainable({ data: [], error: null });
+    if (table === 'officer_users') {
+      officerCallCount += 1;
+      return chainable({ data: officerCallCount === 1 ? [] : officerRows, error: null });
+    }
+    if (table === 'supervisor_users') return chainable({ data: [{ supervisor_id: 7, role_id: 2 }], error: null });
+    const extraResult = extra(table);
+    if (extraResult) return extraResult;
+    return chainable({ data: [], error: null });
+  });
+}
+
+function officerProfileRow(officerId: number, name: string, surname: string, badgeNumber: string) {
+  return { officer_id: officerId, officer_name: name, officer_surname: surname, badge_number: badgeNumber };
+}
+
+function ackRow(officerId: number, officerName: string, badgeNumber: string, acknowledgedAt: string, alertVersion = 1) {
+  return { officer_id: officerId, officer_name: officerName, badge_number: badgeNumber, acknowledged_at: acknowledgedAt, alert_version: alertVersion };
+}
+
 function validAlertPayload(overrides: Record<string, unknown> = {}) {
   return {
     alertType: 'general',
@@ -318,6 +356,102 @@ describe('Supervisor Operational Alerts Routes', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/radiusMeters/i);
+    });
+  });
+
+  describe('POST /api/supervisor/alerts — expiry defaults (Phase A2)', () => {
+    it('applies a default expiry to a BOLO alert when none is provided', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: [alertRow()], error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const before = Date.now();
+      const res = await request(app)
+        .post('/api/supervisor/alerts')
+        .set('Authorization', 'Bearer t')
+        .send(validAlertPayload({
+          alertType: 'bolo_vehicle',
+          sourceType: 'external',
+          sourceAuthority: 'SAPS Klerksdorp',
+          sourceReference: 'CAS 123/09/2026',
+        }));
+
+      expect(res.status).toBe(201);
+      const insertedExpiresAt = alertsHandler.insert.mock.calls[0][0][0].expires_at;
+      expect(insertedExpiresAt).not.toBeNull();
+      const deltaHours = (new Date(insertedExpiresAt).getTime() - before) / (60 * 60 * 1000);
+      expect(deltaHours).toBeGreaterThan(70);
+      expect(deltaHours).toBeLessThan(74);
+    });
+
+    it('applies a default expiry to a hazard alert when none is provided', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: [alertRow()], error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const before = Date.now();
+      const res = await request(app)
+        .post('/api/supervisor/alerts')
+        .set('Authorization', 'Bearer t')
+        .send(validAlertPayload({ alertType: 'hazard' }));
+
+      expect(res.status).toBe(201);
+      const insertedExpiresAt = alertsHandler.insert.mock.calls[0][0][0].expires_at;
+      expect(insertedExpiresAt).not.toBeNull();
+      const deltaHours = (new Date(insertedExpiresAt).getTime() - before) / (60 * 60 * 1000);
+      expect(deltaHours).toBeGreaterThan(22);
+      expect(deltaHours).toBeLessThan(26);
+    });
+
+    it('leaves a general alert open-ended (no default expiry applied) when none is provided', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: [alertRow()], error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .post('/api/supervisor/alerts')
+        .set('Authorization', 'Bearer t')
+        .send(validAlertPayload({ alertType: 'general' }));
+
+      expect(res.status).toBe(201);
+      expect(alertsHandler.insert.mock.calls[0][0][0].expires_at).toBeNull();
+    });
+
+    it('respects an explicit expiresAt on a BOLO alert instead of applying the default', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: [alertRow()], error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const explicitExpiresAt = '2026-12-01T00:00:00.000Z';
+      const res = await request(app)
+        .post('/api/supervisor/alerts')
+        .set('Authorization', 'Bearer t')
+        .send(validAlertPayload({
+          alertType: 'bolo_vehicle',
+          sourceType: 'external',
+          sourceAuthority: 'SAPS Klerksdorp',
+          sourceReference: 'CAS 123/09/2026',
+          expiresAt: explicitExpiresAt,
+        }));
+
+      expect(res.status).toBe(201);
+      expect(alertsHandler.insert.mock.calls[0][0][0].expires_at).toBe(explicitExpiresAt);
     });
   });
 
@@ -569,6 +703,365 @@ describe('Supervisor Operational Alerts Routes', () => {
     });
   });
 
+  describe('PATCH /api/supervisor/alerts/:id — resolution/cancellation reasons (Phase A2)', () => {
+    it('requires a reason to resolve an alert', async () => {
+      const roleHandler = mockAsSupervisor();
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return chainable({ data: alertRow(), error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ status: 'resolved' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/reason is required/i);
+    });
+
+    it('requires a reason to cancel an alert', async () => {
+      const roleHandler = mockAsSupervisor();
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return chainable({ data: alertRow(), error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ status: 'cancelled' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/reason is required/i);
+    });
+
+    it('rejects a whitespace-only reason', async () => {
+      const roleHandler = mockAsSupervisor();
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return chainable({ data: alertRow(), error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ status: 'resolved', reason: '   ' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/reason is required/i);
+    });
+
+    it('persists the reason, acting supervisor, and timestamp when resolving', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: alertRow({ status: 'resolved' }), error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const before = Date.now();
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ status: 'resolved', reason: 'Flooding has subsided, road reopened' });
+
+      expect(res.status).toBe(200);
+      const updateCall = alertsHandler.update.mock.calls[0][0];
+      expect(updateCall.status_reason).toBe('Flooding has subsided, road reopened');
+      expect(updateCall.status_reason_by).toBe('supervisor@example.com');
+      expect(new Date(updateCall.status_reason_at).getTime()).toBeGreaterThanOrEqual(before);
+    });
+
+    it('persists the reason, acting supervisor, and timestamp when cancelling', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: alertRow({ status: 'cancelled' }), error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ status: 'cancelled', reason: 'Issued in error — wrong vehicle registration' });
+
+      expect(res.status).toBe(200);
+      const updateCall = alertsHandler.update.mock.calls[0][0];
+      expect(updateCall.status_reason).toBe('Issued in error — wrong vehicle registration');
+      expect(updateCall.status_reason_by).toBe('supervisor@example.com');
+      expect(updateCall.status_reason_at).toBeTruthy();
+    });
+
+    it('does not require a reason for a non-closing status change', async () => {
+      const roleHandler = mockAsSupervisor();
+      const alertsHandler = chainable({ data: alertRow({ location_lat: -26.2, location_lng: 28.0 }), error: null });
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return alertsHandler;
+        if (table === 'audit_logs') return chainable({ error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .patch('/api/supervisor/alerts/alert-1')
+        .set('Authorization', 'Bearer t')
+        .send({ location: { lat: -26.2, lng: 28.0 } });
+
+      expect(res.status).toBe(200);
+      expect(alertsHandler.update.mock.calls[0][0]).not.toHaveProperty('status_reason');
+    });
+  });
+
+  describe('GET /api/supervisor/alerts/:id/coverage (Phase A2)', () => {
+    it('computes coverage for an all_officers alert against the eligible roster', async () => {
+      const officerRows = [
+        officerProfileRow(21, 'Alice', 'A', 'B21'),
+        officerProfileRow(22, 'Bob', 'B', 'B22'),
+        officerProfileRow(23, 'Carol', 'C', 'B23'),
+      ];
+      withSupervisorAndOfficerRows(officerRows, (table) => {
+        if (table === 'operational_alerts') return chainable({ data: alertRow({ target_scope: 'all_officers', version: 1 }), error: null });
+        if (table === 'operational_alert_acknowledgements') {
+          return chainable({
+            data: [
+              ackRow(21, 'Alice A', 'B21', '2026-09-10T10:00:00Z', 1),
+              ackRow(22, 'Bob B', 'B22', '2026-09-10T10:01:00Z', 1),
+            ],
+            error: null,
+          });
+        }
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/alert-1/coverage')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        totalTargeted: 3,
+        acknowledgedCount: 2,
+        outstandingCount: 1,
+        percentage: 67,
+      });
+      expect(res.body.outstandingOfficers).toEqual([{ officerId: 23, officerName: 'Carol C', badgeNumber: 'B23' }]);
+      expect(res.body.acknowledgedOfficers.map((o: { officerId: number }) => o.officerId).sort()).toEqual([21, 22]);
+    });
+
+    it('computes coverage for a shift-targeted alert from assigned/accepted officers only', async () => {
+      const officerRows = [officerProfileRow(31, 'Dan', 'D', 'B31'), officerProfileRow(32, 'Eve', 'E', 'B32')];
+      withSupervisorAndOfficerRows(officerRows, (table) => {
+        if (table === 'operational_alerts') {
+          return chainable({ data: alertRow({ target_scope: 'shift', target_shift_id: 'shift-1', version: 1 }), error: null });
+        }
+        if (table === 'roadblock_shift_officers') {
+          return chainable({ data: [{ officer_id: 31 }, { officer_id: 32 }], error: null });
+        }
+        if (table === 'operational_alert_acknowledgements') return chainable({ data: [], error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/alert-1/coverage')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ totalTargeted: 2, acknowledgedCount: 0, outstandingCount: 2, percentage: 0 });
+      expect(res.body.outstandingOfficers.map((o: { officerId: number }) => o.officerId).sort()).toEqual([31, 32]);
+    });
+
+    it('computes coverage for an explicitly officer-targeted alert', async () => {
+      const officerRows = [officerProfileRow(41, 'Fay', 'F', 'B41'), officerProfileRow(42, 'Gus', 'G', 'B42')];
+      withSupervisorAndOfficerRows(officerRows, (table) => {
+        if (table === 'operational_alerts') return chainable({ data: alertRow({ target_scope: 'officers', version: 1 }), error: null });
+        if (table === 'operational_alert_officers') {
+          return chainable({ data: [{ officer_id: 41 }, { officer_id: 42 }], error: null });
+        }
+        if (table === 'operational_alert_acknowledgements') {
+          return chainable({ data: [ackRow(41, 'Fay F', 'B41', '2026-09-10T10:00:00Z', 1)], error: null });
+        }
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/alert-1/coverage')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ totalTargeted: 2, acknowledgedCount: 1, outstandingCount: 1, percentage: 50 });
+      expect(res.body.outstandingOfficers).toEqual([{ officerId: 42, officerName: 'Gus G', badgeNumber: 'B42' }]);
+    });
+
+    it('excludes an old-version acknowledgement from the current-version count', async () => {
+      const officerRows = [officerProfileRow(41, 'Fay', 'F', 'B41'), officerProfileRow(42, 'Gus', 'G', 'B42')];
+      withSupervisorAndOfficerRows(officerRows, (table) => {
+        if (table === 'operational_alerts') return chainable({ data: alertRow({ target_scope: 'officers', version: 2 }), error: null });
+        if (table === 'operational_alert_officers') {
+          return chainable({ data: [{ officer_id: 41 }, { officer_id: 42 }], error: null });
+        }
+        if (table === 'operational_alert_acknowledgements') {
+          return chainable({
+            data: [
+              ackRow(41, 'Fay F', 'B41', '2026-09-09T09:00:00Z', 1), // stale — acknowledged v1, alert is now v2
+              ackRow(42, 'Gus G', 'B42', '2026-09-10T10:00:00Z', 2),
+            ],
+            error: null,
+          });
+        }
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/alert-1/coverage')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ totalTargeted: 2, acknowledgedCount: 1, outstandingCount: 1 });
+      expect(res.body.acknowledgedOfficers).toEqual([{ officerId: 42, officerName: 'Gus G', badgeNumber: 'B42', acknowledgedAt: '2026-09-10T10:00:00Z' }]);
+      expect(res.body.outstandingOfficers.map((o: { officerId: number }) => o.officerId)).toEqual([41]);
+    });
+
+    it('does not count an acknowledgement from an officer who is no longer eligible for the alert', async () => {
+      const officerRows = [officerProfileRow(41, 'Fay', 'F', 'B41')];
+      withSupervisorAndOfficerRows(officerRows, (table) => {
+        if (table === 'operational_alerts') return chainable({ data: alertRow({ target_scope: 'officers', version: 1 }), error: null });
+        if (table === 'operational_alert_officers') {
+          // Only officer 41 is currently targeted.
+          return chainable({ data: [{ officer_id: 41 }], error: null });
+        }
+        if (table === 'operational_alert_acknowledgements') {
+          return chainable({
+            data: [
+              // Officer 99 acknowledged (e.g. before being removed from targeting) but is not eligible now.
+              ackRow(99, 'Stray Officer', 'B99', '2026-09-09T09:00:00Z', 1),
+            ],
+            error: null,
+          });
+        }
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/alert-1/coverage')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body.totalTargeted).toBe(1);
+      expect(res.body.acknowledgedCount).toBe(0);
+      expect(res.body.outstandingCount).toBe(1);
+      expect(res.body.outstandingOfficers).toEqual([{ officerId: 41, officerName: 'Fay F', badgeNumber: 'B41' }]);
+    });
+
+    it('returns 404 for an unknown alert', async () => {
+      const roleHandler = mockAsSupervisor();
+      withTableHandlers(roleHandler, (table) => {
+        if (table === 'operational_alerts') return chainable({ data: null, error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/missing/coverage')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe('GET /api/supervisor/alerts/:id/coverage — Critical non-acknowledgement warning (Phase A2)', () => {
+    it('warns when a Critical alert has outstanding officers past the threshold', async () => {
+      const officerRows = [officerProfileRow(21, 'Alice', 'A', 'B21')];
+      const overdueVersionUpdatedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+      withSupervisorAndOfficerRows(officerRows, (table) => {
+        if (table === 'operational_alerts') {
+          return chainable({
+            data: alertRow({ target_scope: 'all_officers', priority: 'critical', version: 1, version_updated_at: overdueVersionUpdatedAt }),
+            error: null,
+          });
+        }
+        if (table === 'operational_alert_acknowledgements') return chainable({ data: [], error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/alert-1/coverage')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body.criticalNonAckWarning).toBe(true);
+      expect(res.body.criticalNonAckThresholdMinutes).toBe(15);
+    });
+
+    it('does not warn when a Critical alert is still within the threshold', async () => {
+      const officerRows = [officerProfileRow(21, 'Alice', 'A', 'B21')];
+      const recentVersionUpdatedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      withSupervisorAndOfficerRows(officerRows, (table) => {
+        if (table === 'operational_alerts') {
+          return chainable({
+            data: alertRow({ target_scope: 'all_officers', priority: 'critical', version: 1, version_updated_at: recentVersionUpdatedAt }),
+            error: null,
+          });
+        }
+        if (table === 'operational_alert_acknowledgements') return chainable({ data: [], error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/alert-1/coverage')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body.criticalNonAckWarning).toBe(false);
+    });
+
+    it('never warns for a non-Critical alert, even past the threshold', async () => {
+      const officerRows = [officerProfileRow(21, 'Alice', 'A', 'B21')];
+      const overdueVersionUpdatedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      withSupervisorAndOfficerRows(officerRows, (table) => {
+        if (table === 'operational_alerts') {
+          return chainable({
+            data: alertRow({ target_scope: 'all_officers', priority: 'high', version: 1, version_updated_at: overdueVersionUpdatedAt }),
+            error: null,
+          });
+        }
+        if (table === 'operational_alert_acknowledgements') return chainable({ data: [], error: null });
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/alert-1/coverage')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body.criticalNonAckWarning).toBe(false);
+    });
+
+    it('does not warn once every targeted officer has acknowledged', async () => {
+      const officerRows = [officerProfileRow(21, 'Alice', 'A', 'B21')];
+      const overdueVersionUpdatedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      withSupervisorAndOfficerRows(officerRows, (table) => {
+        if (table === 'operational_alerts') {
+          return chainable({
+            data: alertRow({ target_scope: 'all_officers', priority: 'critical', version: 1, version_updated_at: overdueVersionUpdatedAt }),
+            error: null,
+          });
+        }
+        if (table === 'operational_alert_acknowledgements') {
+          return chainable({ data: [ackRow(21, 'Alice A', 'B21', '2026-09-10T10:00:00Z', 1)], error: null });
+        }
+        return null;
+      });
+
+      const res = await request(app)
+        .get('/api/supervisor/alerts/alert-1/coverage')
+        .set('Authorization', 'Bearer t');
+
+      expect(res.status).toBe(200);
+      expect(res.body.criticalNonAckWarning).toBe(false);
+    });
+  });
+
   describe('Authorization model', () => {
     it('lets a Supervisor create an alert', async () => {
       const roleHandler = mockAsSupervisor();
@@ -597,7 +1090,7 @@ describe('Supervisor Operational Alerts Routes', () => {
       const res = await request(app)
         .patch('/api/supervisor/alerts/alert-1')
         .set('Authorization', 'Bearer t')
-        .send({ status: 'resolved' });
+        .send({ status: 'resolved', reason: 'Flooding has subsided, road reopened' });
 
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('resolved');

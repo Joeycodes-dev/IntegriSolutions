@@ -123,6 +123,13 @@ export interface OperationalAlert {
    * routes/supervisor/alerts.ts) — an acknowledgement recorded against an
    * earlier version does not count toward this one. */
   version: number;
+  /** Set only when status is 'resolved' or 'cancelled' — required by the
+   * backend for both transitions. Resolved = the operational condition
+   * ended/completed; cancelled = the alert was withdrawn, issued in error,
+   * or is no longer applicable. Neither implies a legal determination. */
+  statusReason: string | null;
+  statusReasonBy: string | null;
+  statusReasonAt: string | null;
 }
 
 export interface CreateOperationalAlertPayload {
@@ -172,6 +179,30 @@ export interface UpdateOperationalAlertPayload {
   sourceAuthority?: string;
   sourceReference?: string;
   materialChangeOverride?: boolean;
+  /** Required by the backend when status is 'resolved' or 'cancelled'. */
+  reason?: string;
+}
+
+/**
+ * GET /api/supervisor/alerts/:id/coverage — acknowledgement coverage for the
+ * alert's *current* version, resolved against the actual eligible roster for
+ * its target scope. criticalNonAckWarning is informational only: it never
+ * implies automatic dispatch, punishment, or escalation.
+ */
+export interface OperationalAlertCoverage {
+  alertId: string;
+  version: number;
+  priority: OperationalAlertPriority;
+  status: OperationalAlertStatus;
+  targetScope: OperationalAlertTargetScope;
+  totalTargeted: number;
+  acknowledgedCount: number;
+  outstandingCount: number;
+  percentage: number;
+  acknowledgedOfficers: Array<{ officerId: number; officerName: string; badgeNumber: string; acknowledgedAt: string }>;
+  outstandingOfficers: Array<{ officerId: number; officerName: string; badgeNumber: string }>;
+  criticalNonAckWarning: boolean;
+  criticalNonAckThresholdMinutes: number;
 }
 
 export interface OperationalAlertAcknowledgement {

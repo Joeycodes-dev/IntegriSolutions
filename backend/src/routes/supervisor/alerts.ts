@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import multer from 'multer';
 import { requireSupervisor, type SupervisorRequest } from '../../middleware/requireSupervisor';
-import { ROLE_SUPERVISOR } from '../../constants/roles';
+import { ROLE_SUPERVISOR, ROLE_OFFICER } from '../../constants/roles';
 import { writeAuditLog } from '../../utilities/auditLog';
 import { asyncHandler } from '../../asyncHandler';
 import { priorityWeight } from '../../utilities/alertPriority';
@@ -109,6 +109,88 @@ export function computeMaterialChange(input: {
   return { material: reasons.length > 0, reasons };
 }
 
+// ---- Phase A2: expiry defaults, Critical non-acknowledgement awareness ----
+
+// A BOLO (person/vehicle) or hazard bulletin without an end date tends to
+// linger past its operational relevance, so a Supervisor who doesn't set one
+// gets a sensible default applied rather than an indefinite alert. This is a
+// deterministic *operational* default — not a legal retention or expungement
+// period — and is easy to tune here. A general alert may still remain
+// open-ended (no default is applied) since it covers a broader range of
+// ongoing operational notices.
+const ALERT_TYPE_DEFAULT_EXPIRY_HOURS: Partial<Record<string, number>> = {
+  bolo_person: 72,
+  bolo_vehicle: 72,
+  hazard: 24
+};
+
+function resolveDefaultExpiresAt(alertType: string, explicitExpiresAt: Date | null): Date | null {
+  if (explicitExpiresAt) return explicitExpiresAt;
+  const defaultHours = ALERT_TYPE_DEFAULT_EXPIRY_HOURS[alertType];
+  if (!defaultHours) return null;
+  return new Date(Date.now() + defaultHours * 60 * 60 * 1000);
+}
+
+// How long a Critical alert may go without acknowledgement from any
+// targeted officer before a Supervisor sees an awareness warning. Purely
+// informational — it never auto-dispatches, auto-punishes, auto-escalates,
+// or infers misconduct. An operational default, not a legal deadline;
+// tune here. Measured from version_updated_at (when the current version of
+// the alert's content became current), not updated_at, so a non-material
+// edit (e.g. a typo fix) never resets the clock.
+const CRITICAL_UNACK_WARNING_MINUTES = 15;
+
+function isCriticalNonAckWarning(alert: Record<string, unknown>, outstandingCount: number): boolean {
+  if (String(alert.priority) !== 'critical') return false;
+  if (String(alert.status) !== 'active') return false;
+  if (outstandingCount <= 0) return false;
+  const referenceIso = alert.version_updated_at != null ? String(alert.version_updated_at) : String(alert.created_at);
+  const referenceMs = new Date(referenceIso).getTime();
+  if (Number.isNaN(referenceMs)) return false;
+  return Date.now() - referenceMs >= CRITICAL_UNACK_WARNING_MINUTES * 60 * 1000;
+}
+
+/**
+ * Resolves the officer roster actually eligible for an alert, mirroring
+ * checkAlertEligibility in routes/alerts.ts (officer-facing) so coverage
+ * numbers can never drift from what officers themselves can see/acknowledge:
+ *  - all_officers: every officer_users row (role_id = officer) — same
+ *    roster GET /api/supervisor/officers already returns, unfiltered by
+ *    employment status, matching how the officer-facing route treats scope.
+ *  - shift: officers assigned/accepted onto the alert's target shift.
+ *  - officers: the explicit operational_alert_officers targets.
+ */
+async function resolveEligibleOfficerIds(
+  alertId: string,
+  targetScope: string,
+  targetShiftId: string | null
+): Promise<{ ids: number[]; error?: string }> {
+  if (targetScope === 'all_officers') {
+    const { data, error } = await serviceSupabase.from('officer_users').select('officer_id').eq('role_id', ROLE_OFFICER);
+    if (error) return { ids: [], error: error.message };
+    return { ids: Array.from(new Set((data ?? []).map((row: { officer_id: unknown }) => Number(row.officer_id)))) };
+  }
+  if (targetScope === 'shift') {
+    if (!targetShiftId) return { ids: [] };
+    const { data, error } = await serviceSupabase
+      .from('roadblock_shift_officers')
+      .select('officer_id')
+      .eq('shift_id', targetShiftId)
+      .in('assignment_status', ['assigned', 'accepted']);
+    if (error) return { ids: [], error: error.message };
+    return { ids: Array.from(new Set((data ?? []).map((row: { officer_id: unknown }) => Number(row.officer_id)))) };
+  }
+  if (targetScope === 'officers') {
+    const { data, error } = await serviceSupabase
+      .from('operational_alert_officers')
+      .select('officer_id')
+      .eq('alert_id', alertId);
+    if (error) return { ids: [], error: error.message };
+    return { ids: Array.from(new Set((data ?? []).map((row: { officer_id: unknown }) => Number(row.officer_id)))) };
+  }
+  return { ids: [] };
+}
+
 const photoUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
@@ -175,6 +257,9 @@ function toOperationalAlert(row: Record<string, unknown>, extra: Record<string, 
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at ?? row.created_at),
     version: row.version == null ? 1 : Number(row.version),
+    statusReason: row.status_reason == null ? null : String(row.status_reason),
+    statusReasonBy: row.status_reason_by == null ? null : String(row.status_reason_by),
+    statusReasonAt: row.status_reason_at == null ? null : String(row.status_reason_at),
     ...extra
   };
 }
@@ -212,7 +297,7 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
   const officerIds = sanitizeOfficerIds(body.officerIds);
   const personReference = typeof body.personReference === 'string' ? body.personReference.trim() : '';
   const location = (body.location ?? {}) as { lat?: unknown; lng?: unknown; label?: unknown; radiusMeters?: unknown };
-  const expiresAt = body.expiresAt ? parseDate(body.expiresAt) : null;
+  const explicitExpiresAt = body.expiresAt ? parseDate(body.expiresAt) : null;
 
   if (!ALERT_TYPES.has(alertType)) {
     return res.status(400).json({ error: 'A valid alert type is required' });
@@ -252,6 +337,11 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
   if (location.radiusMeters != null && !isValidRadiusMeters(Number(location.radiusMeters))) {
     return res.status(400).json({ error: `location.radiusMeters must be a positive number up to ${MAX_LOCATION_RADIUS_METERS}` });
   }
+
+  // BOLO/hazard bulletins get a documented operational default expiry when
+  // the Supervisor doesn't set one (see ALERT_TYPE_DEFAULT_EXPIRY_HOURS);
+  // general alerts stay open-ended, matching prior behavior.
+  const expiresAt = resolveDefaultExpiresAt(alertType, explicitExpiresAt);
 
   const supervisorEmail = authReq.userEmail ?? 'unknown';
   const insertPayload = {
@@ -390,12 +480,22 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
   // shown by the Supervisor UI alongside a description/instructions edit.
   // Default OFF: only forces materiality when the description actually changed.
   const materialChangeOverride = body.materialChangeOverride === true;
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  // Resolved = the operational condition ended/completed. Cancelled = the
+  // alert was withdrawn, issued in error, or is no longer applicable.
+  // Distinct semantics; neither implies a legal determination about a
+  // person or vehicle. A reason is mandatory for both so the record of why
+  // an alert stopped being active is never blank.
+  const isClosingStatus = status === 'resolved' || status === 'cancelled';
 
   if (!status && !hasExpiresPatch && !hasLocationPatch && !hasPriorityPatch && !hasDescriptionPatch && !hasTargetPatch && !hasSourcePatch) {
     return res.status(400).json({ error: 'Provide at least one field to update' });
   }
   if (status && !STATUSES.has(status)) {
     return res.status(400).json({ error: `Status must be one of: ${Array.from(STATUSES).join(', ')}` });
+  }
+  if (isClosingStatus && !reason) {
+    return res.status(400).json({ error: `A reason is required when marking an alert as ${status}` });
   }
   if (location?.lat != null && !isValidLatitude(Number(location.lat))) {
     return res.status(400).json({ error: 'location.lat must be between -90 and 90' });
@@ -529,6 +629,11 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
   // ---- Build and apply the update ----
   const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (status) updatePayload.status = status;
+  if (isClosingStatus) {
+    updatePayload.status_reason = reason;
+    updatePayload.status_reason_by = authReq.userEmail ?? 'unknown';
+    updatePayload.status_reason_at = new Date().toISOString();
+  }
   if (hasExpiresPatch) updatePayload.expires_at = nextExpiresAtIso ?? null;
   if (location) {
     updatePayload.location_lat = optionalNumber(location.lat);
@@ -548,7 +653,10 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
     updatePayload.source_reference = sourceType === 'external' ? sourceReference : null;
   }
   // Never decremented, never reset by a non-material edit — only bumped here.
-  if (material) updatePayload.version = nextVersion;
+  if (material) {
+    updatePayload.version = nextVersion;
+    updatePayload.version_updated_at = new Date().toISOString();
+  }
 
   const { data, error } = await serviceSupabase
     .from('operational_alerts')
@@ -578,6 +686,7 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
   await writeAuditLog(
     authReq.userEmail ?? 'unknown',
     `Updated operational alert ${alertId}${status ? ` to ${status}` : ''}`
+      + (isClosingStatus ? `: ${reason}` : '')
       + (material ? ` (material change — now v${nextVersion}, re-acknowledgement required: ${reasons.join('; ')})` : ''),
     alertId
   );
@@ -670,6 +779,98 @@ router.get('/:id/acknowledgements', asyncHandler(async (req, res) => {
       badgeNumber: String(row.badge_number),
       acknowledgedAt: String(row.acknowledged_at)
     })));
+}));
+
+/**
+ * Acknowledgement coverage for the alert's *current* version, resolved
+ * against the actual eligible roster for its target scope (all officers /
+ * shift / explicitly targeted) — never a raw headcount of whoever happens
+ * to have an acknowledgement row. Also carries the Critical
+ * non-acknowledgement awareness flag: informational only, see
+ * isCriticalNonAckWarning — never a trigger for automatic dispatch,
+ * punishment, or escalation.
+ */
+router.get('/:id/coverage', asyncHandler(async (req, res) => {
+  const alertId = String(req.params.id);
+
+  const { data: alertRow, error: alertError } = await serviceSupabase
+    .from('operational_alerts')
+    .select('*')
+    .eq('id', alertId)
+    .maybeSingle();
+  if (alertError) return res.status(500).json({ error: alertError.message });
+  if (!alertRow) return res.status(404).json({ error: 'Operational alert not found' });
+  const alert = alertRow as Record<string, unknown>;
+  const currentVersion = alert.version == null ? 1 : Number(alert.version);
+  const targetScope = String(alert.target_scope);
+  const targetShiftId = alert.target_shift_id == null ? null : String(alert.target_shift_id);
+
+  const { ids: eligibleOfficerIds, error: eligibilityError } = await resolveEligibleOfficerIds(alertId, targetScope, targetShiftId);
+  if (eligibilityError) return res.status(500).json({ error: eligibilityError });
+
+  const { data: ackRows, error: ackError } = await serviceSupabase
+    .from('operational_alert_acknowledgements')
+    .select('*')
+    .eq('alert_id', alertId);
+  if (ackError) return res.status(500).json({ error: ackError.message });
+
+  const currentAcksByOfficer = new Map<number, Record<string, unknown>>();
+  for (const row of (ackRows ?? []) as Record<string, unknown>[]) {
+    const rowVersion = row.alert_version == null ? 1 : Number(row.alert_version);
+    if (rowVersion === currentVersion) currentAcksByOfficer.set(Number(row.officer_id), row);
+  }
+
+  // Only ever counted against the eligible roster — an officer who
+  // acknowledged before being removed from targeting (or who is no longer
+  // eligible for any other reason) is never counted here.
+  const acknowledgedOfficerIds = eligibleOfficerIds.filter((id) => currentAcksByOfficer.has(id));
+  const outstandingOfficerIds = eligibleOfficerIds.filter((id) => !currentAcksByOfficer.has(id));
+
+  const outstandingProfiles = new Map<number, Record<string, unknown>>();
+  if (outstandingOfficerIds.length) {
+    const { data, error } = await serviceSupabase
+      .from('officer_users')
+      .select('officer_id, officer_name, officer_surname, badge_number')
+      .in('officer_id', outstandingOfficerIds);
+    if (error) return res.status(500).json({ error: error.message });
+    for (const row of (data ?? []) as Record<string, unknown>[]) outstandingProfiles.set(Number(row.officer_id), row);
+  }
+
+  const totalTargeted = eligibleOfficerIds.length;
+  const acknowledgedCount = acknowledgedOfficerIds.length;
+  const outstandingCount = outstandingOfficerIds.length;
+  const percentage = totalTargeted > 0 ? Math.round((acknowledgedCount / totalTargeted) * 100) : 0;
+
+  return res.json({
+    alertId,
+    version: currentVersion,
+    priority: String(alert.priority),
+    status: String(alert.status),
+    targetScope,
+    totalTargeted,
+    acknowledgedCount,
+    outstandingCount,
+    percentage,
+    acknowledgedOfficers: acknowledgedOfficerIds.map((id) => {
+      const row = currentAcksByOfficer.get(id) as Record<string, unknown>;
+      return {
+        officerId: id,
+        officerName: String(row.officer_name),
+        badgeNumber: String(row.badge_number),
+        acknowledgedAt: String(row.acknowledged_at)
+      };
+    }),
+    outstandingOfficers: outstandingOfficerIds.map((id) => {
+      const profile = outstandingProfiles.get(id);
+      return {
+        officerId: id,
+        officerName: profile ? `${profile.officer_name} ${profile.officer_surname}`.trim() : `Officer ${id}`,
+        badgeNumber: profile ? String(profile.badge_number) : ''
+      };
+    }),
+    criticalNonAckWarning: isCriticalNonAckWarning(alert, outstandingCount),
+    criticalNonAckThresholdMinutes: CRITICAL_UNACK_WARNING_MINUTES
+  });
 }));
 
 router.get('/:id/matches', asyncHandler(async (req, res) => {

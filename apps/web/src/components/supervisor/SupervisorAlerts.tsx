@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Flame, Loader2, MapPin, Megaphone, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Flame, Loader2, MapPin, Megaphone, Pencil, RefreshCw, ShieldAlert, Users, XCircle } from 'lucide-react';
 import type {
   AlertSighting,
   AlertSightingFilters,
@@ -7,19 +7,22 @@ import type {
   FieldOfficer,
   OperationalAlert,
   OperationalAlertAcknowledgement,
+  OperationalAlertCoverage,
   OperationalAlertMatch,
   OperationalAlertPriority,
   OperationalAlertSourceType,
   OperationalAlertStatus,
   OperationalAlertTargetScope,
   OperationalAlertType,
-  RoadblockShift
+  RoadblockShift,
+  UpdateOperationalAlertPayload
 } from '../../types';
 import {
   createOperationalAlert,
   getAlertSightings,
   getFieldOfficers,
   getOperationalAlertAcknowledgements,
+  getOperationalAlertCoverage,
   getOperationalAlertMatches,
   getOperationalAlerts,
   getRoadblockShifts,
@@ -101,6 +104,102 @@ function defaultForm(): AlertFormState {
   };
 }
 
+interface EditFormState {
+  priority: OperationalAlertPriority;
+  description: string;
+  targetScope: OperationalAlertTargetScope;
+  targetShiftId: string;
+  officerIds: number[];
+  sourceType: OperationalAlertSourceType;
+  sourceAuthority: string;
+  sourceReference: string;
+  /** datetime-local input value ('' means no expiry / indefinite). */
+  expiresAt: string;
+  materialChangeOverride: boolean;
+}
+
+function defaultEditForm(): EditFormState {
+  return {
+    priority: 'medium',
+    description: '',
+    targetScope: 'all_officers',
+    targetShiftId: '',
+    officerIds: [],
+    sourceType: 'internal',
+    sourceAuthority: '',
+    sourceReference: '',
+    expiresAt: '',
+    materialChangeOverride: false
+  };
+}
+
+/** ISO timestamp -> the local 'YYYY-MM-DDTHH:mm' shape <input type="datetime-local"> expects. */
+function toDateTimeLocalValue(iso: string | null): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/**
+ * Parses the edit form's datetime-local expiry field. An empty field means
+ * "no expiry" (indefinite) — a valid, deliberate value, not an error. A
+ * native <input type="datetime-local"> sanitizes any syntactically invalid
+ * text to '' before it ever reaches onChange (per the HTML value
+ * sanitization algorithm — verified against jsdom, which matches real
+ * browsers here), so this guard is defense-in-depth for any value that
+ * reaches this function some other way, rather than something a Supervisor
+ * can trigger by typing into the picker.
+ *
+ * This performs no materiality/versioning judgement — it only decides
+ * whether the text is a usable date at all. Whether an accepted change is
+ * *material* (see isExpiryChangeMaterial in routes/supervisor/alerts.ts) is
+ * decided entirely server-side.
+ */
+export function parseExpiresAtInput(value: string): { ok: true; iso: string | null } | { ok: false; error: string } {
+  const trimmed = value.trim();
+  if (!trimmed) return { ok: true, iso: null };
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return { ok: false, error: 'Enter a valid expiry date and time' };
+  }
+  return { ok: true, iso: parsed.toISOString() };
+}
+
+/**
+ * Whether the Supervisor actually changed the expiry, at the minute
+ * precision a datetime-local input can represent — used only to decide
+ * whether to include expiresAt in the PATCH payload at all (so leaving the
+ * field untouched never sends a spurious sub-minute rounding "change").
+ * This is dirty-checking, not materiality: whether an included expiry
+ * change is *material* (see isExpiryChangeMaterial in
+ * routes/supervisor/alerts.ts) is decided entirely server-side.
+ */
+function expiryChangedAtMinutePrecision(previousIso: string | null, nextIso: string | null): boolean {
+  if (previousIso === null && nextIso === null) return false;
+  if (previousIso === null || nextIso === null) return true;
+  const previousMs = new Date(previousIso).getTime();
+  const nextMs = new Date(nextIso).getTime();
+  if (Number.isNaN(previousMs) || Number.isNaN(nextMs)) return true;
+  return Math.floor(previousMs / 60_000) !== Math.floor(nextMs / 60_000);
+}
+
+function editFormFromAlert(alert: OperationalAlert): EditFormState {
+  return {
+    priority: alert.priority,
+    description: alert.description,
+    targetScope: alert.targetScope,
+    targetShiftId: alert.targetShiftId ?? '',
+    officerIds: alert.assignedOfficerIds,
+    sourceType: alert.sourceType,
+    sourceAuthority: alert.sourceAuthority ?? '',
+    sourceReference: alert.sourceReference ?? '',
+    expiresAt: toDateTimeLocalValue(alert.expiresAt),
+    materialChangeOverride: false
+  };
+}
+
 function formatDateTime(iso: string | null): string {
   if (!iso) return '—';
   const date = new Date(iso);
@@ -137,6 +236,25 @@ function alertTypeLabel(alertType: OperationalAlertType): string {
   return ALERT_TYPES.find((item) => item.value === alertType)?.label ?? alertType;
 }
 
+function sameIdSet(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  const setA = new Set(a);
+  return b.every((id) => setA.has(id));
+}
+
+// Operational default, not a legal retention period — an alert that has
+// stayed 'active' this long without being resolved/cancelled is flagged for
+// Supervisor review. Display-only, same pattern as effectiveStatus above:
+// never mutates the DB, and staleness never implies (or becomes) 'resolved'.
+const STALE_ACTIVE_HOURS = 168; // 7 days
+
+function isStaleReviewRequired(alert: OperationalAlert): boolean {
+  if (alert.status !== 'active') return false;
+  const createdAtMs = new Date(alert.createdAt).getTime();
+  if (Number.isNaN(createdAtMs)) return false;
+  return Date.now() - createdAtMs >= STALE_ACTIVE_HOURS * 60 * 60 * 1000;
+}
+
 export function SupervisorAlerts() {
   const [alerts, setAlerts] = useState<OperationalAlert[]>([]);
   const [officers, setOfficers] = useState<FieldOfficer[]>([]);
@@ -153,6 +271,23 @@ export function SupervisorAlerts() {
   const [expandedAckId, setExpandedAckId] = useState<string | null>(null);
   const [acksByAlert, setAcksByAlert] = useState<Record<string, OperationalAlertAcknowledgement[]>>({});
   const [acksLoading, setAcksLoading] = useState(false);
+
+  const [expandedCoverageId, setExpandedCoverageId] = useState<string | null>(null);
+  const [coverageByAlert, setCoverageByAlert] = useState<Record<string, OperationalAlertCoverage>>({});
+  const [coverageLoading, setCoverageLoading] = useState(false);
+
+  // Reason prompt shown inline in place of the Resolve/Cancel buttons — the
+  // backend requires a reason for both transitions (see PATCH /:id).
+  const [pendingStatusChange, setPendingStatusChange] = useState<{ alertId: string; status: 'resolved' | 'cancelled' } | null>(null);
+  const [reasonDraft, setReasonDraft] = useState('');
+  const [reasonSaving, setReasonSaving] = useState(false);
+
+  // Minimal Phase A1 edit UI (priority/description/target/source +
+  // material-change checkbox) — completes the A1 user-facing flow; not a
+  // new Phase A2 business rule.
+  const [editingAlertId, setEditingAlertId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<EditFormState>(() => defaultEditForm());
+  const [editSaving, setEditSaving] = useState(false);
 
   const [view, setView] = useState<AlertsView>('alerts');
   const [sightings, setSightings] = useState<AlertSighting[]>([]);
@@ -183,6 +318,42 @@ export function SupervisorAlerts() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Critical non-acknowledgement awareness must be visible without an extra
+  // click (it's a life-safety signal), so coverage is fetched eagerly for
+  // active Critical alerts only — every other alert's coverage stays lazy,
+  // loaded on demand via toggleCoverage, same pattern as acknowledgements/matches.
+  useEffect(() => {
+    const idsNeedingCoverage = alerts
+      .filter((alert) => alert.priority === 'critical' && alert.status === 'active')
+      .map((alert) => alert.id)
+      .filter((id) => !(id in coverageByAlert));
+    if (idsNeedingCoverage.length === 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        idsNeedingCoverage.map(async (id) => {
+          try {
+            return [id, await getOperationalAlertCoverage(id)] as const;
+          } catch {
+            return null;
+          }
+        })
+      );
+      if (cancelled) return;
+      setCoverageByAlert((prev) => {
+        const next = { ...prev };
+        for (const entry of entries) {
+          if (entry) next[entry[0]] = entry[1];
+        }
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [alerts, coverageByAlert]);
 
   const loadSightings = useCallback(async () => {
     setSightingsLoading(true);
@@ -307,15 +478,158 @@ export function SupervisorAlerts() {
     }
   };
 
-  const handleStatus = async (alert: OperationalAlert, status: OperationalAlertStatus) => {
+  // Resolved = the operational condition ended/completed. Cancelled = the
+  // alert was withdrawn, issued in error, or is no longer applicable. The
+  // backend requires a reason for both, so clicking either button opens an
+  // inline reason prompt in place of the buttons rather than firing immediately.
+  const startStatusChange = (alertId: string, status: 'resolved' | 'cancelled') => {
+    setPendingStatusChange({ alertId, status });
+    setReasonDraft('');
+    setError(null);
+    setSuccess(null);
+  };
+
+  const cancelStatusChange = () => {
+    setPendingStatusChange(null);
+    setReasonDraft('');
+  };
+
+  const confirmStatusChange = async () => {
+    if (!pendingStatusChange) return;
+    const reason = reasonDraft.trim();
+    if (!reason) {
+      setError('A reason is required to resolve or cancel an alert');
+      return;
+    }
+    setReasonSaving(true);
+    setError(null);
+    try {
+      const updated = await updateOperationalAlert(pendingStatusChange.alertId, { status: pendingStatusChange.status, reason });
+      setAlerts((prev) => prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
+      setSuccess(`Alert marked ${pendingStatusChange.status}`);
+      setPendingStatusChange(null);
+      setReasonDraft('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update operational alert');
+    } finally {
+      setReasonSaving(false);
+    }
+  };
+
+  const toggleCoverage = async (alertId: string) => {
+    if (expandedCoverageId === alertId) {
+      setExpandedCoverageId(null);
+      return;
+    }
+    setExpandedCoverageId(alertId);
+    if (!coverageByAlert[alertId]) {
+      setCoverageLoading(true);
+      try {
+        const coverage = await getOperationalAlertCoverage(alertId);
+        setCoverageByAlert((prev) => ({ ...prev, [alertId]: coverage }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load acknowledgement coverage');
+      } finally {
+        setCoverageLoading(false);
+      }
+    }
+  };
+
+  // ---- Minimal Phase A1 edit UI (priority/description/target/source) ----
+  const startEdit = (alert: OperationalAlert) => {
+    setEditingAlertId(alert.id);
+    setEditForm(editFormFromAlert(alert));
+    setError(null);
+    setSuccess(null);
+  };
+
+  const cancelEdit = () => setEditingAlertId(null);
+
+  const updateEditForm = <K extends keyof EditFormState>(key: K, value: EditFormState[K]) => {
+    setEditForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const toggleEditOfficer = (officerId: number) => {
+    setEditForm((prev) => ({
+      ...prev,
+      officerIds: prev.officerIds.includes(officerId)
+        ? prev.officerIds.filter((id) => id !== officerId)
+        : [...prev.officerIds, officerId]
+    }));
+  };
+
+  const saveEdit = async (alert: OperationalAlert) => {
+    setEditSaving(true);
     setError(null);
     setSuccess(null);
     try {
-      const updated = await updateOperationalAlert(alert.id, { status });
+      const payload: UpdateOperationalAlertPayload = {};
+      const trimmedDescription = editForm.description.trim();
+
+      if (editForm.priority !== alert.priority) payload.priority = editForm.priority;
+      if (trimmedDescription !== alert.description) payload.description = trimmedDescription;
+
+      const targetChanged =
+        editForm.targetScope !== alert.targetScope ||
+        (editForm.targetScope === 'shift' && editForm.targetShiftId !== (alert.targetShiftId ?? '')) ||
+        (editForm.targetScope === 'officers' && !sameIdSet(editForm.officerIds, alert.assignedOfficerIds));
+      if (targetChanged) {
+        payload.targetScope = editForm.targetScope;
+        if (editForm.targetScope === 'shift') payload.targetShiftId = editForm.targetShiftId || null;
+        if (editForm.targetScope === 'officers') payload.officerIds = editForm.officerIds;
+      }
+
+      const sourceChanged =
+        editForm.sourceType !== alert.sourceType ||
+        editForm.sourceAuthority.trim() !== (alert.sourceAuthority ?? '') ||
+        editForm.sourceReference.trim() !== (alert.sourceReference ?? '');
+      if (sourceChanged) {
+        payload.sourceType = editForm.sourceType;
+        payload.sourceAuthority = editForm.sourceType === 'external' ? editForm.sourceAuthority.trim() : undefined;
+        payload.sourceReference = editForm.sourceType === 'external' ? editForm.sourceReference.trim() : undefined;
+      }
+
+      // Whether extending, shortening, correcting, or clearing the expiry is
+      // *material* (requiring re-acknowledgement) is decided entirely by the
+      // backend (see isExpiryChangeMaterial) — this only decides whether the
+      // field is dirty enough to send at all.
+      const expiryResult = parseExpiresAtInput(editForm.expiresAt);
+      if (expiryResult.ok === false) {
+        setError(expiryResult.error);
+        setEditSaving(false);
+        return;
+      }
+      if (expiryResult.iso === null) {
+        if (alert.expiresAt !== null) payload.expiresAt = null;
+      } else if (expiryChangedAtMinutePrecision(alert.expiresAt, expiryResult.iso)) {
+        payload.expiresAt = expiryResult.iso;
+      }
+
+      if (payload.description !== undefined && editForm.materialChangeOverride) {
+        payload.materialChangeOverride = true;
+      }
+
+      if (Object.keys(payload).length === 0) {
+        setEditingAlertId(null);
+        return;
+      }
+
+      const updated = await updateOperationalAlert(alert.id, payload);
       setAlerts((prev) => prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
-      setSuccess(`Alert marked ${status}`);
+      // Coverage is version-scoped — a material edit may have bumped the
+      // alert's version, so a stale cached coverage result must not linger.
+      setCoverageByAlert((prev) => {
+        if (!(alert.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[alert.id];
+        return next;
+      });
+      setSuccess('Alert updated');
+      setEditingAlertId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update operational alert');
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -716,6 +1030,11 @@ export function SupervisorAlerts() {
               const acks = acksByAlert[alert.id] ?? [];
               const acksOpen = expandedAckId === alert.id;
               const displayStatus = effectiveStatus(alert);
+              const stale = isStaleReviewRequired(alert);
+              const coverage = coverageByAlert[alert.id];
+              const coverageOpen = expandedCoverageId === alert.id;
+              const isChangingStatus = pendingStatusChange?.alertId === alert.id;
+              const isEditing = editingAlertId === alert.id;
 
               return (
                 <article key={alert.id} className="px-4 py-3">
@@ -726,6 +1045,11 @@ export function SupervisorAlerts() {
                         <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${statusStyles(displayStatus)}`}>
                           {displayStatus}
                         </span>
+                        {stale && (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+                            Review required — active {STALE_ACTIVE_HOURS / 24}+ days
+                          </span>
+                        )}
                         <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600">
                           {alert.priority}
                         </span>
@@ -755,20 +1079,41 @@ export function SupervisorAlerts() {
                         Issued by {alert.issuedByName} · {formatDateTime(alert.createdAt)}
                         {alert.expiresAt && ` · Expires ${formatDateTime(alert.expiresAt)}`}
                       </p>
+                      {alert.statusReason && (
+                        <p className="mt-1 text-[0.6875rem] text-slate-500">
+                          {alert.status === 'resolved' ? 'Resolved' : 'Cancelled'} — {alert.statusReason}
+                          {alert.statusReasonBy && ` (${alert.statusReasonBy})`}
+                        </p>
+                      )}
+                      {coverage?.criticalNonAckWarning && (
+                        <p className="mt-2 flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[0.6875rem] font-semibold text-rose-700">
+                          <ShieldAlert size={13} />
+                          Critical alert: {coverage.outstandingCount} officer{coverage.outstandingCount === 1 ? '' : 's'} still unacknowledged
+                          past {coverage.criticalNonAckThresholdMinutes} min — awareness only, no automatic action taken.
+                        </p>
+                      )}
                     </div>
                     <div className="flex flex-col items-end gap-2">
-                      {alert.status === 'active' && (
+                      {alert.status === 'active' && !isChangingStatus && (
                         <div className="flex gap-1.5">
                           <button
                             type="button"
-                            onClick={() => void handleStatus(alert, 'resolved')}
+                            onClick={() => startEdit(alert)}
+                            className="inline-flex h-[28px] items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[0.6875rem] font-bold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            <Pencil size={12} />
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => startStatusChange(alert.id, 'resolved')}
                             className="inline-flex h-[28px] items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 text-[0.6875rem] font-bold text-emerald-700 transition hover:bg-emerald-100"
                           >
                             Resolve
                           </button>
                           <button
                             type="button"
-                            onClick={() => void handleStatus(alert, 'cancelled')}
+                            onClick={() => startStatusChange(alert.id, 'cancelled')}
                             className="inline-flex h-[28px] items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 text-[0.6875rem] font-bold text-slate-700 transition hover:bg-slate-100"
                           >
                             <XCircle size={12} />
@@ -776,6 +1121,18 @@ export function SupervisorAlerts() {
                           </button>
                         </div>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => void toggleCoverage(alert.id)}
+                        className="inline-flex h-[26px] items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 text-[0.6875rem] font-bold text-indigo-700 transition hover:bg-indigo-100"
+                      >
+                        <Users size={12} />
+                        {coverage
+                          ? `${coverage.acknowledgedCount}/${coverage.totalTargeted} acknowledged (${coverage.percentage}%)`
+                          : coverageOpen && coverageLoading
+                            ? 'Loading coverage…'
+                            : 'View coverage'}
+                      </button>
                       {alert.acknowledgementCount > 0 && (
                         <button
                           type="button"
@@ -798,6 +1155,240 @@ export function SupervisorAlerts() {
                       )}
                     </div>
                   </div>
+
+                  {isChangingStatus && (
+                    <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <p className="mb-2 text-[0.6875rem] font-semibold text-slate-600">
+                        Reason for marking this alert {pendingStatusChange?.status} <span className="font-normal text-slate-400">(required)</span>
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          value={reasonDraft}
+                          onChange={(e) => setReasonDraft(e.target.value)}
+                          placeholder={pendingStatusChange?.status === 'resolved' ? 'e.g. Flooding has subsided, road reopened' : 'e.g. Issued in error — wrong vehicle registration'}
+                          className={`${inputClassName} flex-1 min-w-[220px]`}
+                          style={{ borderColor: BORDER }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void confirmStatusChange()}
+                          disabled={reasonSaving || !reasonDraft.trim()}
+                          className="inline-flex h-[32px] items-center gap-1 rounded-md px-3 text-[0.6875rem] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                          style={{ backgroundColor: NAVY }}
+                        >
+                          {reasonSaving ? <Loader2 size={12} className="animate-spin" /> : 'Confirm'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelStatusChange}
+                          className="inline-flex h-[32px] items-center rounded-md border bg-white px-3 text-[0.6875rem] font-bold text-slate-600 transition hover:bg-slate-50"
+                          style={{ borderColor: BORDER }}
+                        >
+                          Back
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {isEditing && (
+                    <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <p className="mb-2 text-[0.6875rem] font-semibold text-slate-600">Edit alert</p>
+                      <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[0.6875rem] font-semibold text-slate-600">Priority</span>
+                          <select
+                            value={editForm.priority}
+                            onChange={(e) => updateEditForm('priority', e.target.value as OperationalAlertPriority)}
+                            className={inputClassName}
+                            style={{ borderColor: BORDER }}
+                          >
+                            {PRIORITIES.map((priority) => (
+                              <option key={priority} value={priority}>{priority}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[0.6875rem] font-semibold text-slate-600">Target</span>
+                          <select
+                            value={editForm.targetScope}
+                            onChange={(e) => updateEditForm('targetScope', e.target.value as OperationalAlertTargetScope)}
+                            className={inputClassName}
+                            style={{ borderColor: BORDER }}
+                          >
+                            <option value="all_officers">All officers</option>
+                            <option value="shift">A roadblock shift</option>
+                            <option value="officers">Selected officers</option>
+                          </select>
+                        </label>
+                        {editForm.targetScope === 'shift' && (
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[0.6875rem] font-semibold text-slate-600">Shift</span>
+                            <select
+                              value={editForm.targetShiftId}
+                              onChange={(e) => updateEditForm('targetShiftId', e.target.value)}
+                              className={inputClassName}
+                              style={{ borderColor: BORDER }}
+                            >
+                              <option value="">Select a shift…</option>
+                              {shifts.map((shift) => (
+                                <option key={shift.id} value={shift.id}>{shift.roadblockName} — {shift.station}</option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[0.6875rem] font-semibold text-slate-600">
+                            Source {BOLO_TYPES.has(alert.alertType) && <span className="font-normal text-amber-600">(locked to external for BOLO)</span>}
+                          </span>
+                          <select
+                            value={editForm.sourceType}
+                            onChange={(e) => updateEditForm('sourceType', e.target.value as OperationalAlertSourceType)}
+                            disabled={BOLO_TYPES.has(alert.alertType)}
+                            className={inputClassName}
+                            style={{ borderColor: BORDER }}
+                          >
+                            <option value="internal">Internal</option>
+                            <option value="external">External</option>
+                          </select>
+                        </label>
+                        {editForm.sourceType === 'external' && (
+                          <>
+                            <label className="flex flex-col gap-1">
+                              <span className="text-[0.6875rem] font-semibold text-slate-600">Source authority</span>
+                              <input
+                                value={editForm.sourceAuthority}
+                                onChange={(e) => updateEditForm('sourceAuthority', e.target.value)}
+                                className={inputClassName}
+                                style={{ borderColor: BORDER }}
+                              />
+                            </label>
+                            <label className="flex flex-col gap-1">
+                              <span className="text-[0.6875rem] font-semibold text-slate-600">Source reference</span>
+                              <input
+                                value={editForm.sourceReference}
+                                onChange={(e) => updateEditForm('sourceReference', e.target.value)}
+                                className={inputClassName}
+                                style={{ borderColor: BORDER }}
+                              />
+                            </label>
+                          </>
+                        )}
+                        <label className="flex flex-col gap-1 md:col-span-2">
+                          <span className="text-[0.6875rem] font-semibold text-slate-600">Description</span>
+                          <input
+                            value={editForm.description}
+                            onChange={(e) => updateEditForm('description', e.target.value)}
+                            className={inputClassName}
+                            style={{ borderColor: BORDER }}
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[0.6875rem] font-semibold text-slate-600">
+                            Expires <span className="font-normal text-slate-400">(leave blank for no expiry)</span>
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="datetime-local"
+                              value={editForm.expiresAt}
+                              onChange={(e) => updateEditForm('expiresAt', e.target.value)}
+                              className={inputClassName}
+                              style={{ borderColor: BORDER }}
+                            />
+                            {editForm.expiresAt && (
+                              <button
+                                type="button"
+                                onClick={() => updateEditForm('expiresAt', '')}
+                                className="h-[32px] shrink-0 rounded-lg border bg-white px-2 text-[0.6875rem] font-bold text-slate-600 transition hover:bg-slate-50"
+                                style={{ borderColor: BORDER }}
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                        </label>
+                        {editForm.description.trim() !== alert.description && (
+                          <label className="flex items-center gap-2 md:col-span-2">
+                            <input
+                              type="checkbox"
+                              checked={editForm.materialChangeOverride}
+                              onChange={(e) => updateEditForm('materialChangeOverride', e.target.checked)}
+                            />
+                            <span className="text-[0.6875rem] text-slate-600">This changes operational meaning — require re-acknowledgement</span>
+                          </label>
+                        )}
+                      </div>
+
+                      {editForm.targetScope === 'officers' && (
+                        <div className="mt-3">
+                          <p className="mb-2 text-[0.6875rem] font-semibold text-slate-600">Selected officers</p>
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                            {officers.map((officer) => {
+                              const selected = editForm.officerIds.includes(officer.officerId);
+                              return (
+                                <button
+                                  type="button"
+                                  key={officer.officerId}
+                                  onClick={() => toggleEditOfficer(officer.officerId)}
+                                  className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left transition ${selected ? 'border-[#0D2137]/30 bg-[#0D2137]/5' : 'bg-white hover:bg-slate-50'}`}
+                                  style={{ borderColor: selected ? undefined : BORDER }}
+                                >
+                                  <span className="min-w-0">
+                                    <span className="block truncate text-[0.75rem] font-bold text-slate-800">{officer.name}</span>
+                                    <span className="block truncate text-[0.625rem] text-slate-500">{officer.serviceNumber} - {officer.station}</span>
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-3 flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={cancelEdit}
+                          className="inline-flex h-[30px] items-center rounded-md border bg-white px-3 text-[0.6875rem] font-bold text-slate-600 transition hover:bg-slate-50"
+                          style={{ borderColor: BORDER }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void saveEdit(alert)}
+                          disabled={editSaving}
+                          className="inline-flex h-[30px] items-center gap-1 rounded-md px-3 text-[0.6875rem] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                          style={{ backgroundColor: NAVY }}
+                        >
+                          {editSaving ? <Loader2 size={12} className="animate-spin" /> : 'Save changes'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {coverageOpen && (
+                    <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50/60 p-3">
+                      {coverageLoading && !coverage && <Loader2 size={14} className="animate-spin text-indigo-600" />}
+                      {coverage && (
+                        <>
+                          <p className="text-[0.75rem] font-semibold text-slate-800">
+                            {coverage.acknowledgedCount}/{coverage.totalTargeted} acknowledged ({coverage.percentage}%) — v{coverage.version}
+                          </p>
+                          {coverage.outstandingOfficers.length > 0 ? (
+                            <div className="mt-2">
+                              <p className="mb-1 text-[0.6875rem] font-semibold text-slate-600">Outstanding</p>
+                              {coverage.outstandingOfficers.map((officer) => (
+                                <div key={officer.officerId} className="mt-1.5 rounded-md border border-indigo-100 bg-white px-2.5 py-1.5 first:mt-0">
+                                  <p className="text-[0.75rem] text-slate-700">{officer.officerName} ({officer.badgeNumber})</p>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="mt-1.5 text-[0.75rem] text-slate-500">All targeted officers have acknowledged.</p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
 
                   {acksOpen && (
                     <div className="mt-3 rounded-lg border border-sky-100 bg-sky-50/60 p-3">

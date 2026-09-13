@@ -697,6 +697,13 @@ export async function getOperationalAlertMatches(alertId: string) {
   );
 }
 
+export async function getOperationalAlertCoverage(alertId: string) {
+  return request<import('../types').OperationalAlertCoverage>(
+    `/api/supervisor/alerts/${encodeURIComponent(alertId)}/coverage`,
+    { headers: authHeaders() }
+  );
+}
+
 /**
  * Reported sightings for the supervisor Map / Heatmap views. Server-side
  * filters are supported (and used here) for network efficiency, but the
