@@ -16,7 +16,7 @@ import { RoadOffenceReview } from './RoadOffenceReview';
 export function SupervisorDashboard() {
   const { signOut, profile } = useAuth();
   const [activeNav, setActiveNav] = useState<SupervisorNavItem>('dashboard');
-  const { tests, loading, error, metrics, streamConnected, lastEventAt } = useSupervisorTests();
+  const { tests, todayTests, loading, error, streamConnected, lastEventAt } = useSupervisorTests();
 
   const handleNavigate = (item: SupervisorNavItem) => {
     setActiveNav(item);
@@ -33,12 +33,12 @@ export function SupervisorDashboard() {
       <main className="flex min-w-0 flex-1 flex-col">
       {activeNav === 'dashboard' && (
         <SupervisorOverview
-          metrics={metrics}
           loading={loading}
           error={error}
           streamConnected={streamConnected}
           lastEventAt={lastEventAt}
           tests={tests}
+          todayTests={todayTests}
         />
       )}
       {activeNav === 'logs' && (

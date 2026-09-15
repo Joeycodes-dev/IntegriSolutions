@@ -1,7 +1,10 @@
-import { Activity, AlertTriangle, ShieldAlert, Users } from 'lucide-react';
+import { Activity, ClipboardCheck, Flame, Megaphone, ShieldAlert, Users } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TestRecord } from '../../types';
 import { parseTestLocation } from '../../lib/testEvidence';
+import { getOperationalAlerts, getRoadOffences, type RoadOffenceRecord } from '../../services/api';
+import { isAlertEffectivelyActive } from '../../lib/operationalAlerts';
+import type { OperationalAlert } from '../../types';
 import 'leaflet/dist/leaflet.css';
 import {
   BORDER,
@@ -17,17 +20,15 @@ import {
 const DEFAULT_MAP_CENTER: [number, number] = [-26.2041, 28.0473];
 
 interface SupervisorOverviewProps {
-  metrics: {
-    totalTests: number;
-    totalFailures: number;
-    activeOfficers: number;
-    invalidTests: number;
-  };
   loading: boolean;
   error: string | null;
   streamConnected: boolean;
   lastEventAt: string | null;
   tests: TestRecord[];
+  /** Today's tests only — see useSupervisorTests.ts. Dashboard is "what's
+   * happening right now," so its KPIs are today/current-scoped; the
+   * all-time/period-scoped equivalents live on the Reports page instead. */
+  todayTests: TestRecord[];
 }
 
 interface HotspotPoint {
@@ -61,36 +62,15 @@ function formatLastEvent(value: string | null): string {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-const METRIC_CARDS = [
-  {
-    key: 'totalTests' as const,
-    label: 'TOTAL TESTS',
-    icon: Activity,
-    iconBg: '#DBEAFE',
-    iconColor: '#2563EB'
-  },
-  {
-    key: 'totalFailures' as const,
-    label: 'TOTAL FAILURES',
-    icon: ShieldAlert,
-    iconBg: '#FEE2E2',
-    iconColor: '#DC2626'
-  },
-  {
-    key: 'activeOfficers' as const,
-    label: 'ACTIVE OFFICERS',
-    icon: Users,
-    iconBg: '#EDE9FE',
-    iconColor: '#7C3AED'
-  },
-  {
-    key: 'invalidTests' as const,
-    label: 'INVALID TESTS',
-    icon: AlertTriangle,
-    iconBg: '#FFEDD5',
-    iconColor: '#EA580C'
-  }
-];
+function isToday(iso: string): boolean {
+  const date = new Date(iso);
+  const now = new Date();
+  return (
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  );
+}
 
 function MetricCard({
   label,
@@ -131,9 +111,60 @@ function MetricCard({
   );
 }
 
-export function SupervisorOverview({ metrics, loading, error, streamConnected, lastEventAt, tests }: SupervisorOverviewProps) {
+export function SupervisorOverview({ loading, error, streamConnected, lastEventAt, tests, todayTests }: SupervisorOverviewProps) {
   const today = new Date();
   const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+  const activeOfficersToday = useMemo(
+    () => new Set(todayTests.map((t) => t.officerId).filter((id): id is number => id != null)).size,
+    [todayTests]
+  );
+
+  // Alerts and road offences aren't fetched by useSupervisorTests (that hook
+  // is test-scoped), so Dashboard loads its own small, non-blocking slice —
+  // same self-fetch pattern SupervisorAlerts/RoadOffenceReview already use.
+  // A failure here degrades those KPIs to 0 rather than breaking the page.
+  const [alerts, setAlerts] = useState<OperationalAlert[]>([]);
+  const [roadOffences, setRoadOffences] = useState<RoadOffenceRecord[]>([]);
+  const [opsLoading, setOpsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [alertData, roadOffenceData] = await Promise.all([getOperationalAlerts(), getRoadOffences()]);
+        if (cancelled) return;
+        setAlerts(alertData);
+        setRoadOffences(roadOffenceData);
+      } catch {
+        // Non-blocking — KPIs below simply show 0 until the next successful load.
+      } finally {
+        if (!cancelled) setOpsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // "Active" here means effectively active right now, not just stored status
+  // — the /api/supervisor/alerts list (unlike the officer-facing /alerts/active
+  // endpoint) intentionally includes stored-active rows whose expiresAt has
+  // already passed, since supervisors need to see them to clean up/resolve.
+  // Same effectiveAlertStatus rule as SupervisorAlerts.tsx's own display.
+  const activeAlertsCount = useMemo(() => alerts.filter(isAlertEffectivelyActive).length, [alerts]);
+  const criticalAlertsCount = useMemo(
+    () => alerts.filter((a) => a.priority === 'critical' && isAlertEffectivelyActive(a)).length,
+    [alerts]
+  );
+  const roadOffencesToday = useMemo(
+    () => roadOffences.filter((r) => isToday(r.created_at)).length,
+    [roadOffences]
+  );
+  const pendingReviewCount = useMemo(
+    () => roadOffences.filter((r) => !r.road_offence_reviews || r.road_offence_reviews.length === 0).length,
+    [roadOffences]
+  );
 
   const [dateMode, setDateMode] = useState<DateFilterMode>('day');
   const [selectedDay, setSelectedDay] = useState(todayIso);
@@ -381,17 +412,49 @@ export function SupervisorOverview({ metrics, loading, error, streamConnected, l
           </div>
         )}
 
-        <div className="grid grid-cols-4 gap-2.5">
-          {METRIC_CARDS.map(({ key, label, icon, iconBg, iconColor }) => (
-            <MetricCard
-              key={key}
-              label={label}
-              value={loading ? '—' : metrics[key]}
-              icon={icon}
-              iconBg={iconBg}
-              iconColor={iconColor}
-            />
-          ))}
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-6">
+          <MetricCard
+            label="TESTS TODAY"
+            value={loading ? '—' : todayTests.length}
+            icon={Activity}
+            iconBg="#DBEAFE"
+            iconColor="#2563EB"
+          />
+          <MetricCard
+            label="ROAD OFFENCES TODAY"
+            value={opsLoading ? '—' : roadOffencesToday}
+            icon={ShieldAlert}
+            iconBg="#FFEDD5"
+            iconColor="#EA580C"
+          />
+          <MetricCard
+            label="ACTIVE OFFICERS"
+            value={loading ? '—' : activeOfficersToday}
+            icon={Users}
+            iconBg="#EDE9FE"
+            iconColor="#7C3AED"
+          />
+          <MetricCard
+            label="ACTIVE ALERTS"
+            value={opsLoading ? '—' : activeAlertsCount}
+            icon={Megaphone}
+            iconBg="#DBEAFE"
+            iconColor="#2563EB"
+          />
+          <MetricCard
+            label="CRITICAL ALERTS"
+            value={opsLoading ? '—' : criticalAlertsCount}
+            icon={Flame}
+            iconBg="#FEE2E2"
+            iconColor="#DC2626"
+          />
+          <MetricCard
+            label="PENDING REVIEW"
+            value={opsLoading ? '—' : pendingReviewCount}
+            icon={ClipboardCheck}
+            iconBg="#FEF3C7"
+            iconColor="#D97706"
+          />
         </div>
 
         <section className="overflow-hidden rounded-xl border bg-white" style={{ borderColor: BORDER }}>

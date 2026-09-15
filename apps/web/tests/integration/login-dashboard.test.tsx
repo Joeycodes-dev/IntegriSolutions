@@ -78,8 +78,8 @@ describe('Login - Dashboard end-to-end flow', () => {
       expect(screen.getByText('Overview Dashboard')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('TOTAL TESTS')).toBeInTheDocument();
-    expect(screen.getByText('TOTAL FAILURES')).toBeInTheDocument();
+    expect(screen.getByText('TESTS TODAY')).toBeInTheDocument();
+    expect(screen.getByText('ACTIVE ALERTS')).toBeInTheDocument();
 
     // Navigate to Logs tab to verify test records rendered
     fireEvent.click(screen.getByRole('button', { name: 'Logs' }));

@@ -198,8 +198,8 @@ export function ResultPieChart({ passed, failed }: ResultPieChartProps) {
     <div className="flex w-full flex-col items-center justify-center">
       <svg
         viewBox="0 0 160 160"
-        className="mx-auto w-full max-w-[180px]"
-        style={{ height: '160px' }}
+        className="mx-auto w-full max-w-[230px]"
+        style={{ height: '230px' }}
         role="img"
         aria-label={`Result breakdown: ${passed} passed, ${failed} failed, failure rate ${failRate} percent`}
       >

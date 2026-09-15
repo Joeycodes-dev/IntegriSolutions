@@ -196,10 +196,10 @@ function SectionCard({
 }) {
   return (
     <section
-      className={`flex min-w-0 flex-col rounded-xl border bg-white px-4 py-3 ${className}`}
+      className={`flex min-w-0 flex-col overflow-hidden rounded-xl border bg-white px-4 py-3 ${className}`}
       style={{ borderColor: BORDER }}
     >
-      <div className="mb-2.5 flex shrink-0 items-center gap-2">
+      <div className="mb-2 flex shrink-0 items-center gap-2">
         {Icon && <Icon size={14} className="shrink-0 text-slate-400" />}
         <div className="min-w-0">
           <h2 className="text-[0.8125rem] font-bold leading-tight" style={{ color: NAVY }}>
@@ -523,7 +523,7 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
             title={trendTitle}
             subtitle="Test volume, failures and pass rate over time"
             icon={Activity}
-            className="min-h-[280px] lg:col-span-2"
+            className="h-[300px] lg:col-span-2 lg:h-[360px]"
           >
             <div className="flex min-h-0 flex-1 items-center">
               {loading ? (
@@ -538,7 +538,7 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
             title="Result Breakdown"
             subtitle="Pass vs fail for selected filters"
             icon={Gauge}
-            className="min-h-[280px]"
+            className="h-[300px] lg:h-[360px]"
           >
             <div className="flex min-h-0 flex-1 items-center justify-center">
               {loading ? (
@@ -556,7 +556,7 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
             title="Failures by Capture Context"
             subtitle="Roadblock checkpoints and individual tests, ranked by failures"
             icon={MapPin}
-            className="min-h-[260px]"
+            className="h-[240px] lg:h-[280px]"
           >
             <div className="flex min-h-0 flex-1 items-center">
               {loading ? (
@@ -571,7 +571,7 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
             title="BAC Distribution"
             subtitle="How far over the legal limit readings fall"
             icon={Gauge}
-            className="min-h-[260px]"
+            className="h-[240px] lg:h-[280px]"
           >
             <div className="flex min-h-0 flex-1 items-center">
               {loading ? (
@@ -601,7 +601,7 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
             title="Peak Offence Hours"
             subtitle="Failed tests by day of week and hour — plan staffing"
             icon={Clock}
-            className="min-h-[240px]"
+            className="h-[240px] lg:h-[280px]"
           >
             <div className="flex min-h-0 flex-1 items-center">
               {loading ? (
@@ -616,7 +616,7 @@ export function SupervisorReports({ tests, loading, error = null }: SupervisorRe
             title="Officer Activity Leaderboard"
             subtitle="Most active officers in the selected period"
             icon={Users}
-            className="min-h-[240px]"
+            className="h-[240px] lg:h-[280px]"
           >
             <div className="flex min-h-0 flex-1 items-center">
               {loading ? (

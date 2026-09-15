@@ -29,6 +29,7 @@ import {
   updateOperationalAlert
 } from '../../services/api';
 import { filterSightings } from '../../lib/alertSightings';
+import { effectiveAlertStatus } from '../../lib/operationalAlerts';
 import { isValidLatitude, isValidLongitude } from '../../lib/geo';
 import { LocationInput } from '../LocationInput';
 import { SupervisorAlertsMap } from './SupervisorAlertsMap';
@@ -217,22 +218,10 @@ function statusStyles(status: OperationalAlertStatus): string {
   return 'border-rose-200 bg-rose-50 text-rose-700';
 }
 
-/**
- * Display-only: an alert whose expires_at has passed but whose stored status is
- * still 'active' is shown as expired. This never mutates the DB — there is no
- * background-job pattern in this codebase to auto-transition status, so the row
- * stays 'active' until a supervisor explicitly resolves/cancels it (or a future
- * scheduled job is added).
- */
-function effectiveStatus(alert: OperationalAlert): OperationalAlertStatus {
-  if (alert.status === 'active' && alert.expiresAt) {
-    const expiresAtMs = new Date(alert.expiresAt).getTime();
-    if (!Number.isNaN(expiresAtMs) && expiresAtMs <= Date.now()) {
-      return 'expired';
-    }
-  }
-  return alert.status;
-}
+// effectiveStatus lives in lib/operationalAlerts.ts (single source of truth,
+// also used by SupervisorOverview.tsx's Dashboard KPIs) — kept as a local
+// alias here since every call site below already says `effectiveStatus(...)`.
+const effectiveStatus = effectiveAlertStatus;
 
 function alertTypeLabel(alertType: OperationalAlertType): string {
   return ALERT_TYPES.find((item) => item.value === alertType)?.label ?? alertType;
