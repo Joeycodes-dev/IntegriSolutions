@@ -492,6 +492,22 @@ export async function getVerificationTokens(testIds: string[]) {
   });
 }
 
+/**
+ * Period-based variant for weekly/date-range reports — the backend queries
+ * `tests` by date range itself rather than relying on an arbitrarily large
+ * testIds[] array (which the explicit-selection endpoint above caps at a
+ * small manual-selection batch size). testIds here only narrows the query
+ * (result/capture-context filters already applied client-side); it's never
+ * the sole source of truth for which records are included.
+ */
+export async function getVerificationTokensForReport(params: { fromIso: string; toIso: string; testIds: string[] }) {
+  return request<import('../types').VerificationTokenRecord[]>('/api/supervisor/verification-tokens/report', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ from: params.fromIso, to: params.toIso, testIds: params.testIds })
+  });
+}
+
 export async function getPublicVerification(token: string) {
   const response = await fetch(`${API_BASE}/api/public/verify`, {
     headers: {
