@@ -608,4 +608,38 @@ describe('SupervisorAlerts', () => {
     expect(screen.queryByText('active')).not.toBeInTheDocument();
     expect(api.updateOperationalAlert).not.toHaveBeenCalled();
   });
+
+  it('counts the header "N active" badge by effective status, not raw stored status: 6 stored-active alerts with 4 expired shows 2', async () => {
+    const pastExpiry = '2020-01-01T00:00:00Z';
+    const futureExpiry = '2999-01-01T00:00:00Z';
+    (api.getOperationalAlerts as any).mockResolvedValue([
+      { ...mockAlerts[0], id: 'a1', status: 'active', expiresAt: null }, // active, no expiry
+      { ...mockAlerts[0], id: 'a2', status: 'active', expiresAt: futureExpiry }, // active, future expiry
+      { ...mockAlerts[0], id: 'a3', status: 'active', expiresAt: pastExpiry }, // effectively expired
+      { ...mockAlerts[0], id: 'a4', status: 'active', expiresAt: pastExpiry }, // effectively expired
+      { ...mockAlerts[0], id: 'a5', status: 'active', expiresAt: pastExpiry }, // effectively expired
+      { ...mockAlerts[0], id: 'a6', status: 'active', expiresAt: pastExpiry }, // effectively expired
+    ]);
+
+    render(<SupervisorAlerts />);
+
+    await waitFor(() => {
+      expect(screen.getByText('2 active')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('6 active')).not.toBeInTheDocument();
+  });
+
+  it('excludes resolved and cancelled alerts from the "N active" count', async () => {
+    (api.getOperationalAlerts as any).mockResolvedValue([
+      { ...mockAlerts[0], id: 'a1', status: 'active', expiresAt: null },
+      { ...mockAlerts[0], id: 'a2', status: 'resolved', expiresAt: null },
+      { ...mockAlerts[0], id: 'a3', status: 'cancelled', expiresAt: null },
+    ]);
+
+    render(<SupervisorAlerts />);
+
+    await waitFor(() => {
+      expect(screen.getByText('1 active')).toBeInTheDocument();
+    });
+  });
 });

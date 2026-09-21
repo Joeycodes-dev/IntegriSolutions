@@ -29,7 +29,7 @@ import {
   updateOperationalAlert
 } from '../../services/api';
 import { filterSightings } from '../../lib/alertSightings';
-import { effectiveAlertStatus } from '../../lib/operationalAlerts';
+import { effectiveAlertStatus, isAlertEffectivelyActive } from '../../lib/operationalAlerts';
 import { isValidLatitude, isValidLongitude } from '../../lib/geo';
 import { LocationInput } from '../LocationInput';
 import { SupervisorAlertsMap } from './SupervisorAlertsMap';
@@ -312,11 +312,14 @@ export function SupervisorAlerts() {
 
   // Critical non-acknowledgement awareness must be visible without an extra
   // click (it's a life-safety signal), so coverage is fetched eagerly for
-  // active Critical alerts only — every other alert's coverage stays lazy,
-  // loaded on demand via toggleCoverage, same pattern as acknowledgements/matches.
+  // effectively active Critical alerts only — every other alert's coverage
+  // stays lazy, loaded on demand via toggleCoverage, same pattern as
+  // acknowledgements/matches. Effectively active (not just stored status) so
+  // an expired-but-stored-active critical alert doesn't get a stale
+  // "still unacknowledged" banner fetched and shown.
   useEffect(() => {
     const idsNeedingCoverage = alerts
-      .filter((alert) => alert.priority === 'critical' && alert.status === 'active')
+      .filter((alert) => alert.priority === 'critical' && isAlertEffectivelyActive(alert))
       .map((alert) => alert.id)
       .filter((id) => !(id in coverageByAlert));
     if (idsNeedingCoverage.length === 0) return;
@@ -391,7 +394,10 @@ export function SupervisorAlerts() {
     return map;
   }, [officers]);
 
-  const activeCount = useMemo(() => alerts.filter((alert) => alert.status === 'active').length, [alerts]);
+  // Effectively active, not just stored status — an alert whose expiresAt
+  // has passed must not count even though its stored status is still
+  // 'active'. Same shared rule as the Dashboard's alert KPIs.
+  const activeCount = useMemo(() => alerts.filter(isAlertEffectivelyActive).length, [alerts]);
   const isBolo = BOLO_TYPES.has(form.alertType);
 
   const toggleOfficer = (officerId: number) => {
