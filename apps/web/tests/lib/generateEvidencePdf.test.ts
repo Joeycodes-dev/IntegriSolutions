@@ -10,6 +10,7 @@ vi.mock('../../src/services/api', () => ({
   getAnnotations: vi.fn(),
   getEvidence: vi.fn(),
   getVerificationTokens: vi.fn(),
+  getVerificationTokensForReport: vi.fn(),
   getRuntimeConfig: vi.fn()
 }));
 
@@ -18,7 +19,8 @@ import {
   generateEvidencePdf,
   generateWeeklyEvidencePdf
 } from '../../src/lib/generateEvidencePdf';
-import { getAnnotations, getEvidence, getRuntimeConfig, getVerificationTokens } from '../../src/services/api';
+import { getAnnotations, getEvidence, getRuntimeConfig, getVerificationTokens, getVerificationTokensForReport } from '../../src/services/api';
+import { reportDateRangeToInstants } from '../../src/lib/reportAnalytics';
 import type { RuntimeConfig, TestRecord, VerificationTokenRecord } from '../../src/types';
 
 class FakeDoc {
@@ -232,29 +234,74 @@ describe('generateWeeklyEvidencePdf', () => {
     (QRCode.toDataURL as any).mockResolvedValue('data:image/png;base64,FAKEQR');
   });
 
-  it('issues tokens for the whole batch in one request', async () => {
+  const weekRange = { from: '2026-05-25', to: '2026-05-31' };
+
+  it('requests tokens for the whole batch via the period-based endpoint, not the small-batch one', async () => {
     const secondTest = { ...baseTest, id: 'test-456', createdAt: '2026-05-31T10:00:00Z' };
-    (getVerificationTokens as any).mockResolvedValue([
+    (getVerificationTokensForReport as any).mockResolvedValue([
       verification,
       { ...verification, testId: 'test-456', token: 'tok-456', referenceId: 'IS-2026-05-31-456' }
     ]);
 
-    await generateWeeklyEvidencePdf([baseTest, secondTest], { from: 'a', to: 'b' });
+    await generateWeeklyEvidencePdf([baseTest, secondTest], weekRange);
 
-    expect(getVerificationTokens).toHaveBeenCalledWith(['test-123', 'test-456']);
+    const { fromIso, toIso } = reportDateRangeToInstants(weekRange.from, weekRange.to);
+    expect(getVerificationTokensForReport).toHaveBeenCalledWith({
+      fromIso,
+      toIso,
+      testIds: ['test-123', 'test-456']
+    });
+    expect(getVerificationTokens).not.toHaveBeenCalled();
     expect(doc.addPage).toHaveBeenCalledTimes(1);
     expect(QRCode.toDataURL).toHaveBeenCalledTimes(2);
-    expect(doc.save).toHaveBeenCalledWith('integriscan-weekly-report-a-to-b.pdf');
+    expect(doc.save).toHaveBeenCalledWith('integriscan-weekly-report-2026-05-25-to-2026-05-31.pdf');
+  });
+
+  it('includes the full selected date range — every record in range gets a page, none dropped', async () => {
+    const count = 63;
+    const tests = Array.from({ length: count }, (_, i) => ({
+      ...baseTest,
+      id: `test-${i}`,
+      createdAt: `2026-05-2${(i % 7) + 1}T10:00:00Z`
+    }));
+    (getVerificationTokensForReport as any).mockResolvedValue(
+      tests.map((t) => ({ ...verification, testId: t.id, token: `tok-${t.id}` }))
+    );
+
+    await generateWeeklyEvidencePdf(tests, weekRange);
+
+    expect(doc.addPage).toHaveBeenCalledTimes(count - 1);
+    expect(QRCode.toDataURL).toHaveBeenCalledTimes(count);
+  });
+
+  it('does not truncate to 50 records — a week with more than 50 tests still produces one page per test', async () => {
+    const count = 87;
+    const tests = Array.from({ length: count }, (_, i) => ({
+      ...baseTest,
+      id: `test-${i}`,
+      createdAt: `2026-05-2${(i % 7) + 1}T10:00:00Z`
+    }));
+    (getVerificationTokensForReport as any).mockResolvedValue(
+      tests.map((t) => ({ ...verification, testId: t.id, token: `tok-${t.id}` }))
+    );
+
+    await generateWeeklyEvidencePdf(tests, weekRange);
+
+    // The whole point: no client-side testIds[] cap of 50 is applied — the
+    // period endpoint is called once with every id, and every one renders.
+    const call = (getVerificationTokensForReport as any).mock.calls[0][0];
+    expect(call.testIds).toHaveLength(count);
+    expect(doc.addPage).toHaveBeenCalledTimes(count - 1);
   });
 
   it('draws a distinct QR per page', async () => {
     const secondTest = { ...baseTest, id: 'test-456', createdAt: '2026-05-31T10:00:00Z' };
-    (getVerificationTokens as any).mockResolvedValue([
+    (getVerificationTokensForReport as any).mockResolvedValue([
       verification,
       { ...verification, testId: 'test-456', token: 'tok-456', referenceId: 'IS-2026-05-31-456' }
     ]);
 
-    await generateWeeklyEvidencePdf([baseTest, secondTest]);
+    await generateWeeklyEvidencePdf([baseTest, secondTest], weekRange);
 
     expect((QRCode.toDataURL as any).mock.calls[0][0]).toContain('/#/verify/tok-abc123');
     expect((QRCode.toDataURL as any).mock.calls[1][0]).toContain('/#/verify/tok-456');
@@ -262,9 +309,9 @@ describe('generateWeeklyEvidencePdf', () => {
 
   it('fails closed when a batch token is missing', async () => {
     const secondTest = { ...baseTest, id: 'test-456', createdAt: '2026-05-31T10:00:00Z' };
-    (getVerificationTokens as any).mockResolvedValue([verification]);
+    (getVerificationTokensForReport as any).mockResolvedValue([verification]);
 
-    await expect(generateWeeklyEvidencePdf([baseTest, secondTest])).rejects.toThrow(
+    await expect(generateWeeklyEvidencePdf([baseTest, secondTest], weekRange)).rejects.toThrow(
       /verification link/i
     );
     expect(jsPDFMock).not.toHaveBeenCalled();

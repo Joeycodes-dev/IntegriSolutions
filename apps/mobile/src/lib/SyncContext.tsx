@@ -10,7 +10,7 @@ import {
   resetFailedToPending,
   type LocalTestRecord
 } from '../db/repository';
-import { syncPendingRecords } from '../services/sync';
+import { syncPendingRecords, syncPendingAlertAcks } from '../services/sync';
 import { useAuth } from '../lib/AuthContext';
 
 type SyncContextType = {
@@ -118,6 +118,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       // Retry failed records that haven't hit the cap, unless auth has failed.
       if (result.failed.length > 0 && !hasAuthFailure) {
         await syncPendingRecords(officerId);
+      }
+
+      if (!hasAuthFailure) {
+        await syncPendingAlertAcks();
       }
     } catch (error) {
       console.error('Sync error:', error);

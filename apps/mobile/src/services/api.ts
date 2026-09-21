@@ -32,6 +32,13 @@ export function onAuthExpired(listener: AuthExpiredListener) {
   };
 }
 
+/** True when `request()` failed before reaching the server (see the `doFetch`
+ * catch below) rather than the server responding with a 4xx/5xx — callers use
+ * this to decide whether a failure is worth queuing for retry. */
+export function isNetworkRequestError(err: unknown): boolean {
+  return err instanceof Error && /^Network error requesting/.test(err.message);
+}
+
 function extractErrorMessage(payload: unknown): string {
   const candidate = (payload as { error?: unknown })?.error;
   return typeof candidate === 'string' && candidate.trim() ? candidate : 'API request failed';
@@ -353,4 +360,135 @@ export async function uploadRoadOffencePhotos(roadOffenceId: string, photos: Arr
     formData.append('photos', { uri: photo.uri, name: photo.name, type: photo.type } as any);
   }
   return request(`/road-offences/${encodeURIComponent(roadOffenceId)}/evidence`, { method: 'POST', body: formData });
+}
+
+export interface GeocodeSearchResult {
+  lat: number;
+  lng: number;
+  label: string;
+}
+
+/** Backed by our own /api/geocode proxy (see backend/src/routes/geocode.ts),
+ * not called directly against the provider — same client used by the web
+ * app's searchLocation (apps/web/src/services/api.ts). */
+export async function searchLocation(query: string) {
+  return request<GeocodeSearchResult[]>(`/geocode/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function getActiveAlerts() {
+  return request<import('../types').OperationalAlert[]>('/alerts/active');
+}
+
+export async function acknowledgeAlert(alertId: string) {
+  return request<{ alertId: string; acknowledgedAt: string }>(`/alerts/${encodeURIComponent(alertId)}/acknowledge`, {
+    method: 'POST'
+  });
+}
+
+export async function reportAlertMatch(alertId: string, notes: string, location?: { lat: number; lng: number }) {
+  return request<{ id: number; alertId: string; notes: string; createdAt: string; disclaimer: string }>(
+    `/alerts/${encodeURIComponent(alertId)}/matches`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ notes, ...(location ? { location } : {}) })
+    }
+  );
+}
+
+export interface AlertMatchEscalationSummary {
+  id: string;
+  description: string;
+  alertType: string;
+  priority: 'critical' | 'high' | 'medium' | 'low';
+}
+
+export interface AlertMatchEscalationOfficer {
+  name?: string | null;
+  surname?: string | null;
+}
+
+export interface AlertMatchEscalationResult {
+  escalated: boolean;
+  escalationError: string | null;
+}
+
+const ALERT_TYPE_LABELS: Record<string, string> = {
+  bolo_person: 'BOLO — Person',
+  bolo_vehicle: 'BOLO — Vehicle',
+  hazard: 'Hazard',
+  general: 'General'
+};
+
+/** Matches the canonical disclaimer shown in AlertsScreen.tsx / SupervisorAlerts.tsx
+ * and returned by the backend — kept in sync deliberately, not paraphrased. */
+const MATCH_ESCALATION_DISCLAIMER =
+  "This is an escalation signal only — it does not confirm that the person or vehicle is wanted, stolen, arrested, or otherwise legally determined. Follow your unit's operational procedure and escalate to the appropriate authority. This system does not determine what action, if any, is lawful.";
+
+function capitalize(value: string): string {
+  return value.length ? value[0].toUpperCase() + value.slice(1) : value;
+}
+
+/**
+ * Chat messages have their own, separate priority concept/DB constraint
+ * ('high' | 'medium' | 'low' — unrelated to Operational Alerts) that this
+ * task does not extend. An Operational Alert's Critical tier has no chat
+ * equivalent, so it's clamped down to 'high' — the strongest priority chat
+ * actually supports — only for the chat channel field. The human-readable
+ * "Priority: Critical" text in the message body is unaffected.
+ */
+function toChatPriority(priority: AlertMatchEscalationSummary['priority']): 'high' | 'medium' | 'low' {
+  return priority === 'critical' ? 'high' : priority;
+}
+
+/**
+ * Builds the officer-facing chat message. The alert's UUID is deliberately
+ * excluded here — it stays in the backend audit log (writeAuditLog records it
+ * as the action target) and in the /matches API response, but is meaningless
+ * and confusing to a human reading the chat thread. The description serves as
+ * the human-readable identifier instead.
+ */
+function buildEscalationMessage(alert: AlertMatchEscalationSummary, officerLabel: string): string {
+  const typeLabel = ALERT_TYPE_LABELS[alert.alertType] ?? alert.alertType;
+  return [
+    `Possible match reported for Operational Alert: ${alert.description}`,
+    '',
+    `Type: ${typeLabel}`,
+    '',
+    `Priority: ${capitalize(alert.priority)}`,
+    '',
+    `Reported by: ${officerLabel}`,
+    '',
+    MATCH_ESCALATION_DISCLAIMER
+  ].join('\n');
+}
+
+/**
+ * Saves a possible-match report, then attempts to reuse the existing emergency chat
+ * flow to notify supervisors. The match report is never rolled back if escalation
+ * fails — it has already been saved — so failures here are captured and returned
+ * rather than thrown, letting the caller show a "saved but not sent" warning.
+ */
+export async function reportAlertMatchWithEscalation(
+  alert: AlertMatchEscalationSummary,
+  notes: string,
+  officer?: AlertMatchEscalationOfficer,
+  location?: { lat: number; lng: number }
+): Promise<AlertMatchEscalationResult> {
+  await reportAlertMatch(alert.id, notes, location);
+
+  const officerLabel = officer?.name
+    ? `${officer.name} ${officer.surname ?? ''}`.trim()
+    : 'An officer';
+  const body = buildEscalationMessage(alert, officerLabel);
+
+  try {
+    const thread = await createEmergencyChatThread({ includeSuperUsers: true, title: 'Alert Match Reports' });
+    await sendChatMessage(thread.id, body, true, toChatPriority(alert.priority));
+    return { escalated: true, escalationError: null };
+  } catch (err) {
+    return {
+      escalated: false,
+      escalationError: err instanceof Error ? err.message : 'Failed to send the emergency chat escalation'
+    };
+  }
 }

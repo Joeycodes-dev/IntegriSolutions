@@ -54,11 +54,30 @@ type LocalEvidenceAttachment = {
   syncedAt: string | null;
 };
 
+type CachedAlertRecord = {
+  id: string;
+  officerId: number | null;
+  version: number;
+  alertJson: string;
+  receivedAt: string;
+  acknowledgedAt: string | null;
+  updatedAt: string;
+};
+
+type PendingAlertAck = {
+  alertId: string;
+  officerId: number | null;
+  requestedAt: string;
+  retryCount: number;
+};
+
 type WebDbState = {
   tests: LocalTestRecord[];
   drafts: LocalDraft[];
   audit_events: AuditEvent[];
   evidence_attachments: LocalEvidenceAttachment[];
+  alert_cache: CachedAlertRecord[];
+  alert_ack_queue: PendingAlertAck[];
 };
 
 type CountRow = { count: number };
@@ -67,13 +86,13 @@ const STORAGE_KEY = "integiscan-web-db";
 
 function loadState(): WebDbState {
   if (typeof window === "undefined") {
-    return { tests: [], drafts: [], audit_events: [], evidence_attachments: [] };
+    return { tests: [], drafts: [], audit_events: [], evidence_attachments: [], alert_cache: [], alert_ack_queue: [] };
   }
 
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      return { tests: [], drafts: [], audit_events: [], evidence_attachments: [] };
+      return { tests: [], drafts: [], audit_events: [], evidence_attachments: [], alert_cache: [], alert_ack_queue: [] };
     }
     const parsed = JSON.parse(raw) as Partial<WebDbState>;
     return {
@@ -81,9 +100,11 @@ function loadState(): WebDbState {
       drafts: Array.isArray(parsed.drafts) ? parsed.drafts : [],
       audit_events: Array.isArray(parsed.audit_events) ? parsed.audit_events : [],
       evidence_attachments: Array.isArray(parsed.evidence_attachments) ? parsed.evidence_attachments : [],
+      alert_cache: Array.isArray(parsed.alert_cache) ? parsed.alert_cache : [],
+      alert_ack_queue: Array.isArray(parsed.alert_ack_queue) ? parsed.alert_ack_queue : [],
     };
   } catch {
-    return { tests: [], drafts: [], audit_events: [], evidence_attachments: [] };
+    return { tests: [], drafts: [], audit_events: [], evidence_attachments: [], alert_cache: [], alert_ack_queue: [] };
   }
 }
 
@@ -324,6 +345,85 @@ const webDb = {
       const [id] = params as [string];
       state.evidence_attachments = state.evidence_attachments.filter((item) => item.id !== id);
       saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("UPDATE alert_cache SET officerId = ?")) {
+      const [officerId, version, alertJson, receivedAt, acknowledgedAt, updatedAt, id] = params as [
+        number | null,
+        number,
+        string,
+        string,
+        string | null,
+        string,
+        string,
+      ];
+      state.alert_cache = state.alert_cache.map((item) =>
+        item.id === id
+          ? { ...item, officerId: officerId ?? null, version, alertJson, receivedAt, acknowledgedAt: acknowledgedAt ?? null, updatedAt }
+          : item,
+      );
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("INSERT INTO alert_cache")) {
+      const [id, officerId, version, alertJson, receivedAt, acknowledgedAt, updatedAt] = params as [
+        string,
+        number | null,
+        number,
+        string,
+        string,
+        string | null,
+        string,
+      ];
+      const record: CachedAlertRecord = {
+        id,
+        officerId: officerId ?? null,
+        version,
+        alertJson,
+        receivedAt,
+        acknowledgedAt: acknowledgedAt ?? null,
+        updatedAt,
+      };
+      state.alert_cache = state.alert_cache.filter((item) => item.id !== record.id);
+      state.alert_cache.push(record);
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("UPDATE alert_cache SET acknowledgedAt = ? WHERE id = ?")) {
+      const [acknowledgedAt, id] = params as [string, string];
+      state.alert_cache = state.alert_cache.map((item) =>
+        item.id === id ? { ...item, acknowledgedAt } : item,
+      );
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("INSERT INTO alert_ack_queue")) {
+      const [alertId, officerId, requestedAt] = params as [string, number | null, string];
+      const record: PendingAlertAck = { alertId, officerId: officerId ?? null, requestedAt, retryCount: 0 };
+      state.alert_ack_queue = state.alert_ack_queue.filter((item) => item.alertId !== record.alertId);
+      state.alert_ack_queue.push(record);
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("DELETE FROM alert_ack_queue WHERE alertId = ?")) {
+      const [alertId] = params as [string];
+      state.alert_ack_queue = state.alert_ack_queue.filter((item) => item.alertId !== alertId);
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("UPDATE alert_ack_queue SET retryCount = retryCount + 1 WHERE alertId = ?")) {
+      const [alertId] = params as [string];
+      state.alert_ack_queue = state.alert_ack_queue.map((item) =>
+        item.alertId === alertId ? { ...item, retryCount: item.retryCount + 1 } : item,
+      );
+      saveState(state);
+      return;
     }
   },
 
@@ -435,6 +535,23 @@ const webDb = {
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt)) as T[];
     }
 
+    if (sql.includes("FROM alert_cache WHERE officerId = ? OR officerId IS NULL ORDER BY updatedAt DESC")) {
+      const [officerId] = params as [number];
+      return [...state.alert_cache]
+        .filter((item) => item.officerId === officerId || item.officerId === null)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) as T[];
+    }
+
+    if (sql.includes("FROM alert_cache WHERE officerId IS NULL ORDER BY updatedAt DESC")) {
+      return [...state.alert_cache]
+        .filter((item) => item.officerId === null)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) as T[];
+    }
+
+    if (sql.includes("FROM alert_ack_queue ORDER BY requestedAt ASC")) {
+      return [...state.alert_ack_queue].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt)) as T[];
+    }
+
     return [];
   },
 
@@ -512,6 +629,16 @@ const webDb = {
         row.count = state.audit_events.filter((item) => item.outcome === "failure").length;
       }
       return row as T;
+    }
+
+    if (sql.includes("SELECT * FROM alert_cache WHERE id = ?")) {
+      const [id] = params as [string];
+      return (state.alert_cache.find((item) => item.id === id) ?? null) as T | null;
+    }
+
+    if (sql.includes("SELECT * FROM alert_ack_queue WHERE alertId = ?")) {
+      const [alertId] = params as [string];
+      return (state.alert_ack_queue.find((item) => item.alertId === alertId) ?? null) as T | null;
     }
 
     return null;

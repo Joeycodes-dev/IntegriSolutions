@@ -62,6 +62,48 @@ export interface DriverLicenseData {
   };
 }
 
+export type OperationalAlertType = 'bolo_person' | 'bolo_vehicle' | 'hazard' | 'general';
+/** critical = immediate emergency / officer-safety / life-safety event.
+ * high remains an urgent-but-non-emergency operational priority — it is
+ * not renamed or repurposed. Order: critical > high > medium > low. */
+export type OperationalAlertPriority = 'critical' | 'high' | 'medium' | 'low';
+export type OperationalAlertSourceType = 'internal' | 'external';
+export type OperationalAlertStatus = 'active' | 'expired' | 'cancelled' | 'resolved';
+export type OperationalAlertTargetScope = 'all_officers' | 'shift' | 'officers';
+
+/** BOLO / hazard / general operational bulletins — see GET /api/alerts/active. */
+export interface OperationalAlert {
+  id: string;
+  alertType: OperationalAlertType;
+  priority: OperationalAlertPriority;
+  description: string;
+  vehicleRegistration: string | null;
+  vehicleDescription: string | null;
+  personName: string | null;
+  personDescription: string | null;
+  personReference: string | null;
+  photoUrl: string | null;
+  locationLat: number | null;
+  locationLng: number | null;
+  locationLabel: string | null;
+  /** Optional geofence trigger radius in metres, paired with locationLat/Lng. */
+  locationRadiusMeters: number | null;
+  issuedByName: string;
+  targetScope: OperationalAlertTargetScope;
+  sourceType: OperationalAlertSourceType;
+  sourceAuthority: string | null;
+  sourceReference: string | null;
+  status: OperationalAlertStatus;
+  expiresAt: string | null;
+  createdAt: string;
+  /** Non-null once the signed-in officer has acknowledged this alert. */
+  acknowledgedAt: string | null;
+  /** Bumped by the backend on a material edit — acknowledgedAt above is
+   * already scoped to this version, so no client-side version handling is
+   * needed for badge/Home unacknowledged-again behavior. */
+  version: number;
+}
+
 export interface ChatOfficerContact {
   officerId: number;
   name: string;

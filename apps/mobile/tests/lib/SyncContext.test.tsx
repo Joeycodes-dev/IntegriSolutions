@@ -25,7 +25,8 @@ jest.mock('../../src/db/repository', () => ({
 }));
 
 jest.mock('../../src/services/sync', () => ({
-  syncPendingRecords: jest.fn()
+  syncPendingRecords: jest.fn(),
+  syncPendingAlertAcks: jest.fn()
 }));
 
 jest.mock('expo-network', () => ({
@@ -67,6 +68,7 @@ describe('SyncContext', () => {
     (repository.resetFailedToPending as jest.Mock).mockResolvedValue(undefined);
     (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true });
     (sync.syncPendingRecords as jest.Mock).mockResolvedValue({ synced: [], failed: [] });
+    (sync.syncPendingAlertAcks as jest.Mock).mockResolvedValue({ synced: [], failed: [] });
     mockAuthState.token = 'token-123';
   });
 

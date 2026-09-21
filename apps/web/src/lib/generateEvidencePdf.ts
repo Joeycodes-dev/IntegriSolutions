@@ -4,7 +4,8 @@ import type { RuntimeConfig, TestRecord, VerificationTokenRecord } from '../type
 import { buildTestEvidence, formatDriverCategoryForReport, resolveEvidencePhotoUrls } from './testEvidence';
 import { buildVerificationUrl } from './verificationRoute';
 import { DEFAULT_RUNTIME_CONFIG } from './runtimeConfig';
-import { getAnnotations, getEvidence, getRuntimeConfig, getVerificationTokens, type Annotation, type EvidencePhoto } from '../services/api';
+import { getAnnotations, getEvidence, getRuntimeConfig, getVerificationTokens, getVerificationTokensForReport, type Annotation, type EvidencePhoto } from '../services/api';
+import { reportDateRangeToInstants } from './reportAnalytics';
 
 type RGB = [number, number, number];
 
@@ -435,7 +436,7 @@ export async function generateEvidencePdf(
 
 export async function generateWeeklyEvidencePdf(
   tests: TestRecord[],
-  range?: { from: string; to: string }
+  range: { from: string; to: string }
 ): Promise<void> {
   if (tests.length === 0) {
     throw new Error('No records match the selected filters.');
@@ -445,8 +446,15 @@ export async function generateWeeklyEvidencePdf(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );
 
+  // Scoped by the report's period, queried server-side, rather than sending
+  // an arbitrarily large testIds[] array to a small-batch endpoint — see
+  // getVerificationTokensForReport and backend/src/routes/supervisor/verificationTokens.ts.
+  // testIds here only narrows the period query to the already-filtered
+  // (result/capture-context) selection; the date range is the source of truth
+  // for which records the backend considers.
+  const { fromIso, toIso } = reportDateRangeToInstants(range.from, range.to);
   const [records, runtime] = await Promise.all([
-    getVerificationTokens(sorted.map((test) => test.id)),
+    getVerificationTokensForReport({ fromIso, toIso, testIds: sorted.map((test) => test.id) }),
     getRuntimeConfig().catch(() => DEFAULT_RUNTIME_CONFIG)
   ]);
   const byTestId = new Map(records.map((record) => [record.testId, record]));
@@ -467,7 +475,5 @@ export async function generateWeeklyEvidencePdf(
     await renderEvidencePage(doc, sorted[i], ctx, byTestId.get(sorted[i].id)!, runtime);
   }
 
-  const from = range?.from ?? 'report';
-  const to = range?.to ?? 'export';
-  doc.save(`integriscan-weekly-report-${from}-to-${to}.pdf`);
+  doc.save(`integriscan-weekly-report-${range.from}-to-${range.to}.pdf`);
 }

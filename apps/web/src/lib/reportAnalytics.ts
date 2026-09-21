@@ -95,6 +95,21 @@ function endOfDay(d: Date): Date {
   return copy;
 }
 
+/**
+ * Resolves a report's {from, to} (YYYY-MM-DD, local calendar days — same
+ * fields as ReportFilters) to precise UTC instants, using the exact same
+ * parseLocalDate/startOfDay/endOfDay logic filterTestsForReport uses. Lets a
+ * server-side date-range query (see generateWeeklyEvidencePdf) match the
+ * browser's own local-timezone day boundaries exactly, instead of the
+ * backend re-deriving day boundaries in its own (possibly different) timezone.
+ */
+export function reportDateRangeToInstants(from: string, to: string): { fromIso: string; toIso: string } {
+  return {
+    fromIso: startOfDay(parseLocalDate(from)).toISOString(),
+    toIso: endOfDay(parseLocalDate(to)).toISOString()
+  };
+}
+
 export function weekdayIndex(iso: string): number {
   const date = new Date(iso);
   const day = date.getDay();

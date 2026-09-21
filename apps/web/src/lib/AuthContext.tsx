@@ -1,8 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { AUTH_EXPIRED_EVENT, clearAccessToken, getAccessToken, getProfile, getRuntimeConfig, setAccessToken } from '../services/api';
+import { AUTH_EXPIRED_EVENT, clearAccessToken, getAccessToken, getProfile, getRuntimeConfig, setAccessToken, setActorRoleId } from '../services/api';
 import type { UserProfile } from '../types';
 
-const PROFILE_STORAGE_KEY = 'local_auth_profile';
 const LAST_ACTIVITY_KEY = 'integriscan:last_activity';
 const IDLE_CHECK_MS = 15_000;
 const DEFAULT_SESSION_TIMEOUT_MINUTES = 30;
@@ -14,23 +13,13 @@ function isExpiredTokenError(error: unknown): boolean {
   return EXPIRED_TOKEN_MESSAGE.test(error.message);
 }
 
-function loadLocalProfile(): UserProfile | null {
-  const stored = localStorage.getItem(PROFILE_STORAGE_KEY);
-  if (!stored) return null;
-  try {
-    return JSON.parse(stored) as UserProfile;
-  } catch {
-    return null;
-  }
-}
-
-function saveLocalProfile(profile: UserProfile) {
-  localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
-}
-
-function clearLocalProfile() {
-  localStorage.removeItem(PROFILE_STORAGE_KEY);
-}
+// Auth state (token + profile) is intentionally NOT persisted to localStorage —
+// see services/api.ts. The profile in particular carries a national ID number
+// and email, so it doesn't qualify as "non-sensitive display data" either.
+// Consequence: a page refresh always requires signing in again (initAuth()
+// below never has a token to restore), and this tab's session is not shared
+// with other tabs — each tab now holds its own independent in-memory auth
+// state, so opening a new tab also requires a fresh login.
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -54,7 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearAuthState = () => {
     clearAccessToken();
-    clearLocalProfile();
+    setActorRoleId(null);
     try {
       localStorage.removeItem(LAST_ACTIVITY_KEY);
     } catch {
@@ -75,9 +64,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const initAuth = async () => {
+      // getAccessToken() reads memory-only state, so on every fresh page
+      // load/refresh this is null and the app always starts unauthenticated.
+      // This branch only ever fires for an already-authenticated in-page
+      // remount (e.g. AuthProvider re-mounting without a full page reload).
       const token = getAccessToken();
       if (!token) {
-        clearLocalProfile();
         setLoading(false);
         return;
       }
@@ -86,7 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const profileData = await getProfile();
         setUser(profileData);
         setProfile(profileData);
-        saveLocalProfile(profileData);
+        setActorRoleId(profileData.roleId);
       } catch (error) {
         console.error('Authentication refresh failed:', error);
         clearAuthState();
@@ -131,18 +123,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Sign out in other tabs when the token is cleared here.
-  useEffect(() => {
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === 'backend_access_token' && !event.newValue) {
-        clearAuthState();
-      }
-    };
-    window.addEventListener('storage', handleStorage);
-    return () => {
-      window.removeEventListener('storage', handleStorage);
-    };
-  }, []);
+  // Note: cross-tab "sign out other tabs when this tab logs out" previously
+  // worked by watching the access token's localStorage key disappear. Since
+  // the token is now memory-only per tab (by design — see services/api.ts),
+  // that signal no longer exists: each tab holds an independent session, so
+  // there is nothing to cross-tab-synchronize here anymore. Logging out in
+  // one tab no longer logs out another already-open tab; each tab's own idle
+  // timeout / expired-token handling (below) still applies independently.
 
   // Fetch the administrator-configured idle timeout (web portal only).
   useEffect(() => {
@@ -214,14 +201,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = (profileData: UserProfile, token: string) => {
     setAccessToken(token);
-    saveLocalProfile(profileData);
+    setActorRoleId(profileData.roleId);
     setUser(profileData);
     setProfile(profileData);
   };
 
   const signInLocal = (profileData: UserProfile) => {
     clearAccessToken();
-    saveLocalProfile(profileData);
+    setActorRoleId(profileData.roleId);
     setUser(profileData);
     setProfile(profileData);
   };

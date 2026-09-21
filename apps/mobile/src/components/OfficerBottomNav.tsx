@@ -7,60 +7,12 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { styles } from './OfficerBottomNav.styles';
 import { colors } from '../styles/colors';
 import { useChatUnreadCount } from '../lib/useChatUnreadCount';
+import { useAlertsContext } from '../lib/AlertsContext';
+import { summarizeAlertsForHome } from '../lib/homeAlertsSummary';
+import { formatAlertBadgeCount } from '../lib/alertBadge';
+import { OFFICER_BOTTOM_NAV_TABS, type OfficerTab } from '../lib/officerBottomNavTabs';
 
-export type OfficerTab = 'OfficerDashboard' | 'OfficerReports' | 'OfficerShifts' | 'EmergencyChat' | 'Audit';
-
-interface TabConfig {
-  key: OfficerTab;
-  label: string;
-  iconLib: 'feather' | 'ionicons';
-  iconName: string;
-  iconNameActive: string;
-  route: 'OfficerDashboard' | 'OfficerReports' | 'OfficerShifts' | 'EmergencyChat' | 'Audit';
-}
-
-const TABS: TabConfig[] = [
-  {
-    key: 'EmergencyChat',
-    label: 'Chat',
-    iconLib: 'ionicons',
-    iconName: 'chatbubble-ellipses-outline',
-    iconNameActive: 'chatbubble-ellipses',
-    route: 'EmergencyChat'
-  },
-  {
-    key: 'OfficerDashboard',
-    label: 'Home',
-    iconLib: 'ionicons',
-    iconName: 'home-outline',
-    iconNameActive: 'home',
-    route: 'OfficerDashboard'
-  },
-  {
-    key: 'OfficerReports',
-    label: 'Reports',
-    iconLib: 'ionicons',
-    iconName: 'bar-chart-outline',
-    iconNameActive: 'bar-chart',
-    route: 'OfficerReports'
-  },
-  {
-    key: 'OfficerShifts',
-    label: 'Shifts',
-    iconLib: 'ionicons',
-    iconName: 'briefcase-outline',
-    iconNameActive: 'briefcase',
-    route: 'OfficerShifts'
-  },
-  {
-    key: 'Audit',
-    label: 'Audit',
-    iconLib: 'ionicons',
-    iconName: 'shield-outline',
-    iconNameActive: 'shield',
-    route: 'Audit'
-  }
-];
+export type { OfficerTab };
 
 interface Props {
   active: OfficerTab;
@@ -69,10 +21,14 @@ interface Props {
 export function OfficerBottomNav({ active }: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<any>>();
   const unreadCount = useChatUnreadCount(active !== 'EmergencyChat');
+  // Reuses the same shared alert state (and the same active/unacknowledged/
+  // unexpired eligibility rule) as the Home summary — no separate fetch.
+  const { alerts } = useAlertsContext();
+  const unacknowledgedAlertCount = summarizeAlertsForHome(alerts).totalUnacknowledged;
 
   return (
     <View style={styles.bottomNav}>
-      {TABS.map((tab) => {
+      {OFFICER_BOTTOM_NAV_TABS.map((tab) => {
         const isActive = tab.key === active;
         const color = isActive ? colors.primaryDark : colors.neutralGray;
         const iconName = isActive ? tab.iconNameActive : tab.iconName;
@@ -97,6 +53,11 @@ export function OfficerBottomNav({ active }: Props) {
             {tab.key === 'EmergencyChat' && unreadCount > 0 && (
               <View pointerEvents="none" style={styles.unreadPill}>
                 <Text style={styles.unreadPillText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+              </View>
+            )}
+            {tab.key === 'Alerts' && unacknowledgedAlertCount > 0 && (
+              <View pointerEvents="none" style={styles.unreadPill}>
+                <Text style={styles.unreadPillText}>{formatAlertBadgeCount(unacknowledgedAlertCount)}</Text>
               </View>
             )}
             <Text style={[isActive ? styles.navLabel : styles.navLabelInactive]}>

@@ -28,6 +28,7 @@ import {
 } from '../services/api';
 import type { ChatMessage, ChatOfficerContact, ChatThreadSummary } from '../types';
 import { hasSupabaseRealtimeConfig, supabaseRealtime } from '../lib/supabaseRealtime';
+import { roleLabel } from '../lib/chatRoleLabel';
 
 type RootStackParamList = {
   OfficerDashboard: undefined;
@@ -44,12 +45,6 @@ function formatStamp(iso: string): string {
   if (Number.isNaN(value.getTime())) return iso;
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(value.getHours())}:${pad(value.getMinutes())}`;
-}
-
-function roleLabel(roleId: number): string {
-  if (roleId === 3) return 'Admin';
-  if (roleId === 2) return 'Supervisor';
-  return 'Officer';
 }
 
 function threadTitle(thread: ChatThreadSummary, selfOfficerId?: number): string {

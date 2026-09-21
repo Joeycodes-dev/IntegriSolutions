@@ -1,13 +1,17 @@
 import { sha256 } from 'js-sha256';
 import { insertTest, updateSyncStatus, getPendingSync, type LocalTestRecord } from '../db/repository';
 import type { TestLocationPayload } from '../lib/testLocation';
-import { syncRecords, uploadEvidencePhoto } from './api';
+import { syncRecords, uploadEvidencePhoto, acknowledgeAlert, isNetworkRequestError } from './api';
 import { logAuditEvent } from './audit';
 import { getAccessToken } from './auth';
 import {
   getPendingAttachments,
   insertEvidenceAttachment,
-  updateAttachmentSyncStatus
+  updateAttachmentSyncStatus,
+  getPendingAlertAcks,
+  removeAlertAckFromQueue,
+  incrementAlertAckRetry,
+  updateCachedAlertAcknowledgement
 } from '../db/repository';
 
 export { generateId } from '../lib/id';
@@ -327,4 +331,56 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
     });
     return { synced: [], failed: failedIds, attachmentResults: [] };
   }
+}
+
+/**
+ * Drains alert_ack_queue (offline acknowledgements from useActiveAlerts,
+ * see lib/useActiveAlerts.ts) into POST /alerts/:id/acknowledge. The backend
+ * upserts on (alert_id, officer_id, alert_version) and derives the version
+ * itself, so replaying an ack here is already idempotent — no request body
+ * or dedupe bookkeeping needed beyond removing the row once it lands.
+ *
+ * Called from SyncContext's existing sync tick (see lib/SyncContext.tsx) —
+ * this deliberately reuses that heartbeat rather than running its own timer.
+ */
+export async function syncPendingAlertAcks(): Promise<{ synced: string[]; failed: string[] }> {
+  const token = await getAccessToken();
+  if (!token) {
+    return { synced: [], failed: [] };
+  }
+
+  const pending = await getPendingAlertAcks();
+  const synced: string[] = [];
+  const failed: string[] = [];
+
+  for (const ack of pending) {
+    try {
+      const result = await acknowledgeAlert(ack.alertId);
+      await removeAlertAckFromQueue(ack.alertId);
+      await updateCachedAlertAcknowledgement(ack.alertId, result.acknowledgedAt);
+      synced.push(ack.alertId);
+      await logAuditEvent({
+        action: 'alert.acknowledged.synced',
+        outcome: 'success',
+        message: `Queued acknowledgement for alert ${ack.alertId} synced`,
+        entityType: 'alert',
+        entityId: ack.alertId,
+        officerId: ack.officerId
+      });
+    } catch (error) {
+      failed.push(ack.alertId);
+      if (isNetworkRequestError(error)) {
+        // Still offline (or server unreachable) — leave queued, retry next tick.
+        continue;
+      }
+      // Server rejected the request outright (e.g. alert no longer eligible).
+      // Retrying won't help, so drop it rather than retrying forever.
+      await incrementAlertAckRetry(ack.alertId);
+      if (ack.retryCount >= 4) {
+        await removeAlertAckFromQueue(ack.alertId);
+      }
+    }
+  }
+
+  return { synced, failed };
 }

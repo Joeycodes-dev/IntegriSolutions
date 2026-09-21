@@ -160,6 +160,121 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600'
   },
+  alertBanner: {
+    // Background/border color is applied per-priority via alertPriorityStyle()
+    // at render time — see OfficerHome.tsx.
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    marginBottom: 14
+  },
+  alertBannerHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6
+  },
+  alertPriorityBadge: {
+    // backgroundColor applied per-priority — see OfficerHome.tsx.
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3
+  },
+  alertPriorityBadgeText: {
+    color: colors.background,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.4
+  },
+  alertNearbyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    backgroundColor: colors.primaryDark
+  },
+  alertNearbyBadgeText: {
+    color: colors.background,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.4
+  },
+  alertBannerLabel: {
+    // color applied per-priority — see OfficerHome.tsx.
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase'
+  },
+  alertDescription: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    lineHeight: 19
+  },
+  alertMetaText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: colors.textSecondary
+  },
+  alertActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10
+  },
+  alertAckButton: {
+    // backgroundColor applied per-priority — see OfficerHome.tsx.
+    flex: 1,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  alertAckButtonDisabled: {
+    opacity: 0.6
+  },
+  alertAckButtonText: {
+    color: colors.background,
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  alertViewButton: {
+    // borderColor applied per-priority — see OfficerHome.tsx.
+    flex: 1,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+    borderWidth: 1
+  },
+  alertViewButtonText: {
+    // color applied per-priority — see OfficerHome.tsx.
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  alertsSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surfaceHighlight,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14
+  },
+  alertsSummaryText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textPrimary
+  },
+  alertsSummaryLink: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.accentBlue
+  },
   statsRow: {
     flexDirection: 'row',
     gap: 10,

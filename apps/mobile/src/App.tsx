@@ -10,8 +10,10 @@ import { OfficerShiftsScreen } from './screens/OfficerShiftsScreen';
 import { AuditScreen } from './screens/AuditScreen';
 import { EmergencyChatScreen } from './screens/EmergencyChatScreen';
 import { RoadOffenceScreen } from './screens/RoadOffenceScreen';
+import { AlertsScreen } from './screens/AlertsScreen';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 import { SyncProvider } from './lib/SyncContext';
+import { AlertsProvider } from './lib/AlertsContext';
 import { getDB } from './db/client';
 
 type RootStackParamList = {
@@ -19,6 +21,7 @@ type RootStackParamList = {
   OfficerDashboard: undefined;
   OfficerReports: undefined;
   OfficerShifts: undefined;
+  Alerts: undefined;
   EmergencyChat: undefined;
   Audit: undefined;
   RoadOffence: undefined;
@@ -50,6 +53,7 @@ function AppNavigator() {
             component={OfficerReportsScreen}
           />
           <Stack.Screen name="OfficerShifts" component={OfficerShiftsScreen} />
+          <Stack.Screen name="Alerts" component={AlertsScreen} />
           <Stack.Screen name="EmergencyChat" component={EmergencyChatScreen} />
           <Stack.Screen name="Audit" component={AuditScreen} />
           <Stack.Screen name="RoadOffence" component={RoadOffenceScreen} />
@@ -71,10 +75,12 @@ export default function App() {
   return (
     <AuthProvider>
       <SyncProvider>
-        <NavigationContainer>
-          <AppNavigator />
-          <StatusBar style="auto" />
-        </NavigationContainer>
+        <AlertsProvider>
+          <NavigationContainer>
+            <AppNavigator />
+            <StatusBar style="auto" />
+          </NavigationContainer>
+        </AlertsProvider>
       </SyncProvider>
     </AuthProvider>
   );

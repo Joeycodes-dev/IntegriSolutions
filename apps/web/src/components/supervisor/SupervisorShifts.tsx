@@ -7,6 +7,7 @@ import {
   getRoadblockShifts,
   updateRoadblockShift
 } from '../../services/api';
+import { LocationInput } from '../LocationInput';
 import { BORDER, NAVY, PAGE_BG, pageContent, pageShell } from './supervisorStyles';
 
 const inputClassName =
@@ -259,26 +260,23 @@ export function SupervisorShifts() {
                 style={{ borderColor: BORDER }}
               />
             </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[0.6875rem] font-semibold text-slate-600">Center latitude</span>
-              <input
-                value={form.centerLat}
-                onChange={(e) => updateForm('centerLat', e.target.value)}
-                placeholder="-26.2041"
-                className={inputClassName}
-                style={{ borderColor: BORDER }}
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[0.6875rem] font-semibold text-slate-600">Center longitude</span>
-              <input
-                value={form.centerLng}
-                onChange={(e) => updateForm('centerLng', e.target.value)}
-                placeholder="28.0473"
-                className={inputClassName}
-                style={{ borderColor: BORDER }}
-              />
-            </label>
+            <LocationInput
+              value={{ label: '', lat: form.centerLat, lng: form.centerLng }}
+              onChange={(next) => {
+                setForm((prev) => ({
+                  ...prev,
+                  centerLat: next.lat,
+                  centerLng: next.lng,
+                  // A search result's label is the closest thing to a
+                  // human-readable name for this checkpoint's center — reuse
+                  // it as a Station default rather than adding a new column,
+                  // but never clobber a station name the supervisor already typed.
+                  station: !prev.station.trim() && next.label ? next.label : prev.station
+                }));
+              }}
+              inputClassName={inputClassName}
+              borderColor={BORDER}
+            />
             <label className="flex flex-col gap-1">
               <span className="text-[0.6875rem] font-semibold text-slate-600">Radius meters</span>
               <input

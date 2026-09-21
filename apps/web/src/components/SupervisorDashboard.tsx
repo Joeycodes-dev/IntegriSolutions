@@ -8,6 +8,7 @@ import { SupervisorLogs } from './supervisor/SupervisorLogs';
 import { SupervisorOfficers } from './supervisor/SupervisorOfficers';
 import { SupervisorReports } from './supervisor/SupervisorReports';
 import { SupervisorShifts } from './supervisor/SupervisorShifts';
+import { SupervisorAlerts } from './supervisor/SupervisorAlerts';
 import { SupervisorCases } from './supervisor/SupervisorCases';
 import { EmergencyChatPanel } from './chat/EmergencyChatPanel';
 import { RoadOffenceReview } from './RoadOffenceReview';
@@ -15,7 +16,7 @@ import { RoadOffenceReview } from './RoadOffenceReview';
 export function SupervisorDashboard() {
   const { signOut, profile } = useAuth();
   const [activeNav, setActiveNav] = useState<SupervisorNavItem>('dashboard');
-  const { tests, loading, error, metrics, streamConnected, lastEventAt } = useSupervisorTests();
+  const { tests, todayTests, loading, error, streamConnected, lastEventAt } = useSupervisorTests();
 
   const handleNavigate = (item: SupervisorNavItem) => {
     setActiveNav(item);
@@ -32,12 +33,12 @@ export function SupervisorDashboard() {
       <main className="flex min-w-0 flex-1 flex-col">
       {activeNav === 'dashboard' && (
         <SupervisorOverview
-          metrics={metrics}
           loading={loading}
           error={error}
           streamConnected={streamConnected}
           lastEventAt={lastEventAt}
           tests={tests}
+          todayTests={todayTests}
         />
       )}
       {activeNav === 'logs' && (
@@ -50,6 +51,7 @@ export function SupervisorDashboard() {
       {activeNav === 'cases' && <SupervisorCases />}
       {activeNav === 'officers' && <SupervisorOfficers tests={tests} />}
       {activeNav === 'shifts' && <SupervisorShifts />}
+      {activeNav === 'alerts' && <SupervisorAlerts />}
       {activeNav === 'reports' && (
         <SupervisorReports tests={tests} loading={loading} error={error} />
       )}

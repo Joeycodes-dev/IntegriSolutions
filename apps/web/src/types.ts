@@ -2,7 +2,7 @@ export type UserRole = 'officer' | 'supervisor' | 'admin';
 
 export type AdminNavItem = 'users' | 'audit' | 'config' | 'roadOffences' | 'chat';
 
-export type SupervisorNavItem = 'dashboard' | 'logs' | 'cases' | 'officers' | 'shifts' | 'reports' | 'roadOffences' | 'chat';
+export type SupervisorNavItem = 'dashboard' | 'logs' | 'cases' | 'officers' | 'shifts' | 'alerts' | 'reports' | 'roadOffences' | 'chat';
 
 export type PdfAccessPolicy = 'admin_only' | 'admin_supervisor' | 'disabled';
 
@@ -76,6 +76,186 @@ export interface UserProfile {
   officerTypeId: number;
   roleId: number;
   createdAt: string;
+}
+
+export type OperationalAlertType = 'bolo_person' | 'bolo_vehicle' | 'hazard' | 'general';
+/** critical = immediate emergency / officer-safety / life-safety event.
+ * high remains an urgent-but-non-emergency operational priority — it is
+ * not renamed or repurposed. Order: critical > high > medium > low. */
+export type OperationalAlertPriority = 'critical' | 'high' | 'medium' | 'low';
+export type OperationalAlertSourceType = 'internal' | 'external';
+export type OperationalAlertStatus = 'active' | 'expired' | 'cancelled' | 'resolved';
+export type OperationalAlertTargetScope = 'all_officers' | 'shift' | 'officers';
+
+/** BOLO / hazard / general operational bulletins — see /api/supervisor/alerts. */
+export interface OperationalAlert {
+  id: string;
+  alertType: OperationalAlertType;
+  priority: OperationalAlertPriority;
+  description: string;
+  vehicleRegistration: string | null;
+  vehicleDescription: string | null;
+  personName: string | null;
+  personDescription: string | null;
+  personReference: string | null;
+  photoUrl: string | null;
+  locationLat: number | null;
+  locationLng: number | null;
+  locationLabel: string | null;
+  /** Optional geofence trigger radius in metres, paired with locationLat/Lng. */
+  locationRadiusMeters: number | null;
+  issuedBySource: 'supervisor_users';
+  issuedById: number;
+  issuedByName: string;
+  targetScope: OperationalAlertTargetScope;
+  targetShiftId: string | null;
+  sourceType: OperationalAlertSourceType;
+  sourceAuthority: string | null;
+  sourceReference: string | null;
+  status: OperationalAlertStatus;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  assignedOfficerIds: number[];
+  acknowledgementCount: number;
+  matchCount: number;
+  /** Bumped by the backend on a material edit (see computeMaterialChange in
+   * routes/supervisor/alerts.ts) — an acknowledgement recorded against an
+   * earlier version does not count toward this one. */
+  version: number;
+  /** Set only when status is 'resolved' or 'cancelled' — required by the
+   * backend for both transitions. Resolved = the operational condition
+   * ended/completed; cancelled = the alert was withdrawn, issued in error,
+   * or is no longer applicable. Neither implies a legal determination. */
+  statusReason: string | null;
+  statusReasonBy: string | null;
+  statusReasonAt: string | null;
+}
+
+export interface CreateOperationalAlertPayload {
+  alertType: OperationalAlertType;
+  priority: OperationalAlertPriority;
+  description: string;
+  vehicleRegistration?: string;
+  vehicleDescription?: string;
+  personName?: string;
+  personDescription?: string;
+  personReference?: string;
+  location?: { lat?: number; lng?: number; label?: string; radiusMeters?: number };
+  targetScope: OperationalAlertTargetScope;
+  targetShiftId?: string | null;
+  officerIds?: number[];
+  sourceType: OperationalAlertSourceType;
+  sourceAuthority?: string;
+  sourceReference?: string;
+  expiresAt?: string | null;
+}
+
+export interface UpdateOperationalAlertLocationPayload {
+  lat?: number | null;
+  lng?: number | null;
+  label?: string | null;
+  radiusMeters?: number | null;
+}
+
+/**
+ * PATCH /api/supervisor/alerts/:id. Fields beyond status/expiresAt/location
+ * are optional edits — priority, target scope/officers, and source fields
+ * always trigger re-acknowledgement when materially changed; a description
+ * edit only does when materialChangeOverride is explicitly set (the "This
+ * changes operational meaning — require re-acknowledgement" checkbox,
+ * default OFF).
+ */
+export interface UpdateOperationalAlertPayload {
+  status?: OperationalAlertStatus;
+  expiresAt?: string | null;
+  location?: UpdateOperationalAlertLocationPayload;
+  priority?: OperationalAlertPriority;
+  description?: string;
+  targetScope?: OperationalAlertTargetScope;
+  targetShiftId?: string | null;
+  officerIds?: number[];
+  sourceType?: OperationalAlertSourceType;
+  sourceAuthority?: string;
+  sourceReference?: string;
+  materialChangeOverride?: boolean;
+  /** Required by the backend when status is 'resolved' or 'cancelled'. */
+  reason?: string;
+}
+
+/**
+ * GET /api/supervisor/alerts/:id/coverage — acknowledgement coverage for the
+ * alert's *current* version, resolved against the actual eligible roster for
+ * its target scope. criticalNonAckWarning is informational only: it never
+ * implies automatic dispatch, punishment, or escalation.
+ */
+export interface OperationalAlertCoverage {
+  alertId: string;
+  version: number;
+  priority: OperationalAlertPriority;
+  status: OperationalAlertStatus;
+  targetScope: OperationalAlertTargetScope;
+  totalTargeted: number;
+  acknowledgedCount: number;
+  outstandingCount: number;
+  percentage: number;
+  acknowledgedOfficers: Array<{ officerId: number; officerName: string; badgeNumber: string; acknowledgedAt: string }>;
+  outstandingOfficers: Array<{ officerId: number; officerName: string; badgeNumber: string }>;
+  criticalNonAckWarning: boolean;
+  criticalNonAckThresholdMinutes: number;
+}
+
+export interface OperationalAlertAcknowledgement {
+  officerId: number;
+  officerName: string;
+  badgeNumber: string;
+  acknowledgedAt: string;
+}
+
+export interface OperationalAlertMatch {
+  id: number;
+  officerId: number;
+  officerName: string;
+  badgeNumber: string;
+  notes: string;
+  locationLat: number | null;
+  locationLng: number | null;
+  createdAt: string;
+}
+
+/**
+ * A "reported sighting" — an officer's possible-match report, for the
+ * supervisor Map/Heatmap views. This is the exact same underlying record as
+ * OperationalAlertMatch (operational_alert_matches), just always carrying
+ * coordinates and flattened with its parent alert's display context. It is
+ * NOT a confirmed location, wanted/stolen status, or identification — always
+ * render/label it as a reported sighting or possible match, never as
+ * "located"/"found"/"confirmed".
+ */
+export interface AlertSighting {
+  id: number;
+  alertId: string;
+  notes: string;
+  locationLat: number;
+  locationLng: number;
+  createdAt: string;
+  officerId: number;
+  officerName: string;
+  badgeNumber: string;
+  alertType: OperationalAlertType;
+  alertDescription: string;
+  priority: OperationalAlertPriority;
+  alertStatus: OperationalAlertStatus;
+  sourceType: OperationalAlertSourceType;
+  sourceAuthority: string | null;
+}
+
+export interface AlertSightingFilters {
+  alertType?: OperationalAlertType;
+  priority?: OperationalAlertPriority;
+  alertId?: string;
+  from?: string;
+  to?: string;
 }
 
 export interface ChatOfficerContact {

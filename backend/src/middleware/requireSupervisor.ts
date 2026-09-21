@@ -6,6 +6,7 @@ import { resolveRoleByEmail } from '../utilities/resolveProfile';
 
 export interface SupervisorRequest extends AuthRequest {
   supervisorOfficerId: number;
+  roleId: number;
 }
 
 export async function requireSupervisor(req: Request, res: Response, next: NextFunction) {
@@ -45,5 +46,6 @@ export async function requireSupervisor(req: Request, res: Response, next: NextF
   }
 
   authReq.supervisorOfficerId = resolved.dbId;
+  authReq.roleId = resolved.roleId;
   return next();
 }

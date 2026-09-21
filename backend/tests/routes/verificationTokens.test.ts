@@ -34,6 +34,39 @@ function sha256(value: string): string {
   return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+/** A `tests` query-builder stub for the /report route's
+ * .select().gte().lte()[.in()] chain — every link returns the same object so
+ * either the narrowed (.in() called) or unnarrowed path resolves to `result`. */
+function chainableTestsQuery(result: { data: unknown; error: unknown }) {
+  const obj: any = {
+    select: jest.fn(() => obj),
+    gte: jest.fn(() => obj),
+    lte: jest.fn(() => obj),
+    in: jest.fn(() => obj),
+    then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve(result).then(resolve, reject),
+  };
+  return obj;
+}
+
+function makeTestRow(id: string, createdAt: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    officer_id: 1,
+    officer_name: 'Officer One',
+    badge_number: 'B001',
+    driver_name: 'Driver A',
+    driver_id: 'DL001',
+    driver_dob: '1990-01-01',
+    bac_reading: 0.08,
+    result: 'fail',
+    location: '{}',
+    hash: `hash-${id}`,
+    created_at: createdAt,
+    ...overrides,
+  };
+}
+
 describe('Verification Token Issuance', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -494,5 +527,199 @@ describe('Verification Token Issuance', () => {
 
     expect(response.status).toBe(201);
     expect(response.body[0].testId).toBe('test-1');
+  });
+});
+
+describe('POST /report (period-based, for weekly/date-range report generation)', () => {
+  const supervisorOnlyRoleMocks = (table: string) => {
+    if (table === 'admin_users' || table === 'officer_users') {
+      return {
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        }),
+      };
+    }
+    if (table === 'supervisor_users') {
+      return {
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue({
+              data: [{ supervisor_id: 1, role_id: 2 }],
+              error: null,
+            }),
+          }),
+        }),
+      };
+    }
+    return null;
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (supabase.auth.getUser as jest.Mock).mockResolvedValue({
+      data: { user: { id: 'supervisor-123', email: 'supervisor@example.com' } },
+      error: null,
+    });
+    (getTestHashValidity as jest.Mock).mockReturnValue(true);
+  });
+
+  function mockTestsQuery(rows: ReturnType<typeof makeTestRow>[]) {
+    mockServiceSupabase.from.mockImplementation((table: string) => {
+      const roleMock = supervisorOnlyRoleMocks(table);
+      if (roleMock) return roleMock;
+      if (table === 'tests') return chainableTestsQuery({ data: rows, error: null });
+      if (table === 'court_verification_tokens') {
+        return { insert: jest.fn().mockResolvedValue({ data: null, error: null }) };
+      }
+      if (table === 'audit_logs') {
+        return { insert: jest.fn().mockResolvedValue({ data: null, error: null }) };
+      }
+      if (table === 'system_settings') {
+        return { select: jest.fn().mockResolvedValue({ data: [], error: null }) };
+      }
+      return {
+        select: jest.fn().mockResolvedValue({ data: [], error: null }),
+        insert: jest.fn().mockResolvedValue({ data: null, error: null }),
+      };
+    });
+  }
+
+  it('issues tokens for a full week of more than 50 records — no truncation', async () => {
+    const rows = Array.from({ length: 60 }, (_, i) =>
+      makeTestRow(`test-${i}`, `2026-06-0${(i % 7) + 1}T10:00:00.000Z`)
+    );
+    mockTestsQuery(rows);
+
+    const response = await request(app)
+      .post('/api/supervisor/verification-tokens/report')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ from: '2026-06-01T00:00:00.000Z', to: '2026-06-07T23:59:59.999Z' });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toHaveLength(60);
+    const ids = response.body.map((record: { testId: string }) => record.testId);
+    expect(new Set(ids).size).toBe(60);
+
+    const insertIndex = mockServiceSupabase.from.mock.calls.findIndex(([table]) => table === 'court_verification_tokens');
+    const inserted = mockServiceSupabase.from.mock.results[insertIndex].value.insert.mock.calls[0][0];
+    expect(inserted).toHaveLength(60);
+  });
+
+  it('queries the exact requested date range — full period is honored, not a partial window', async () => {
+    const rows = [makeTestRow('test-1', '2026-06-03T10:00:00.000Z')];
+    mockTestsQuery(rows);
+
+    await request(app)
+      .post('/api/supervisor/verification-tokens/report')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ from: '2026-06-01T00:00:00.000Z', to: '2026-06-07T23:59:59.999Z' });
+
+    const testsQueryIndex = mockServiceSupabase.from.mock.calls.findIndex(([table]) => table === 'tests');
+    const queryObj = mockServiceSupabase.from.mock.results[testsQueryIndex].value;
+    expect(queryObj.gte).toHaveBeenCalledWith('created_at', '2026-06-01T00:00:00.000Z');
+    expect(queryObj.lte).toHaveBeenCalledWith('created_at', '2026-06-07T23:59:59.999Z');
+  });
+
+  it('narrows to the supplied testIds without ever exceeding the date-range query', async () => {
+    const rows = [makeTestRow('test-1', '2026-06-03T10:00:00.000Z')];
+    mockTestsQuery(rows);
+
+    await request(app)
+      .post('/api/supervisor/verification-tokens/report')
+      .set('Authorization', 'Bearer valid-token')
+      .send({
+        from: '2026-06-01T00:00:00.000Z',
+        to: '2026-06-07T23:59:59.999Z',
+        testIds: ['test-1'],
+      });
+
+    const testsQueryIndex = mockServiceSupabase.from.mock.calls.findIndex(([table]) => table === 'tests');
+    const queryObj = mockServiceSupabase.from.mock.results[testsQueryIndex].value;
+    expect(queryObj.in).toHaveBeenCalledWith('id', ['test-1']);
+  });
+
+  it('rejects a genuinely too-large report with a clear, non-truncating error', async () => {
+    const rows = Array.from({ length: 501 }, (_, i) => makeTestRow(`test-${i}`, '2026-06-03T10:00:00.000Z'));
+    mockTestsQuery(rows);
+
+    const response = await request(app)
+      .post('/api/supervisor/verification-tokens/report')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ from: '2026-01-01T00:00:00.000Z', to: '2026-12-31T23:59:59.999Z' });
+
+    expect(response.status).toBe(413);
+    expect(response.body.error).toMatch(/501 records/);
+    expect(response.body.error).toMatch(/exceeds the 500-record export limit/);
+  });
+
+  it('returns an empty list rather than an error when nothing matches the period', async () => {
+    mockTestsQuery([]);
+
+    const response = await request(app)
+      .post('/api/supervisor/verification-tokens/report')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ from: '2020-01-01T00:00:00.000Z', to: '2020-01-07T23:59:59.999Z' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([]);
+  });
+
+  it('rejects malformed date-time inputs', async () => {
+    mockTestsQuery([]);
+
+    const response = await request(app)
+      .post('/api/supervisor/verification-tokens/report')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ from: 'not-a-date', to: '2026-06-07T23:59:59.999Z' });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects a from date after the to date', async () => {
+    mockTestsQuery([]);
+
+    const response = await request(app)
+      .post('/api/supervisor/verification-tokens/report')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ from: '2026-06-07T00:00:00.000Z', to: '2026-06-01T23:59:59.999Z' });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects an oversized narrowing testIds list', async () => {
+    mockTestsQuery([]);
+    const ids = Array.from({ length: 1001 }, (_, i) => `test-${i}`);
+
+    const response = await request(app)
+      .post('/api/supervisor/verification-tokens/report')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ from: '2026-06-01T00:00:00.000Z', to: '2026-06-07T23:59:59.999Z', testIds: ids });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('blocks the period route the same way as the explicit route when PDF export is disabled', async () => {
+    mockServiceSupabase.from.mockImplementation((table: string) => {
+      const roleMock = supervisorOnlyRoleMocks(table);
+      if (roleMock) return roleMock;
+      if (table === 'system_settings') {
+        return {
+          select: jest.fn().mockResolvedValue({
+            data: [{ key: 'export.pdf_access', value: 'disabled' }],
+            error: null,
+          }),
+        };
+      }
+      return { select: jest.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const response = await request(app)
+      .post('/api/supervisor/verification-tokens/report')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ from: '2026-06-01T00:00:00.000Z', to: '2026-06-07T23:59:59.999Z' });
+
+    expect(response.status).toBe(403);
   });
 });
