@@ -247,6 +247,12 @@ export function EmergencyChatPanel({ profile }: Props) {
                 officersSeenCount: 0,
                 superUsersSeenCount: 0,
                 seenBy: [],
+                // The raw postgres_changes row has no joined attachment data
+                // (attachments live in chat_attachments) — this object is
+                // only ever passed to triggerEmergencyNotificationHook, which
+                // never reads attachments, so an empty array is accurate,
+                // not a guess: nothing here claims to know about attachments.
+                attachments: [],
                 createdAt: row.created_at
               });
             }
