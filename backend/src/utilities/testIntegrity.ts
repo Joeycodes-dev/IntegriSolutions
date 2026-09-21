@@ -12,6 +12,14 @@ type TestRow = {
   location: unknown;
   created_at: unknown;
   original_test_id?: string | null;
+  device_transport?: unknown;
+  device_serial?: unknown;
+  device_calibration_version?: unknown;
+  device_calibration_r0?: unknown;
+  device_session_peak_raw?: unknown;
+  device_avg_raw?: unknown;
+  device_raw?: unknown;
+  device_captured_at?: unknown;
   hash?: string | null;
 };
 
@@ -125,8 +133,52 @@ function withoutUndefinedValues(payload: HashPayload): HashPayload {
   return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
 }
 
+function normalizeDeviceNumber(value: unknown): unknown {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : value;
+}
+
+function deviceHashValues(row: TestRow): { db: HashPayload; mobile: HashPayload } {
+  const hasDeviceData =
+    row.device_transport != null ||
+    row.device_calibration_version != null ||
+    row.device_session_peak_raw != null ||
+    row.device_captured_at != null;
+
+  if (!hasDeviceData) return { db: {}, mobile: {} };
+
+  const serial =
+    typeof row.device_serial === 'string' && row.device_serial.trim()
+      ? row.device_serial
+      : undefined;
+
+  return {
+    db: withoutUndefinedValues({
+      device_transport: row.device_transport,
+      device_serial: serial,
+      device_calibration_version: row.device_calibration_version,
+      device_calibration_r0: normalizeDeviceNumber(row.device_calibration_r0),
+      device_session_peak_raw: normalizeDeviceNumber(row.device_session_peak_raw),
+      device_avg_raw: normalizeDeviceNumber(row.device_avg_raw),
+      device_raw: normalizeDeviceNumber(row.device_raw),
+      device_captured_at: row.device_captured_at
+    }),
+    mobile: withoutUndefinedValues({
+      deviceTransport: row.device_transport,
+      deviceSerial: serial,
+      deviceCalibrationVersion: row.device_calibration_version,
+      deviceCalibrationR0: normalizeDeviceNumber(row.device_calibration_r0),
+      deviceSessionPeakRaw: normalizeDeviceNumber(row.device_session_peak_raw),
+      deviceAvgRaw: normalizeDeviceNumber(row.device_avg_raw),
+      deviceRaw: normalizeDeviceNumber(row.device_raw),
+      deviceCapturedAt: row.device_captured_at
+    })
+  };
+}
+
 function candidatePayloads(row: TestRow): HashPayload[] {
   const payloads: HashPayload[] = [];
+  const device = deviceHashValues(row);
 
   for (const officerId of numberVariants(row.officer_id)) {
     for (const bacReading of numberVariants(row.bac_reading)) {
@@ -134,8 +186,8 @@ function candidatePayloads(row: TestRow): HashPayload[] {
         for (const location of locationVariants(row.location)) {
           for (const originalTestId of originalTestIdVariants(row.original_test_id)) {
             const values = { officerId, bacReading, createdAt, location, originalTestId };
-            payloads.push(withoutUndefinedValues(dbHashPayload(row, values)));
-            payloads.push(withoutUndefinedValues(mobileHashPayload(row, values)));
+            payloads.push(withoutUndefinedValues({ ...dbHashPayload(row, values), ...device.db }));
+            payloads.push(withoutUndefinedValues({ ...mobileHashPayload(row, values), ...device.mobile }));
           }
         }
       }

@@ -118,6 +118,34 @@ describe('EvidenceReview', () => {
     });
   });
 
+  it('shows the device custody panel for device-captured records', async () => {
+    const testWithDevice = {
+      ...mockTest,
+      device: {
+        transport: 'ble',
+        serial: 'MQ3-0042',
+        calibrationVersion: 'mq3-default-v1+clean-air',
+        calibrationR0: 7524.99,
+        sessionPeakRaw: 812,
+        avgRaw: 640,
+        raw: 623,
+        capturedAt: '2026-05-30T09:58:00Z'
+      }
+    };
+
+    render(<EvidenceReview test={testWithDevice} onBack={mockOnBack} />);
+
+    expect(screen.getByText('Device Custody')).toBeInTheDocument();
+    expect(screen.getByText('MQ3-0042')).toBeInTheDocument();
+    expect(screen.getByText('812 counts')).toBeInTheDocument();
+  });
+
+  it('shows the custody empty state for legacy records', async () => {
+    render(<EvidenceReview test={mockTest} onBack={mockOnBack} />);
+
+    expect(screen.getByText(/No breathalyzer custody data on this record/i)).toBeInTheDocument();
+  });
+
   it('loads and displays annotations', async () => {
     (api.getAnnotations as any).mockResolvedValue([mockAnnotation]);
 

@@ -18,6 +18,7 @@ import { buildTestEvidence } from '../../lib/testEvidence';
 import { evidenceCategoryLabel } from '../../types';
 import { CASE_STATUS_LABELS, CASE_STATUS_STYLES, isCaseStatus } from '../../lib/caseStatus';
 import { annotateTest, getAnnotations, getEvidence, uploadEvidence, type Annotation, type EvidencePhoto } from '../../services/api';
+import { DeviceCustodyPanel } from './DeviceCustodyPanel';
 import { BORDER, NAVY, PAGE_BG, pageShell } from './supervisorStyles';
 
 interface EvidenceReviewProps {
@@ -354,6 +355,8 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
               {evidence.officerNotes}
             </div>
           </section>
+
+          <DeviceCustodyPanel test={test} />
 
           <section className="rounded-xl border bg-white p-3.5" style={{ borderColor: BORDER }}>
             <h2 className="mb-2.5 text-[0.8125rem] font-bold" style={{ color: NAVY }}>

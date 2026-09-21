@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf';
 import * as QRCode from 'qrcode';
-import type { RuntimeConfig, TestRecord, VerificationTokenRecord } from '../types';
-import { buildTestEvidence, formatDriverCategoryForReport, resolveEvidencePhotoUrls } from './testEvidence';
+import type { RuntimeConfig, TestDeviceCustody, TestRecord, VerificationTokenRecord } from '../types';
+import { buildTestEvidence, formatDriverCategoryForReport, formatEvidenceTimestamp, resolveEvidencePhotoUrls } from './testEvidence';
 import { buildVerificationUrl } from './verificationRoute';
 import { DEFAULT_RUNTIME_CONFIG } from './runtimeConfig';
 import { getAnnotations, getEvidence, getRuntimeConfig, getVerificationTokens, getVerificationTokensForReport, type Annotation, type EvidencePhoto } from '../services/api';
@@ -15,6 +15,7 @@ const GRAY_LABEL: RGB = [100, 116, 139];
 const LINE: RGB = [226, 232, 240];
 const RED: RGB = [220, 38, 38];
 const GREEN: RGB = [22, 163, 74];
+const AMBER: RGB = [180, 83, 9];
 const NOTE_BG: RGB = [241, 245, 249];
 
 const MARGIN = 18;
@@ -112,6 +113,16 @@ function formatUtcDate(iso: string): string {
   if (Number.isNaN(date.getTime())) return iso;
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+}
+
+function deviceTransportLabel(device: TestDeviceCustody): string {
+  if (device.transport === 'ble') return 'Bluetooth LE';
+  if (device.transport === 'simulated') return 'Simulated breathalyzer';
+  return device.transport || 'Unknown';
+}
+
+function formatAdcCounts(value: number): string {
+  return `${Math.round(value)} ADC counts`;
 }
 
 async function drawVerificationQr(doc: jsPDF, verification: VerificationTokenRecord) {
@@ -251,6 +262,78 @@ async function renderEvidencePage(
   y = yLeft + 6;
   drawHr(doc, y);
   y += 6;
+
+  const device = test.device ?? null;
+
+  if (device) {
+    y = await ensureSpace(y, 46);
+    y = sectionTitle(doc, y, 'Device Custody');
+
+    yLeft = fieldBlock(doc, leftX, y, COL_W, 'Device', deviceTransportLabel(device), {
+      valueColor: device.transport === 'simulated' ? AMBER : undefined
+    });
+    yRight = fieldBlock(doc, rightX, y, COL_W, 'Serial', device.serial?.trim() || 'Not reported');
+    y = Math.max(yLeft, yRight) + 2;
+    yLeft = fieldBlock(
+      doc,
+      leftX,
+      y,
+      COL_W,
+      'Calibration profile',
+      device.calibrationVersion || 'Unversioned'
+    );
+    yRight = fieldBlock(
+      doc,
+      rightX,
+      y,
+      COL_W,
+      'Clean-air baseline (R0)',
+      `${Math.round(device.calibrationR0)} Ω`
+    );
+    y = Math.max(yLeft, yRight) + 2;
+    yLeft = fieldBlock(doc, leftX, y, COL_W, 'Session peak', formatAdcCounts(device.sessionPeakRaw));
+    yRight = fieldBlock(doc, rightX, y, COL_W, 'Smoothed at capture', formatAdcCounts(device.avgRaw));
+    y = Math.max(yLeft, yRight) + 2;
+    yLeft = fieldBlock(doc, leftX, y, COL_W, 'Instant at capture', formatAdcCounts(device.raw));
+    yRight = fieldBlock(
+      doc,
+      rightX,
+      y,
+      COL_W,
+      'Captured at',
+      formatEvidenceTimestamp(device.capturedAt)
+    );
+    y = Math.max(yLeft, yRight) + 3;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(...GRAY_LABEL);
+    doc.text('Device metadata is bound to this record by the SHA-256 integrity hash.', MARGIN, y);
+    y += 4;
+
+    if (device.transport === 'simulated') {
+      y = await ensureSpace(y, 15);
+      doc.setFillColor(255, 251, 235);
+      doc.setDrawColor(...AMBER);
+      doc.roundedRect(MARGIN, y, CONTENT_W, 11, 2, 2, 'FD');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(...AMBER);
+      doc.text('SIMULATED DEVICE', MARGIN + 5, y + 4.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text(
+        'This reading was captured against a simulated breathalyzer, not field hardware.',
+        MARGIN + 5,
+        y + 8.5
+      );
+      y += 13;
+    }
+
+    y += 2;
+    drawHr(doc, y);
+    y += 6;
+  }
 
   y = await ensureSpace(y, 34);
   y = sectionTitle(doc, y, 'Officer Details');

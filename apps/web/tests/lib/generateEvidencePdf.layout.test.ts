@@ -7,6 +7,7 @@ vi.mock('jspdf', async () => {
   class WrappedJsPDF extends actual.jsPDF {
     static instances: WrappedJsPDF[] = [];
     yPositions: number[] = [];
+    textCalls: string[] = [];
     addImageCalls: unknown[][] = [];
 
     constructor(...args: any[]) {
@@ -14,6 +15,9 @@ vi.mock('jspdf', async () => {
       const baseText = this.text.bind(this);
       this.text = ((...t: any[]) => {
         if (typeof t[2] === 'number') this.yPositions.push(t[2]);
+        const value = t[0];
+        if (typeof value === 'string') this.textCalls.push(value);
+        else if (Array.isArray(value)) this.textCalls.push(...value.map((entry) => String(entry)));
         return baseText(...t);
       }) as typeof this.text;
 
@@ -160,5 +164,70 @@ describe('PDF layout (real jsPDF engine)', () => {
     const doc = wrappedJsPDFBox.value.instances[0];
     expect(doc.addImageCalls.length).toBeGreaterThanOrEqual(1);
     expect(String(doc.addImageCalls[0][0])).toContain('iVBORw0KGgo');
+  });
+
+  it('prints the device custody block for device-captured records', async () => {
+    await generateEvidencePdf(
+      makeTest({
+        device: {
+          transport: 'ble',
+          serial: 'MQ3-0042',
+          calibrationVersion: 'mq3-default-v1+clean-air',
+          calibrationR0: 7524.99,
+          sessionPeakRaw: 812,
+          avgRaw: 640,
+          raw: 623,
+          capturedAt: '2026-05-30T09:58:00Z'
+        }
+      })
+    );
+
+    const doc = wrappedJsPDFBox.value.instances[0];
+    expect(doc.textCalls).toContain('Device Custody');
+    expect(doc.textCalls).toContain('Bluetooth LE');
+    expect(doc.textCalls).toContain('MQ3-0042');
+    expect(doc.textCalls).toContain('mq3-default-v1+clean-air');
+    expect(doc.textCalls).toContain('7525 Ω');
+    expect(doc.textCalls).toContain('812 ADC counts');
+    expect(doc.textCalls).toContain('640 ADC counts');
+    expect(doc.textCalls).toContain('623 ADC counts');
+    expect(doc.textCalls).toContain(
+      'Device metadata is bound to this record by the SHA-256 integrity hash.'
+    );
+    expect(Math.max(...doc.yPositions)).toBeLessThanOrEqual(297);
+  });
+
+  it('marks simulated readings in the PDF custody block', async () => {
+    await generateEvidencePdf(
+      makeTest({
+        device: {
+          transport: 'simulated',
+          serial: null,
+          calibrationVersion: 'mq3-default-v1',
+          calibrationR0: 7532,
+          sessionPeakRaw: 812,
+          avgRaw: 640,
+          raw: 623,
+          capturedAt: '2026-05-30T09:58:00Z'
+        }
+      })
+    );
+
+    const doc = wrappedJsPDFBox.value.instances[0];
+    expect(doc.textCalls).toContain('Simulated breathalyzer');
+    expect(doc.textCalls).toContain('SIMULATED DEVICE');
+    expect(doc.textCalls).toContain('Not reported');
+    expect(doc.textCalls).toContain(
+      'This reading was captured against a simulated breathalyzer, not field hardware.'
+    );
+  });
+
+  it('omits the custody block for records without device data', async () => {
+    await generateEvidencePdf(makeTest());
+
+    const doc = wrappedJsPDFBox.value.instances[0];
+    expect(doc.textCalls).not.toContain('Device Custody');
+    expect(doc.getNumberOfPages()).toBe(1);
+    expect(Math.max(...doc.yPositions)).toBeLessThanOrEqual(297);
   });
 });

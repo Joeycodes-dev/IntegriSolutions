@@ -1,6 +1,7 @@
 import { sha256 } from 'js-sha256';
 import { insertTest, updateSyncStatus, getPendingSync, type LocalTestRecord } from '../db/repository';
 import type { TestLocationPayload } from '../lib/testLocation';
+import type { DeviceEvidencePayload } from './breathalyzer';
 import { syncRecords, uploadEvidencePhoto, acknowledgeAlert, isNetworkRequestError } from './api';
 import { logAuditEvent } from './audit';
 import { getAccessToken } from './auth';
@@ -55,6 +56,49 @@ function protectIdentifier(value: string): string {
   return `enc:${maskIdentifier(normalized)}:${digest.slice(0, 24)}`;
 }
 
+export interface RecordPayloadParams {
+  officerId: number | null;
+  officerName: string;
+  badgeNumber: string;
+  driverName: string;
+  driverId: string;
+  driverDob: string;
+  bacReading: number;
+  result: string;
+  location: TestLocationPayload;
+  createdAt: string;
+  originalTestId?: string | null;
+  device?: DeviceEvidencePayload | null;
+}
+
+export function buildRecordPayload(params: RecordPayloadParams): Record<string, unknown> {
+  return {
+    officerId: params.officerId,
+    officerName: params.officerName,
+    badgeNumber: params.badgeNumber,
+    driverName: params.driverName,
+    driverId: params.driverId,
+    driverDob: params.driverDob,
+    bacReading: params.bacReading,
+    result: params.result,
+    location: params.location,
+    createdAt: params.createdAt,
+    originalTestId: params.originalTestId ?? null,
+    ...(params.device
+      ? {
+          deviceTransport: params.device.transport,
+          ...(params.device.serial ? { deviceSerial: params.device.serial } : {}),
+          deviceCalibrationVersion: params.device.calibrationVersion,
+          deviceCalibrationR0: params.device.calibrationCleanAirResistanceOhms,
+          deviceSessionPeakRaw: params.device.sessionPeakRaw,
+          deviceAvgRaw: params.device.avgRaw,
+          deviceRaw: params.device.raw,
+          deviceCapturedAt: params.device.capturedAt
+        }
+      : {})
+  };
+}
+
 export async function saveLocally(params: {
   id: string;
   officerId: number | null;
@@ -73,10 +117,13 @@ export async function saveLocally(params: {
     uri: string;
   }>;
   originalTestId?: string | null;
+  device?: DeviceEvidencePayload | null;
 }): Promise<LocalTestRecord> {
   const protectedDriverId = protectIdentifier(params.driverId);
+  const createdAt = new Date().toISOString();
+  const device = params.device ?? null;
 
-  const recordPayload: Record<string, unknown> = {
+  const recordPayload = buildRecordPayload({
     officerId: params.officerId,
     officerName: params.officerName,
     badgeNumber: params.badgeNumber,
@@ -86,9 +133,10 @@ export async function saveLocally(params: {
     bacReading: params.bacReading,
     result: params.result,
     location: params.location,
-    createdAt: new Date().toISOString(),
-    originalTestId: params.originalTestId ?? null
-  };
+    createdAt,
+    originalTestId: params.originalTestId,
+    device
+  });
 
   const hash = computeHash(recordPayload);
 
@@ -113,7 +161,15 @@ export async function saveLocally(params: {
     syncedAt: null,
     retryCount: 0,
     photoUri: params.photoUri ?? null,
-    originalTestId: params.originalTestId ?? null
+    originalTestId: params.originalTestId ?? null,
+    deviceTransport: device?.transport ?? null,
+    deviceSerial: device?.serial ?? null,
+    deviceCalibrationVersion: device?.calibrationVersion ?? null,
+    deviceCalibrationR0: device?.calibrationCleanAirResistanceOhms ?? null,
+    deviceSessionPeakRaw: device?.sessionPeakRaw ?? null,
+    deviceAvgRaw: device?.avgRaw ?? null,
+    deviceRaw: device?.raw ?? null,
+    deviceCapturedAt: device?.capturedAt ?? null
   };
 
   await insertTest(record);
@@ -247,7 +303,15 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
     location: safeParseLocation(record.location),
     hash: record.hash,
     createdAt: record.createdAt,
-    originalTestId: record.originalTestId
+    originalTestId: record.originalTestId,
+    deviceTransport: record.deviceTransport ?? undefined,
+    deviceSerial: record.deviceSerial ?? undefined,
+    deviceCalibrationVersion: record.deviceCalibrationVersion ?? undefined,
+    deviceCalibrationR0: record.deviceCalibrationR0 ?? undefined,
+    deviceSessionPeakRaw: record.deviceSessionPeakRaw ?? undefined,
+    deviceAvgRaw: record.deviceAvgRaw ?? undefined,
+    deviceRaw: record.deviceRaw ?? undefined,
+    deviceCapturedAt: record.deviceCapturedAt ?? undefined
   }));
 
   try {

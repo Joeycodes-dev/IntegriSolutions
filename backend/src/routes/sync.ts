@@ -61,6 +61,75 @@ interface SyncRecord {
   hash: string;
   createdAt: string;
   originalTestId?: string | null;
+  deviceTransport?: string | null;
+  deviceSerial?: string | null;
+  deviceCalibrationVersion?: string | null;
+  deviceCalibrationR0?: number | null;
+  deviceSessionPeakRaw?: number | null;
+  deviceAvgRaw?: number | null;
+  deviceRaw?: number | null;
+  deviceCapturedAt?: string | null;
+}
+
+interface DeviceCustody {
+  deviceTransport: string;
+  deviceSerial?: string;
+  deviceCalibrationVersion: string;
+  deviceCalibrationR0: number;
+  deviceSessionPeakRaw: number;
+  deviceAvgRaw: number;
+  deviceRaw: number;
+  deviceCapturedAt: string;
+}
+
+const DEVICE_TRANSPORTS = new Set(['ble', 'simulated']);
+
+function extractDeviceCustody(record: SyncRecord): DeviceCustody | null | 'invalid' {
+  const hasDeviceFields =
+    record.deviceTransport != null ||
+    record.deviceCalibrationVersion != null ||
+    record.deviceSessionPeakRaw != null ||
+    record.deviceCapturedAt != null;
+
+  if (!hasDeviceFields) return null;
+
+  const transport = typeof record.deviceTransport === 'string' ? record.deviceTransport.trim() : '';
+  const calibrationVersion =
+    typeof record.deviceCalibrationVersion === 'string' ? record.deviceCalibrationVersion.trim() : '';
+  const calibrationR0 = Number(record.deviceCalibrationR0);
+  const sessionPeakRaw = Number(record.deviceSessionPeakRaw);
+  const avgRaw = Number(record.deviceAvgRaw);
+  const raw = Number(record.deviceRaw);
+  const capturedAt = typeof record.deviceCapturedAt === 'string' ? record.deviceCapturedAt : '';
+
+  const validSensorValue = (value: number) => Number.isFinite(value) && value >= 0 && value <= 1023;
+
+  if (
+    !DEVICE_TRANSPORTS.has(transport) ||
+    !calibrationVersion ||
+    !Number.isFinite(calibrationR0) ||
+    calibrationR0 <= 0 ||
+    !validSensorValue(sessionPeakRaw) ||
+    !validSensorValue(avgRaw) ||
+    !validSensorValue(raw) ||
+    !capturedAt ||
+    Number.isNaN(Date.parse(capturedAt))
+  ) {
+    return 'invalid';
+  }
+
+  const serial = typeof record.deviceSerial === 'string' ? record.deviceSerial.trim() : '';
+
+  return {
+    deviceTransport: transport,
+    ...(serial ? { deviceSerial: serial } : {}),
+    deviceCalibrationVersion: calibrationVersion,
+    deviceCalibrationR0: calibrationR0,
+    deviceSessionPeakRaw: sessionPeakRaw,
+    deviceAvgRaw: avgRaw,
+    deviceRaw: raw,
+    deviceCapturedAt: capturedAt
+  };
 }
 
 function formatOfficerName(profile: { name: string; surname?: string | null }): string {
@@ -135,6 +204,12 @@ router.post('/', async (req, res) => {
       continue;
     }
 
+    const device = extractDeviceCustody(record);
+    if (device === 'invalid') {
+      failed.push({ id: record.id || 'unknown', error: 'Invalid device custody fields' });
+      continue;
+    }
+
     const reconstructed = {
       officerId,
       officerName,
@@ -146,7 +221,8 @@ router.post('/', async (req, res) => {
       result: record.result,
       location: record.location,
       createdAt: record.createdAt,
-      originalTestId: record.originalTestId || null
+      originalTestId: record.originalTestId || null,
+      ...(device ?? {})
     };
 
     const computedHash = hashData(reconstructed);
@@ -192,7 +268,19 @@ router.post('/', async (req, res) => {
       location: JSON.stringify(record.location),
       hash: storedHash,
       created_at: record.createdAt,
-      original_test_id: record.originalTestId || null
+      original_test_id: record.originalTestId || null,
+      ...(device
+        ? {
+            device_transport: device.deviceTransport,
+            device_serial: device.deviceSerial ?? null,
+            device_calibration_version: device.deviceCalibrationVersion,
+            device_calibration_r0: device.deviceCalibrationR0,
+            device_session_peak_raw: device.deviceSessionPeakRaw,
+            device_avg_raw: device.deviceAvgRaw,
+            device_raw: device.deviceRaw,
+            device_captured_at: device.deviceCapturedAt
+          }
+        : {})
     };
 
     const { error } = await serviceSupabase.from('tests').insert([insertPayload]);

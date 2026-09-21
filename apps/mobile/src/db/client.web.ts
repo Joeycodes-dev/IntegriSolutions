@@ -18,6 +18,14 @@ type LocalTestRecord = {
   retryCount: number;
   photoUri: string | null;
   originalTestId: string | null;
+  deviceTransport?: string | null;
+  deviceSerial?: string | null;
+  deviceCalibrationVersion?: string | null;
+  deviceCalibrationR0?: number | null;
+  deviceSessionPeakRaw?: number | null;
+  deviceAvgRaw?: number | null;
+  deviceRaw?: number | null;
+  deviceCapturedAt?: string | null;
 };
 
 type LocalDraft = {
@@ -161,6 +169,14 @@ const webDb = {
         retryCount: Number(params[14] ?? 0),
         photoUri: (params[15] as string | null) ?? null,
         originalTestId: (params[16] as string | null) ?? null,
+        deviceTransport: (params[17] as string | null) ?? null,
+        deviceSerial: (params[18] as string | null) ?? null,
+        deviceCalibrationVersion: (params[19] as string | null) ?? null,
+        deviceCalibrationR0: (params[20] as number | null) ?? null,
+        deviceSessionPeakRaw: (params[21] as number | null) ?? null,
+        deviceAvgRaw: (params[22] as number | null) ?? null,
+        deviceRaw: (params[23] as number | null) ?? null,
+        deviceCapturedAt: (params[24] as string | null) ?? null,
       } satisfies LocalTestRecord;
       state.tests = state.tests.filter((item) => item.id !== record.id);
       state.tests.push(record);

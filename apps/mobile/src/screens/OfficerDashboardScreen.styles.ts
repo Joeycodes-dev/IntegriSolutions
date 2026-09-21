@@ -754,4 +754,101 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.primaryDark
   },
+  deviceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 14
+  },
+  deviceDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5
+  },
+  deviceLabel: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary
+  },
+  deviceBadge: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    color: colors.warning,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    overflow: 'hidden'
+  },
+  deviceBadgeAlert: {
+    color: colors.error,
+    borderColor: colors.error
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12
+  },
+  metricCard: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: colors.pageBackground
+  },
+  metricLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    color: colors.neutralGray
+  },
+  metricValue: {
+    marginTop: 4,
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.textPrimary
+  },
+  deviceActions: {
+    marginTop: 14
+  },
+  devicePrimaryButton: {
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: colors.primaryDark,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8
+  },
+  devicePrimaryButtonText: {
+    color: colors.background,
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.4
+  },
+  deviceSecondaryButton: {
+    marginTop: 10,
+    paddingVertical: 13,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: colors.pageBackground,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  deviceSecondaryButtonText: {
+    color: colors.primaryDark,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.6
+  },
+  deviceDisconnect: {
+    marginTop: 12
+  },
 });

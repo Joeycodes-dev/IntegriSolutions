@@ -7,6 +7,7 @@ export type AuditAction =
   | 'auth.login.failed'
   | 'auth.logout'
   | 'test.saved'
+  | 'test.device.captured'
   | 'test.invalidated'
   | 'test.invalidation.failed'
   | 'sync.batch.completed'
@@ -51,6 +52,14 @@ export interface LocalTestRecord {
   retryCount: number;
   photoUri: string | null;
   originalTestId: string | null;
+  deviceTransport?: string | null;
+  deviceSerial?: string | null;
+  deviceCalibrationVersion?: string | null;
+  deviceCalibrationR0?: number | null;
+  deviceSessionPeakRaw?: number | null;
+  deviceAvgRaw?: number | null;
+  deviceRaw?: number | null;
+  deviceCapturedAt?: string | null;
 }
 
 export interface LocalEvidenceAttachment {
@@ -75,8 +84,8 @@ export interface LocalDraft {
 export async function insertTest(record: LocalTestRecord): Promise<void> {
   const db = await getDB();
   await db.runAsync(
-    `INSERT INTO tests (id, officerId, officerName, badgeNumber, driverName, driverId, driverDob, bacReading, result, location, hash, syncStatus, createdAt, syncedAt, retryCount, photoUri, originalTestId)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO tests (id, officerId, officerName, badgeNumber, driverName, driverId, driverDob, bacReading, result, location, hash, syncStatus, createdAt, syncedAt, retryCount, photoUri, originalTestId, deviceTransport, deviceSerial, deviceCalibrationVersion, deviceCalibrationR0, deviceSessionPeakRaw, deviceAvgRaw, deviceRaw, deviceCapturedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       record.id,
       record.officerId,
@@ -94,7 +103,15 @@ export async function insertTest(record: LocalTestRecord): Promise<void> {
       record.syncedAt,
       record.retryCount,
       record.photoUri,
-      record.originalTestId
+      record.originalTestId,
+      record.deviceTransport ?? null,
+      record.deviceSerial ?? null,
+      record.deviceCalibrationVersion ?? null,
+      record.deviceCalibrationR0 ?? null,
+      record.deviceSessionPeakRaw ?? null,
+      record.deviceAvgRaw ?? null,
+      record.deviceRaw ?? null,
+      record.deviceCapturedAt ?? null
     ]
   );
 }

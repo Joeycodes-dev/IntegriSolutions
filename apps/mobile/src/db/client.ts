@@ -23,7 +23,15 @@ const SCHEMA = `
     syncedAt TEXT,
     retryCount INTEGER NOT NULL DEFAULT 0,
     photoUri TEXT,
-    originalTestId TEXT
+    originalTestId TEXT,
+    deviceTransport TEXT,
+    deviceSerial TEXT,
+    deviceCalibrationVersion TEXT,
+    deviceCalibrationR0 REAL,
+    deviceSessionPeakRaw REAL,
+    deviceAvgRaw REAL,
+    deviceRaw REAL,
+    deviceCapturedAt TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_tests_sync_status ON tests(syncStatus);
@@ -118,7 +126,15 @@ export async function getDB(): Promise<SQLite.SQLiteDatabase> {
     // Migrations for columns added after initial release
     for (const stmt of [
       'ALTER TABLE tests ADD COLUMN photoUri TEXT',
-      'ALTER TABLE tests ADD COLUMN originalTestId TEXT'
+      'ALTER TABLE tests ADD COLUMN originalTestId TEXT',
+      'ALTER TABLE tests ADD COLUMN deviceTransport TEXT',
+      'ALTER TABLE tests ADD COLUMN deviceSerial TEXT',
+      'ALTER TABLE tests ADD COLUMN deviceCalibrationVersion TEXT',
+      'ALTER TABLE tests ADD COLUMN deviceCalibrationR0 REAL',
+      'ALTER TABLE tests ADD COLUMN deviceSessionPeakRaw REAL',
+      'ALTER TABLE tests ADD COLUMN deviceAvgRaw REAL',
+      'ALTER TABLE tests ADD COLUMN deviceRaw REAL',
+      'ALTER TABLE tests ADD COLUMN deviceCapturedAt TEXT'
     ]) {
       try { await db.runAsync(stmt); } catch { /* column already exists */ }
     }

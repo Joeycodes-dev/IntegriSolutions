@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -33,6 +40,20 @@ import { summarizeAlertsForHome } from "../lib/homeAlertsSummary";
 import { evaluateNearbyWithCooldown, type ProximityCooldownMap } from "../lib/alertProximityGuard";
 import { LOCATION_ACCURACY_THRESHOLD_METERS } from "../lib/geo";
 import type { RuntimeConfig } from "../types";
+import { logAuditEvent } from "../services/audit";
+import {
+  breathalyzerSession,
+  formatBacGdl,
+  toDeviceEvidence,
+  type BreathalyzerSnapshot,
+  type BreathalyzerTransport,
+  type DeviceEvidencePayload,
+} from "../services/breathalyzer";
+import { createSimulatedTransport } from "../services/breathalyzerSimulator";
+import {
+  loadCalibration,
+  saveCalibration,
+} from "../services/breathalyzerStorage";
 import {
   decryptLicensePayload,
   parseDecryptedLicensePayload,
@@ -118,6 +139,24 @@ function isDevBypassProfile(profile: { uid: string } | null): boolean {
   return __DEV__ && !!profile?.uid?.startsWith(DEV_BYPASS_UID_PREFIX);
 }
 
+const BREATHALYZER_SIMULATION_ENABLED =
+  __DEV__ || process.env.EXPO_PUBLIC_BREATHALYZER_SIMULATION === "1";
+
+const subscribeBreathalyzer = (listener: () => void) =>
+  breathalyzerSession.subscribe(listener);
+
+const getBreathalyzerSnapshot = () => breathalyzerSession.getSnapshot();
+
+function createBreathalyzerTransport(): BreathalyzerTransport | null {
+  if (BREATHALYZER_SIMULATION_ENABLED) {
+    return createSimulatedTransport({
+      calibration: breathalyzerSession.getCalibration(),
+      targetBacGdl: 0.075,
+    });
+  }
+  return null;
+}
+
 function formatSyncTimestamp(value: Date | null): string {
   const target = value ?? new Date();
   return target.toLocaleString([], {
@@ -168,11 +207,6 @@ function getCaptureQualityIssue(
   return null;
 }
 
-function randomBacReading(): string {
-  const value = Math.random() * 0.12;
-  return value.toFixed(3);
-}
-
 function bacStatus(bac: string, limit = 0.05) {
   const awaitingState = {
     label: "AWAITING",
@@ -200,6 +234,37 @@ function bacStatus(bac: string, limit = 0.05) {
     textColor: colors.background,
     borderColor: colors.success,
   };
+}
+
+function deviceStatusVisual(snapshot: BreathalyzerSnapshot): {
+  label: string;
+  color: string;
+} {
+  if (snapshot.connection === "connecting") {
+    return { label: "Connecting to breathalyzer…", color: colors.warning };
+  }
+  if (snapshot.connection === "connected") {
+    return {
+      label: snapshot.transportLabel ?? "Breathalyzer connected",
+      color: colors.success,
+    };
+  }
+  if (snapshot.connection === "error") {
+    return {
+      label: `Breathalyzer error: ${snapshot.error ?? "unknown"}`,
+      color: colors.error,
+    };
+  }
+  return {
+    label: BREATHALYZER_SIMULATION_ENABLED
+      ? "No breathalyzer connected"
+      : "No breathalyzer connected — Bluetooth disabled in this build",
+    color: colors.neutralGray,
+  };
+}
+
+function formatRawReading(value: number | null): string {
+  return value === null ? "--" : Math.round(value).toString();
 }
 
 function normalizeDate(value: string): string | undefined {
@@ -677,6 +742,13 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [decryptError, setDecryptError] = useState<string | null>(null);
   const [barcodeScanned, setBarcodeScanned] = useState(false);
   const [bacReading, setBacReading] = useState("");
+  const [capturedDeviceEvidence, setCapturedDeviceEvidence] =
+    useState<DeviceEvidencePayload | null>(null);
+  const [autoCaptureBac, setAutoCaptureBac] = useState<string | null>(null);
+  const breathalyzer = useSyncExternalStore(
+    subscribeBreathalyzer,
+    getBreathalyzerSnapshot,
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<AttachmentMap>({});
@@ -796,7 +868,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setDecryptedLicenseData(null);
     setDecryptError(null);
     setBarcodeScanned(false);
-    setBacReading("");
+    clearReadingForNewSubject();
     setPhotoUri(null);
     setAttachments({});
     setAutoWorkflow(false);
@@ -810,8 +882,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       setHasPermission(true);
       setScannedData(DEV_DRIVER_LICENSE);
       setLicensePayload(DEV_LICENSE_PAYLOAD);
-      setBacReading(DEV_BAC_READING);
       setStep("reading");
+      setAutoCaptureBac(DEV_BAC_READING);
+      void handleConnectBreathalyzer();
       return;
     }
 
@@ -863,7 +936,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setScannedData(data);
     setDecryptedLicenseData(decodedLicense);
     setOcrDebug(null);
-    setBacReading("");
+    clearReadingForNewSubject();
     setAutoWorkflow(false);
     setStep("reading");
   };
@@ -902,7 +975,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setBarcodeScanned(true);
     setLicensePayload(null);
     setDecryptError(null);
-    setBacReading("");
+    clearReadingForNewSubject();
     setAutoWorkflow(true);
     try {
       if (!image.base64)
@@ -923,7 +996,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
   const retakeFrontOfLicense = async () => {
     setScannedData(null);
-    setBacReading("");
+    clearReadingForNewSubject();
     setDecryptError(null);
     await captureFrontOfLicense(true);
   };
@@ -935,7 +1008,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setDecryptedLicenseData(null);
     setDecryptError(null);
     setOcrDebug(null);
-    setBacReading("");
+    clearReadingForNewSubject();
     setAutoWorkflow(false);
   };
 
@@ -985,7 +1058,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     if (!lastSavedTestId || !lastSavedDriver) return;
 
     setScannedData(lastSavedDriver);
-    setBacReading("");
+    clearReadingForNewSubject();
     setPhotoUri(null);
     setAttachments({});
     setIsRetest(true);
@@ -1009,6 +1082,112 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setLastSavedDriver(null);
     setIsRetest(false);
   };
+
+  useEffect(() => {
+    loadCalibration()
+      .then((calibration) => breathalyzerSession.setCalibration(calibration))
+      .catch(() => {
+        // Default calibration remains active when stored values cannot be read.
+      });
+  }, []);
+
+  const clearReadingForNewSubject = () => {
+    setBacReading("");
+    setCapturedDeviceEvidence(null);
+    setAutoCaptureBac(null);
+    breathalyzerSession.startNewSubject();
+  };
+
+  const handleConnectBreathalyzer = async () => {
+    const current = breathalyzerSession.getSnapshot();
+    if (current.connection === "connected" || current.connection === "connecting") {
+      return;
+    }
+
+    const transport = createBreathalyzerTransport();
+    if (!transport) {
+      Alert.alert(
+        "Breathalyzer unavailable",
+        "This build has no breathalyzer transport enabled yet. Bluetooth support ships with the device BLE module.",
+      );
+      return;
+    }
+
+    await breathalyzerSession.connect(transport);
+  };
+
+  const handleCaptureReading = useCallback(() => {
+    const snapshot = breathalyzerSession.getSnapshot();
+    if (snapshot.connection !== "connected" || snapshot.readings === 0) {
+      Alert.alert(
+        "No reading",
+        "Connect the breathalyzer and take a breath sample before capturing.",
+      );
+      return;
+    }
+    if (snapshot.warm) {
+      Alert.alert(
+        "Sensor warming up",
+        "Wait for the breathalyzer to finish warming up before capturing a reading.",
+      );
+      return;
+    }
+
+    const captured = breathalyzerSession.capture();
+    if (!captured) {
+      Alert.alert(
+        "No reading",
+        "No breath sample has been recorded yet. Blow into the breathalyzer until the reading stabilises.",
+      );
+      return;
+    }
+
+    setBacReading(captured.bacGdl.toFixed(3));
+    setCapturedDeviceEvidence(toDeviceEvidence(captured));
+    void logAuditEvent({
+      action: "test.device.captured",
+      outcome: "success",
+      message: `Breathalyzer reading captured (${captured.bacGdl.toFixed(3)} g/100ml)`,
+      entityType: "test",
+      officerId: profile?.officerId ?? null,
+      officerName: profile
+        ? `${profile.name} ${profile.surname}`.trim() || profile.name
+        : null,
+      badgeNumber: profile?.badgeNumber ?? null,
+      metadata: {
+        bacGdl: captured.bacGdl,
+        sessionPeakRaw: captured.sessionPeakRaw,
+        avgRawAtCapture: captured.avgAtCapture,
+        transport: snapshot.transportKind,
+        calibrationVersion: snapshot.calibration.version,
+        cleanAirResistanceOhms: snapshot.calibration.cleanAirResistanceOhms,
+      },
+    });
+  }, [profile]);
+
+  const handleSetCleanAirBaseline = () => {
+    const next = breathalyzerSession.calibrateFromCleanAir();
+    if (!next) {
+      Alert.alert(
+        "Baseline not updated",
+        "A stable clean-air reading is required. Keep the sensor away from alcohol vapour and wait for the live reading to settle.",
+      );
+      return;
+    }
+    void saveCalibration(next);
+    Alert.alert(
+      "Baseline updated",
+      `Clean-air sensor resistance recorded as ${next.cleanAirResistanceOhms.toFixed(0)} \u03A9.`,
+    );
+  };
+
+  useEffect(() => {
+    if (!autoCaptureBac || bacReading) return;
+    const peakBac = breathalyzer.peakBacGdl;
+    if (peakBac === null || peakBac < parseFloat(autoCaptureBac)) return;
+    setAutoCaptureBac(null);
+    handleCaptureReading();
+  }, [autoCaptureBac, bacReading, breathalyzer.peakBacGdl, handleCaptureReading]);
 
   const persistRecord = async (reading: number) => {
     if (!scannedData || !profile) {
@@ -1079,6 +1258,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
           (attachment): attachment is CapturedAttachment => !!attachment,
         ),
         originalTestId: isRetest ? lastSavedTestId : null,
+        device: capturedDeviceEvidence,
       });
 
       setLastSavedTestId(id);
@@ -1102,19 +1282,6 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }
   };
 
-  useEffect(() => {
-    if (
-      step !== "reading" ||
-      !scannedData ||
-      isSaving ||
-      bacReading
-    ) {
-      return;
-    }
-
-    setBacReading(randomBacReading());
-  }, [step, scannedData, isSaving, bacReading]);
-
   const saveRecord = async () => {
     if (!scannedData || !bacReading || !profile) {
       return;
@@ -1132,6 +1299,8 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   if (!profile) {
     return null;
   }
+
+  const deviceStatus = deviceStatusVisual(breathalyzer);
 
   return (
     <View style={styles.page}>
@@ -1370,7 +1539,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
             <View style={styles.bacSection}>
               <Text style={styles.overline}>
-                BAC Reading Simulator (g/100ml)
+                Breathalyzer Reading (g/100ml)
               </Text>
               <View
                 style={[
@@ -1393,9 +1562,114 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                 </Text>
               </View>
               <Text style={styles.bacSuffix}>BAC</Text>
+
+              <View style={styles.deviceRow}>
+                <View
+                  style={[
+                    styles.deviceDot,
+                    { backgroundColor: deviceStatus.color },
+                  ]}
+                />
+                <Text style={styles.deviceLabel} numberOfLines={2}>
+                  {deviceStatus.label}
+                </Text>
+                {breathalyzer.connection === "connected" &&
+                breathalyzer.warm ? (
+                  <Text style={styles.deviceBadge}>WARMING</Text>
+                ) : null}
+                {breathalyzer.connection === "connected" &&
+                breathalyzer.over ? (
+                  <Text style={[styles.deviceBadge, styles.deviceBadgeAlert]}>
+                    ALARM
+                  </Text>
+                ) : null}
+              </View>
+
+              {breathalyzer.connection === "connected" ? (
+                <View style={styles.metricsRow}>
+                  <View style={styles.metricCard}>
+                    <Text style={styles.metricLabel}>PEAK RAW</Text>
+                    <Text style={styles.metricValue}>
+                      {formatRawReading(breathalyzer.sessionPeak)}
+                    </Text>
+                  </View>
+                  <View style={styles.metricCard}>
+                    <Text style={styles.metricLabel}>LIVE BAC</Text>
+                    <Text style={styles.metricValue}>
+                      {formatBacGdl(breathalyzer.liveBacGdl)}
+                    </Text>
+                  </View>
+                  <View style={styles.metricCard}>
+                    <Text style={styles.metricLabel}>PEAK BAC</Text>
+                    <Text style={styles.metricValue}>
+                      {formatBacGdl(breathalyzer.peakBacGdl)}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
+              <View style={styles.deviceActions}>
+                {breathalyzer.connection === "connected" ? (
+                  <>
+                    <Pressable
+                      style={[
+                        styles.devicePrimaryButton,
+                        breathalyzer.readings === 0 && styles.buttonDisabled,
+                      ]}
+                      onPress={handleCaptureReading}
+                      disabled={breathalyzer.readings === 0}
+                    >
+                      <Feather name="wind" size={16} color="#fff" />
+                      <Text style={styles.devicePrimaryButtonText}>
+                        CAPTURE READING
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.deviceSecondaryButton}
+                      onPress={handleSetCleanAirBaseline}
+                    >
+                      <Text style={styles.deviceSecondaryButtonText}>
+                        SET CLEAN-AIR BASELINE
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.deviceDisconnect}
+                      onPress={() => {
+                        void breathalyzerSession.disconnect();
+                      }}
+                    >
+                      <Text style={styles.abortText}>Disconnect device</Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <Pressable
+                    style={[
+                      styles.devicePrimaryButton,
+                      breathalyzer.connection === "connecting" &&
+                        styles.buttonDisabled,
+                    ]}
+                    onPress={() => {
+                      void handleConnectBreathalyzer();
+                    }}
+                    disabled={breathalyzer.connection === "connecting"}
+                  >
+                    <Feather
+                      name="bluetooth"
+                      size={16}
+                      color="#fff"
+                    />
+                    <Text style={styles.devicePrimaryButtonText}>
+                      {BREATHALYZER_SIMULATION_ENABLED
+                        ? "CONNECT / SIMULATE BREATHALYZER"
+                        : "CONNECT BREATHALYZER"}
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+
               <Text style={styles.readOnlyHint}>
-                Reading is captured from the configured testing flow and cannot
-                be edited manually.
+                Readings are captured from the breathalyzer device and cannot be
+                edited manually.
               </Text>
             </View>
 

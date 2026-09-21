@@ -44,8 +44,19 @@ const baseRecord = {
   createdAt: '2026-05-30T10:00:00Z',
 };
 
+type DeviceOverrides = {
+  deviceTransport?: string;
+  deviceSerial?: string;
+  deviceCalibrationVersion?: string;
+  deviceCalibrationR0?: number;
+  deviceSessionPeakRaw?: number;
+  deviceAvgRaw?: number;
+  deviceRaw?: number;
+  deviceCapturedAt?: string;
+};
+
 function makeSyncRecord(
-  overrides: Partial<typeof baseRecord & { hash: string; originalTestId?: string | null }> = {},
+  overrides: Partial<typeof baseRecord & { hash: string; originalTestId?: string | null } & DeviceOverrides> = {},
   hashOfficer?: { officerId: number; officerName: string; badgeNumber: string }
 ) {
   const merged = { ...baseRecord, ...overrides };
@@ -54,6 +65,30 @@ function makeSyncRecord(
     officerName: merged.officerName,
     badgeNumber: merged.badgeNumber,
   };
+
+  const {
+    deviceTransport,
+    deviceSerial,
+    deviceCalibrationVersion,
+    deviceCalibrationR0,
+    deviceSessionPeakRaw,
+    deviceAvgRaw,
+    deviceRaw,
+    deviceCapturedAt,
+  } = overrides;
+
+  const device = deviceTransport
+    ? {
+        deviceTransport,
+        ...(deviceSerial ? { deviceSerial } : {}),
+        deviceCalibrationVersion,
+        deviceCalibrationR0,
+        deviceSessionPeakRaw,
+        deviceAvgRaw,
+        deviceRaw,
+        deviceCapturedAt,
+      }
+    : {};
 
   const hash = overrides.hash ?? hashData({
     officerId: officer.officerId,
@@ -67,12 +102,24 @@ function makeSyncRecord(
     location: merged.location,
     createdAt: merged.createdAt,
     originalTestId: overrides.originalTestId ?? null,
+    ...device,
   });
 
   return { ...merged, hash };
 }
 
 const validRecord = makeSyncRecord();
+
+const deviceRecord = makeSyncRecord({
+  deviceTransport: 'ble',
+  deviceSerial: 'MQ3-0042',
+  deviceCalibrationVersion: 'mq3-default-v1+clean-air',
+  deviceCalibrationR0: 7524.99,
+  deviceSessionPeakRaw: 812,
+  deviceAvgRaw: 640,
+  deviceRaw: 623,
+  deviceCapturedAt: '2026-09-21T10:15:00.000Z',
+});
 
 const officerProfile = {
   source: 'officer_users' as const,
@@ -285,6 +332,97 @@ describe('Sync Routes', () => {
       expect(response.status).toBe(200);
       expect(response.body.failed).toHaveLength(1);
       expect(response.body.failed[0].error).toBe('Database error');
+    });
+
+    it('should sync device-captured records with custody columns', async () => {
+      const insert = jest.fn().mockResolvedValue({ error: null });
+      mockServiceSupabase.from
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              single: jest.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({ insert });
+
+      const response = await request(app)
+        .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
+        .send({ records: [deviceRecord] });
+
+      expect(response.status).toBe(200);
+      expect(response.body.synced).toContain('test-123');
+      expect(response.body.failed).toHaveLength(0);
+      expect(insert).toHaveBeenCalledWith([
+        expect.objectContaining({
+          device_transport: 'ble',
+          device_serial: 'MQ3-0042',
+          device_calibration_version: 'mq3-default-v1+clean-air',
+          device_calibration_r0: 7524.99,
+          device_session_peak_raw: 812,
+          device_avg_raw: 640,
+          device_raw: 623,
+          device_captured_at: '2026-09-21T10:15:00.000Z',
+        }),
+      ]);
+    });
+
+    it('should omit device columns for legacy records without custody data', async () => {
+      const insert = jest.fn().mockResolvedValue({ error: null });
+      mockServiceSupabase.from
+        .mockReturnValueOnce({
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              single: jest.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        })
+        .mockReturnValueOnce({ insert });
+
+      const response = await request(app)
+        .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
+        .send({ records: [validRecord] });
+
+      expect(response.status).toBe(200);
+      expect(response.body.synced).toContain('test-123');
+      const inserted = insert.mock.calls[0][0][0];
+      expect(Object.keys(inserted).some((key) => key.startsWith('device_'))).toBe(false);
+    });
+
+    it('should reject records whose device custody fields were altered after capture', async () => {
+      const tampered = { ...deviceRecord, deviceSessionPeakRaw: 300 };
+
+      const response = await request(app)
+        .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
+        .send({ records: [tampered] });
+
+      expect(response.status).toBe(200);
+      expect(response.body.failed).toHaveLength(1);
+      expect(response.body.failed[0].error).toContain('Hash verification failed');
+    });
+
+    it('should reject malformed device custody fields', async () => {
+      const invalid = makeSyncRecord({
+        deviceTransport: 'wifi',
+        deviceCalibrationVersion: 'mq3-default-v1',
+        deviceCalibrationR0: 7532,
+        deviceSessionPeakRaw: 9000,
+        deviceAvgRaw: 640,
+        deviceRaw: 623,
+        deviceCapturedAt: '2026-09-21T10:15:00.000Z',
+      });
+
+      const response = await request(app)
+        .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
+        .send({ records: [invalid] });
+
+      expect(response.status).toBe(200);
+      expect(response.body.failed).toHaveLength(1);
+      expect(response.body.failed[0].error).toBe('Invalid device custody fields');
     });
   });
 });

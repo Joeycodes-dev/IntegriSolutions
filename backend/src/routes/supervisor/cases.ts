@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { requireSupervisor } from '../../middleware/requireSupervisor';
 import { asyncHandler } from '../../asyncHandler';
+import { mapDeviceCustodyRow } from '../../utilities/deviceCustody';
+import { getTestHashValidity } from '../../utilities/testIntegrity';
 
 const router = Router();
 
@@ -43,7 +45,10 @@ function toCaseRecord(testRow: Record<string, unknown>, caseRow: Record<string, 
       : 'new',
     supervisorEmail: caseRow?.supervisor_email ? String(caseRow.supervisor_email) : null,
     lastComment: caseRow?.comment ? String(caseRow.comment) : null,
-    caseUpdatedAt: caseRow?.updated_at ? String(caseRow.updated_at) : null
+    caseUpdatedAt: caseRow?.updated_at ? String(caseRow.updated_at) : null,
+    hash: testRow.hash == null ? '' : String(testRow.hash),
+    hashValid: getTestHashValidity(testRow as never),
+    device: mapDeviceCustodyRow(testRow)
   };
 }
 

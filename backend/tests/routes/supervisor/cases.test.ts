@@ -19,10 +19,34 @@ jest.mock('@supabase/supabase-js', () => ({
 
 import casesRoutes from '../../../src/routes/supervisor/cases';
 import { supabase } from '../../../src/supabase';
+import { hashData } from '../../../src/utilities/hash';
 
 const app = express();
 app.use(express.json());
 app.use('/api/supervisor/cases', casesRoutes);
+
+// Matches the record hash the mobile sync endpoint stores for this row.
+const testOneHash = hashData({
+  officer_id: 1,
+  officer_name: 'Officer One',
+  badge_number: 'B001',
+  driver_name: 'Driver A',
+  driver_id: 'DL001',
+  driver_dob: '1990-01-01',
+  bac_reading: 0.08,
+  result: 'fail',
+  location: '{}',
+  created_at: '2026-05-30T10:00:00Z',
+  original_test_id: null,
+  device_transport: 'ble',
+  device_serial: 'MQ3-0042',
+  device_calibration_version: 'mq3-default-v1+clean-air',
+  device_calibration_r0: 7524.99,
+  device_session_peak_raw: 812,
+  device_avg_raw: 640,
+  device_raw: 623,
+  device_captured_at: '2026-05-30T09:58:00.000Z',
+});
 
 describe('Cases Routes', () => {
   beforeEach(() => {
@@ -83,6 +107,15 @@ describe('Cases Routes', () => {
                     result: 'fail',
                     location: '{}',
                     created_at: '2026-05-30T10:00:00Z',
+                    hash: testOneHash,
+                    device_transport: 'ble',
+                    device_serial: 'MQ3-0042',
+                    device_calibration_version: 'mq3-default-v1+clean-air',
+                    device_calibration_r0: 7524.99,
+                    device_session_peak_raw: 812,
+                    device_avg_raw: 640,
+                    device_raw: 623,
+                    device_captured_at: '2026-05-30T09:58:00.000Z',
                   },
                   {
                     id: 'test-2',
@@ -143,10 +176,25 @@ describe('Cases Routes', () => {
         caseStatus: 'verified',
         supervisorEmail: 'supervisor@example.com',
         lastComment: 'All good',
+        hash: testOneHash,
+        hashValid: true,
+        device: {
+          transport: 'ble',
+          serial: 'MQ3-0042',
+          calibrationVersion: 'mq3-default-v1+clean-air',
+          calibrationR0: 7524.99,
+          sessionPeakRaw: 812,
+          avgRaw: 640,
+          raw: 623,
+          capturedAt: '2026-05-30T09:58:00.000Z',
+        },
       });
       expect(response.body[1]).toMatchObject({
         id: 'test-2',
         caseStatus: 'new',
+        hash: '',
+        hashValid: null,
+        device: null,
       });
     });
 

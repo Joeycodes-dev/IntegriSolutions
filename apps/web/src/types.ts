@@ -373,6 +373,18 @@ export interface TestEvidenceFields {
   photoUrls?: string[];
 }
 
+/** Breathalyzer device metadata bound into the record's integrity hash. */
+export interface TestDeviceCustody {
+  transport: 'ble' | 'simulated' | string;
+  serial: string | null;
+  calibrationVersion: string;
+  calibrationR0: number;
+  sessionPeakRaw: number;
+  avgRaw: number;
+  raw: number;
+  capturedAt: string;
+}
+
 export interface TestRecord {
   id: string;
   officerId: number | null;
@@ -388,6 +400,7 @@ export interface TestRecord {
   hash?: string;
   hashValid?: boolean | null;
   evidence?: TestEvidenceFields;
+  device?: TestDeviceCustody | null;
 }
 
 export interface FieldOfficer {
@@ -509,6 +522,9 @@ export interface CaseRecord {
   supervisorEmail: string | null;
   lastComment: string | null;
   caseUpdatedAt: string | null;
+  hash?: string;
+  hashValid?: boolean | null;
+  device?: TestDeviceCustody | null;
 }
 
 export type VerificationHashStatus = 'verified' | 'tampered' | 'unavailable';

@@ -17,6 +17,17 @@ export interface UserProfile {
   createdAt: string;
 }
 
+export interface TestDeviceCustody {
+  transport: string;
+  serial: string | null;
+  calibrationVersion: string;
+  calibrationR0: number;
+  sessionPeakRaw: number;
+  avgRaw: number;
+  raw: number;
+  capturedAt: string;
+}
+
 export interface TestRecord {
   id?: string;
   officerId: number | null;
@@ -32,4 +43,5 @@ export interface TestRecord {
   createdAt: string;
   location?: string;
   originalTestId?: string | null;
+  device?: TestDeviceCustody | null;
 }

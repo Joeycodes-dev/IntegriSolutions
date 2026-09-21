@@ -5,6 +5,7 @@ import { requireAuth, AuthRequest } from '../middleware/auth';
 import { requireSupervisor } from '../middleware/requireSupervisor';
 import { hashData } from '../utilities/hash';
 import { getTestHashValidity } from '../utilities/testIntegrity';
+import { mapDeviceCustodyRow } from '../utilities/deviceCustody';
 import type { TestRecord } from '../types';
 import { publishTestInserted, subscribeTestInserted } from '../utilities/testEvents';
 
@@ -77,13 +78,16 @@ function toCamelCase(row: any): TestRecord {
   };
   const hashValid = getTestHashValidity(row);
 
+  const device = mapDeviceCustodyRow(row);
+
   return {
     id: row.id,
     ...reconstructed,
     location: normalizeLocationField(row.location),
     hash: row.hash,
     hashValid,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    device
   };
 }
 
