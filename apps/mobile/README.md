@@ -109,6 +109,17 @@ The app currently ships with the simulated transport only; the device still talk
 Set `EXPO_PUBLIC_BREATHALYZER_SIMULATION=1` to keep the simulation available in non-dev builds (demo builds).
 Simulation is always available in development.
 
+> **Beta builds:** the `preview` and `production` EAS profiles in `eas.json` currently set
+> `EXPO_PUBLIC_BREATHALYZER_SIMULATION=1` so testers can complete the officer workflow while the BLE
+> module is still in development. Remove it from those profiles once the real transport ships (and before
+> any public store submission). Simulated sessions are visibly marked ("CONNECT / SIMULATE BREATHALYZER",
+> "Simulated MQ-3 device") and synced records carry `transport: "simulated"`.
+>
+> Simulator behaviour (30 s breath cycle): after connecting, capture within the clean-air window
+> (~3–10 s, after the 3 s warm-up) for a low/PASS reading, or wait for the rise (~15–20 s in) to capture the
+> ~0.075 g/100 ml target. The session peak persists until a new subject is started, so scan a new licence
+> before each test.
+
 ## Notes
 
 - The app uses React Navigation for native screen navigation.
