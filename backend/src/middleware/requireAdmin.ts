@@ -1,43 +1,39 @@
-import type { Request, Response, NextFunction } from 'express';
+import type { MiddlewareHandler } from 'hono';
 import { supabase } from '../supabase';
-import type { AuthRequest } from './auth';
+import type { AppEnv } from '../env';
 import { ROLE_ADMIN } from '../constants/roles';
 import { resolveRoleByEmail } from '../utilities/resolveProfile';
 
-export interface AdminRequest extends AuthRequest {
-  adminProfileId: number;
-}
-
-export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
+export const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const authHeader = c.req.header('authorization');
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
   if (!token) {
-    return res.status(401).json({ error: 'Authorization header missing or malformed' });
+    return c.json({ error: 'Authorization header missing or malformed' }, 401);
   }
 
   const { data, error } = await supabase.auth.getUser(token);
 
   if (error || !data.user) {
-    return res.status(401).json({ error: 'Invalid or expired access token' });
+    return c.json({ error: 'Invalid or expired access token' }, 401);
   }
 
-  const authReq = req as AdminRequest;
-  authReq.userId = data.user.id;
-  authReq.userEmail = data.user.email ?? null;
+  const userEmail = data.user.email ?? null;
+  c.set('userId', data.user.id);
+  c.set('userEmail', userEmail);
 
   let resolved;
   try {
-    resolved = await resolveRoleByEmail(authReq.userEmail ?? '');
+    resolved = await resolveRoleByEmail(userEmail ?? '');
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Role lookup failed';
-    return res.status(500).json({ error: message });
+    return c.json({ error: message }, 500);
   }
 
   if (!resolved || resolved.roleId !== ROLE_ADMIN) {
-    return res.status(403).json({ error: 'Admin access required' });
+    return c.json({ error: 'Admin access required' }, 403);
   }
 
-  authReq.adminProfileId = resolved.dbId;
-  return next();
-}
+  c.set('adminProfileId', resolved.dbId);
+  await next();
+};

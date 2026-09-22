@@ -942,6 +942,14 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   };
 
   const captureFrontOfLicense = async (retryMode = false) => {
+    if (Platform.OS === "web") {
+      Alert.alert(
+        "Not available on web",
+        "Front-of-licence photo scanning is only available in the mobile app. Use the PDF417 barcode scanner instead.",
+      );
+      return;
+    }
+
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted") {
       Alert.alert(
@@ -980,7 +988,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     try {
       if (!image.base64)
         throw new Error("The camera did not return image data.");
-      const data = await scanDriverLicense(image.base64, { retry: retryMode });
+      const data = await scanDriverLicense(image.uri, { retry: retryMode });
       setScannedData(data);
       setOcrDebug(data._ocr ?? null);
       setDecryptedLicenseData(null);
@@ -1678,7 +1686,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                 <Text style={styles.overline}>OCR Debug</Text>
                 {ocrDebug.engine ? (
                   <Text style={styles.ocrDebugText}>
-                    Engine: {ocrDebug.engine === "google-vision" ? "Google Vision" : "Tesseract"}
+                    Engine: {ocrDebug.engine === "ml-kit" ? "ML Kit (on-device)" : ocrDebug.engine === "google-vision" ? "Google Vision" : "Tesseract"}
                   </Text>
                 ) : null}
                 <Text style={styles.ocrDebugText}>

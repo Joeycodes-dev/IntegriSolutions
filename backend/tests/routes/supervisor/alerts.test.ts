@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../../helpers/request';
 
 const mockServiceSupabase = {
   from: jest.fn(),
@@ -22,10 +22,10 @@ jest.mock('@supabase/supabase-js', () => ({
 
 import alertsRoutes from '../../../src/routes/supervisor/alerts';
 import { supabase } from '../../../src/supabase';
+import type { AppEnv } from '../../../src/env';
 
-const app = express();
-app.use(express.json());
-app.use('/api/supervisor/alerts', alertsRoutes);
+const app = new Hono<AppEnv>();
+app.route('/api/supervisor/alerts', alertsRoutes);
 
 /** Generic thenable query-builder mock: every filter/mutation method returns
  * itself, and awaiting the chain (or calling .single()/.maybeSingle()) resolves

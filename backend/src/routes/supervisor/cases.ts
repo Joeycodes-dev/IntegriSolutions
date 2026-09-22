@@ -1,22 +1,11 @@
-import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { Hono } from 'hono';
+import type { AppEnv } from '../../env';
+import { serviceSupabase } from '../../serviceSupabase';
 import { requireSupervisor } from '../../middleware/requireSupervisor';
-import { asyncHandler } from '../../asyncHandler';
 import { mapDeviceCustodyRow } from '../../utilities/deviceCustody';
 import { getTestHashValidity } from '../../utilities/testIntegrity';
 
-const router = Router();
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
+const router = new Hono<AppEnv>();
 
 const CASE_STATUSES = ['new', 'under_review', 'verified', 'referred', 'invalidated', 'closed'] as const;
 
@@ -52,10 +41,10 @@ function toCaseRecord(testRow: Record<string, unknown>, caseRow: Record<string, 
   };
 }
 
-router.use(requireSupervisor);
+router.use('*', requireSupervisor);
 
-router.get('/', asyncHandler(async (req, res) => {
-  const { status } = req.query;
+router.get('/', async (c) => {
+  const status = c.req.query('status');
   const statusFilter =
     typeof status === 'string' && (CASE_STATUSES as readonly string[]).includes(status)
       ? status
@@ -68,7 +57,7 @@ router.get('/', asyncHandler(async (req, res) => {
     .limit(200);
 
   if (testsError) {
-    return res.status(500).json({ error: testsError.message });
+    return c.json({ error: testsError.message }, 500);
   }
 
   const testRows = tests ?? [];
@@ -83,11 +72,14 @@ router.get('/', asyncHandler(async (req, res) => {
 
     if (error) {
       if (isMissingCaseTable(error)) {
-        return res.status(503).json({
-          error: 'Case records table is not set up. Run backend/migrations/20260801_case_lifecycle.sql.'
-        });
+        return c.json(
+          {
+            error: 'Case records table is not set up. Run backend/migrations/20260801_case_lifecycle.sql.'
+          },
+          503
+        );
       }
-      return res.status(500).json({ error: error.message });
+      return c.json({ error: error.message }, 500);
     }
     caseRows = data ?? [];
   }
@@ -101,7 +93,7 @@ router.get('/', asyncHandler(async (req, res) => {
     .map((row) => toCaseRecord(row as Record<string, unknown>, casesByTestId.get(String(row.id)) ?? null))
     .filter((record) => statusFilter === null || record.caseStatus === statusFilter);
 
-  return res.json(records);
-}));
+  return c.json(records);
+});
 
 export default router;

@@ -1,36 +1,15 @@
-import { Router, type Request } from 'express';
-import { createClient } from '@supabase/supabase-js';
-import multer, { type FileFilterCallback } from 'multer';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { Hono } from 'hono';
+import type { AppEnv } from '../env';
+import { requireAuth } from '../middleware/auth';
+import { readJson } from '../utilities/jsonBody';
+import { readUpload, type UploadedFile } from '../utilities/uploads';
 import { writeAuditLog } from '../utilities/auditLog';
-import { asyncHandler } from '../asyncHandler';
+import { serviceSupabase } from '../serviceSupabase';
 
-const router = Router();
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (_req: Request, file: Express.Multer.File, cb: FileFilterCallback) => {
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed'));
-    }
-  }
-});
+const router = new Hono<AppEnv>();
 
 const BUCKET = 'evidence';
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
 const EVIDENCE_CATEGORIES = [
   'licence_front',
@@ -45,8 +24,8 @@ function normalizeCategory(value: unknown): string {
   return (EVIDENCE_CATEGORIES as readonly string[]).includes(candidate) ? candidate : 'vehicle';
 }
 
-router.get('/:testId', requireAuth, async (req, res) => {
-  const testId = String(req.params.testId);
+router.get('/:testId', requireAuth, async (c) => {
+  const testId = String(c.req.param('testId'));
 
   const { data, error } = await serviceSupabase
     .from('evidence')
@@ -56,27 +35,43 @@ router.get('/:testId', requireAuth, async (req, res) => {
 
   if (error) {
     if (error.message.includes('evidence') || error.code === '42P01') {
-      return res.status(503).json({
+      return c.json({
         error: 'Evidence table is not set up. Run the evidence SQL script in your Supabase SQL Editor.'
-      });
+      }, 503);
     }
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
-  return res.json(data ?? []);
+  return c.json(data ?? []);
 });
 
-router.post('/:testId', requireAuth, upload.single('photo'), asyncHandler(async (req, res) => {
-  const authReq = req as AuthRequest;
-  const testId = String(req.params.testId);
-  const notes = typeof req.body?.notes === 'string' ? req.body.notes.trim() : '';
-  const category = normalizeCategory(req.body?.category);
+router.post('/:testId', requireAuth, async (c) => {
+  const testId = String(c.req.param('testId'));
 
-  const reqWithFile = req as typeof req & { file?: Express.Multer.File };
-  const file = reqWithFile.file;
+  let file: UploadedFile | null = null;
+  let body: Record<string, unknown> = {};
+
+  const contentType = c.req.header('content-type') ?? '';
+  if (contentType.includes('multipart/form-data')) {
+    const parsed = await readUpload(c, 'photo');
+    file = parsed.file;
+    body = parsed.fields;
+
+    if (file && !file.mimetype.startsWith('image/')) {
+      return c.json({ error: 'Only image files are allowed' }, 500);
+    }
+    if (file && file.size > MAX_FILE_SIZE) {
+      return c.json({ error: 'File too large' }, 500);
+    }
+  } else {
+    body = await readJson(c);
+  }
+
+  const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
+  const category = normalizeCategory(body.category);
 
   if (!file) {
-    return res.status(400).json({ error: 'Photo file is required' });
+    return c.json({ error: 'Photo file is required' }, 400);
   }
 
   const { data: testExists } = await serviceSupabase
@@ -86,7 +81,7 @@ router.post('/:testId', requireAuth, upload.single('photo'), asyncHandler(async 
     .limit(1);
 
   if (!testExists?.length) {
-    return res.status(404).json({ error: 'Test record not found' });
+    return c.json({ error: 'Test record not found' }, 404);
   }
 
   const ext = file.originalname.split('.').pop() || 'jpg';
@@ -100,7 +95,7 @@ router.post('/:testId', requireAuth, upload.single('photo'), asyncHandler(async 
     });
 
   if (uploadError) {
-    return res.status(500).json({ error: `Storage upload failed: ${uploadError.message}` });
+    return c.json({ error: `Storage upload failed: ${uploadError.message}` }, 500);
   }
 
   const { data: urlData } = serviceSupabase.storage
@@ -115,23 +110,23 @@ router.post('/:testId', requireAuth, upload.single('photo'), asyncHandler(async 
       test_id: testId,
       photo_url: photoUrl,
       notes: notes || null,
-      uploaded_by: authReq.userEmail ?? 'unknown',
+      uploaded_by: c.get('userEmail') ?? 'unknown',
       category
     }])
     .select('*');
 
   if (insertError) {
     await serviceSupabase.storage.from(BUCKET).remove([filePath]);
-    return res.status(500).json({ error: insertError.message });
+    return c.json({ error: insertError.message }, 500);
   }
 
   await writeAuditLog(
-    authReq.userEmail ?? 'unknown',
+    c.get('userEmail') ?? 'unknown',
     `Uploaded ${category} evidence photo for test ${testId}`,
     testId
   );
 
-  return res.status(201).json(inserted?.[0] ?? null);
-}));
+  return c.json(inserted?.[0] ?? null, 201);
+});
 
 export default router;

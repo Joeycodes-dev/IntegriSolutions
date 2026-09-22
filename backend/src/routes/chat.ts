@@ -1,9 +1,11 @@
-import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
-import multer from 'multer';
-import { requireAuth, type AuthRequest } from '../middleware/auth';
+import { Hono, type Context } from 'hono';
+import type { AppEnv } from '../env';
+import { requireAuth } from '../middleware/auth';
+import { readJson } from '../utilities/jsonBody';
+import type { UploadedFile } from '../utilities/uploads';
 import { ROLE_ADMIN, ROLE_OFFICER, ROLE_SUPERVISOR } from '../constants/roles';
 import { resolveProfileByEmail, type ProfileSource } from '../utilities/resolveProfile';
+import { serviceSupabase } from '../serviceSupabase';
 
 type ChatActorSource = 'officer_users' | 'supervisor_users' | 'admin_users';
 type ChatPriority = 'high' | 'medium' | 'low';
@@ -130,27 +132,48 @@ interface ChatAttachmentReadRow {
 const ALLOWED_FILE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'text/plain'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_FILES_PER_MESSAGE = 5;
-const storage = multer.memoryStorage();
-const upload = multer({ storage, limits: { fileSize: MAX_FILE_SIZE }, fileFilter: (_req, file, cb) => {
-  if (ALLOWED_FILE_TYPES.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error(`File type ${file.mimetype} not allowed`));
+
+type MultipartFilesResult =
+  | { ok: true; files: UploadedFile[] }
+  | { ok: false; response: Response };
+
+async function readMultipartFiles(c: Context<AppEnv>, fieldName: string): Promise<MultipartFilesResult> {
+  const contentType = c.req.header('content-type') ?? '';
+  if (!contentType.includes('multipart/form-data')) {
+    return { ok: true, files: [] };
   }
-} });
 
-const router = Router();
+  const formData = await c.req.formData();
+  const files: UploadedFile[] = [];
+  let seen = 0;
 
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
+  for (const [key, value] of formData.entries()) {
+    if (key !== fieldName || !(value instanceof File)) continue;
+    seen += 1;
+    if (seen > MAX_FILES_PER_MESSAGE) {
+      return { ok: false, response: c.json({ error: 'Too many files' }, 500) };
     }
+    if (!ALLOWED_FILE_TYPES.includes(value.type)) {
+      return { ok: false, response: c.json({ error: `File type ${value.type} not allowed` }, 500) };
+    }
+    if (value.size > MAX_FILE_SIZE) {
+      return { ok: false, response: c.json({ error: 'File too large' }, 500) };
+    }
+    const buffer = new Uint8Array(await value.arrayBuffer());
+    files.push({
+      fieldname: fieldName,
+      originalname: value.name,
+      encoding: '7bit',
+      mimetype: value.type,
+      buffer,
+      size: buffer.byteLength
+    });
   }
-);
+
+  return { ok: true, files };
+}
+
+const router = new Hono<AppEnv>();
 
 function isAllowedSource(source: ProfileSource): source is ChatActorSource {
   return source === 'officer_users' || source === 'supervisor_users' || source === 'admin_users';
@@ -405,9 +428,10 @@ function formatAttachment(attachment: ChatAttachmentRow, reads: ChatAttachmentRe
   };
 }
 
-async function resolveActor(req: AuthRequest): Promise<ChatActor | null> {
-  if (!req.userEmail) return null;
-  const resolved = await resolveProfileByEmail(req.userEmail, req.userId, serviceSupabase, req.preferredRoleId);
+async function resolveActor(c: Context<AppEnv>): Promise<ChatActor | null> {
+  const email = c.get('userEmail');
+  if (!email) return null;
+  const resolved = await resolveProfileByEmail(email, c.get('userId'), serviceSupabase, c.get('preferredRoleId'));
   if (!resolved || !isAllowedSource(resolved.source)) return null;
   return {
     source: resolved.source,
@@ -434,16 +458,15 @@ async function ensureParticipant(threadId: string, actor: ChatActor): Promise<bo
   return !!data;
 }
 
-router.use(requireAuth);
+router.use('*', requireAuth);
 
-router.get('/contacts/officers', async (req, res) => {
-  const authReq = req as unknown as AuthRequest;
-  const actor = await resolveActor(authReq);
+router.get('/contacts/officers', async (c) => {
+  const actor = await resolveActor(c);
   if (!actor) {
-    return res.status(403).json({ error: 'Chat access denied' });
+    return c.json({ error: 'Chat access denied' }, 403);
   }
 
-  const query = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
+  const query = (c.req.query('q') ?? '').trim().toLowerCase();
 
   const { data, error } = await serviceSupabase
     .from('officer_users')
@@ -451,7 +474,7 @@ router.get('/contacts/officers', async (req, res) => {
     .order('officer_name', { ascending: true });
 
   if (error) {
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
   const rows = (data ?? []) as OfficerContactRow[];
@@ -469,23 +492,28 @@ router.get('/contacts/officers', async (req, res) => {
       return haystack.includes(query);
     });
 
-  return res.json(contacts);
+  return c.json(contacts);
 });
 
-router.post('/attachments/upload', upload.array('files', MAX_FILES_PER_MESSAGE), async (req, res) => {
-  const authReq = req as unknown as AuthRequest;
-  const actor = await resolveActor(authReq);
+router.post('/attachments/upload', async (c) => {
+  const parsedFiles = await readMultipartFiles(c, 'files');
+  if (!parsedFiles.ok) {
+    return parsedFiles.response;
+  }
+  const files = parsedFiles.files;
+
+  const actor = await resolveActor(c);
   if (!actor) {
-    return res.status(403).json({ error: 'Chat access denied' });
+    return c.json({ error: 'Chat access denied' }, 403);
   }
 
-  if (!req.files || req.files.length === 0) {
-    return res.status(400).json({ error: 'No files provided' });
+  if (files.length === 0) {
+    return c.json({ error: 'No files provided' }, 400);
   }
 
   const uploadedFiles = [];
   try {
-    for (const file of req.files as Express.Multer.File[]) {
+    for (const file of files) {
       const timestamp = Date.now();
       const randomStr = Math.random().toString(36).substring(2, 8);
       const storagePath = `chat-attachments/${actor.source}/${actor.dbId}/${timestamp}-${randomStr}-${file.originalname}`;
@@ -498,7 +526,7 @@ router.post('/attachments/upload', upload.array('files', MAX_FILES_PER_MESSAGE),
         });
 
       if (uploadError) {
-        return res.status(500).json({ error: `Failed to upload ${file.originalname}: ${uploadError.message}` });
+        return c.json({ error: `Failed to upload ${file.originalname}: ${uploadError.message}` }, 500);
       }
 
       const { data: urlData } = serviceSupabase.storage
@@ -514,20 +542,19 @@ router.post('/attachments/upload', upload.array('files', MAX_FILES_PER_MESSAGE),
       });
     }
 
-    return res.status(201).json({ files: uploadedFiles });
+    return c.json({ files: uploadedFiles }, 201);
   } catch (err) {
-    return res.status(500).json({ error: err instanceof Error ? err.message : 'File upload failed' });
+    return c.json({ error: err instanceof Error ? err.message : 'File upload failed' }, 500);
   }
 });
 
-router.post('/threads/emergency', async (req, res) => {
-  const authReq = req as unknown as AuthRequest;
-  const actor = await resolveActor(authReq);
+router.post('/threads/emergency', async (c) => {
+  const actor = await resolveActor(c);
   if (!actor) {
-    return res.status(403).json({ error: 'Chat access denied' });
+    return c.json({ error: 'Chat access denied' }, 403);
   }
 
-  const body = (req.body ?? {}) as Record<string, unknown>;
+  const body = await readJson(c);
   const officerIds = normalizeIds(body.officerIds);
   const title = typeof body.title === 'string' ? body.title.trim() : '';
 
@@ -536,15 +563,15 @@ router.post('/threads/emergency', async (req, res) => {
   const includeSuperUsers = normalizeBoolean(body.includeSuperUsers, actor.roleId === ROLE_OFFICER);
 
   if (actor.roleId === ROLE_OFFICER && officerIds.some((id) => id === actor.dbId)) {
-    return res.status(400).json({ error: 'Do not include your own officer id in recipients' });
+    return c.json({ error: 'Do not include your own officer id in recipients' }, 400);
   }
 
   if (actor.roleId !== ROLE_OFFICER && actor.roleId !== ROLE_SUPERVISOR && actor.roleId !== ROLE_ADMIN) {
-    return res.status(403).json({ error: 'Chat access denied' });
+    return c.json({ error: 'Chat access denied' }, 403);
   }
 
   if (!sendToAllOfficers && !sendToEveryone && officerIds.length === 0 && !includeSuperUsers) {
-    return res.status(400).json({ error: 'Provide recipients: officerIds, includeSuperUsers, sendToAllOfficers, or sendToEveryone' });
+    return c.json({ error: 'Provide recipients: officerIds, includeSuperUsers, sendToAllOfficers, or sendToEveryone' }, 400);
   }
 
   let officerQuery = serviceSupabase
@@ -560,7 +587,7 @@ router.post('/threads/emergency', async (req, res) => {
   const { data: officers, error: officerError } = await officerQuery;
 
   if (officerError) {
-    return res.status(500).json({ error: officerError.message });
+    return c.json({ error: officerError.message }, 500);
   }
 
   const officerRows = (officers ?? []) as Array<{
@@ -575,15 +602,15 @@ router.post('/threads/emergency', async (req, res) => {
   const activeOfficerRows = officerRows.filter((row) => isActiveStatus(row.officer_employment_status));
 
   if (!sendToAllOfficers && officerIds.length > 0 && activeOfficerRows.length !== officerIds.length) {
-    return res.status(404).json({ error: 'One or more officer recipients were not found or are inactive' });
+    return c.json({ error: 'One or more officer recipients were not found or are inactive' }, 404);
   }
 
   if ((sendToAllOfficers || sendToEveryone) && activeOfficerRows.length === 0) {
-    return res.status(404).json({ error: 'No active officers found for broadcast' });
+    return c.json({ error: 'No active officers found for broadcast' }, 404);
   }
 
   if (!sendToAllOfficers && activeOfficerRows.length === 0 && !includeSuperUsers) {
-    return res.status(400).json({ error: 'At least one active recipient is required' });
+    return c.json({ error: 'At least one active recipient is required' }, 400);
   }
 
   const participantIdentities: ParticipantIdentity[] = [
@@ -616,11 +643,11 @@ router.post('/threads/emergency', async (req, res) => {
     ]);
 
     if (supervisorResult.error) {
-      return res.status(500).json({ error: supervisorResult.error.message });
+      return c.json({ error: supervisorResult.error.message }, 500);
     }
 
     if (adminResult.error) {
-      return res.status(500).json({ error: adminResult.error.message });
+      return c.json({ error: adminResult.error.message }, 500);
     }
 
     const supervisorRows = (supervisorResult.data ?? []) as SupervisorContactRow[];
@@ -660,7 +687,7 @@ router.post('/threads/emergency', async (req, res) => {
     .eq('participant_id', actor.dbId);
 
   if (actorThreadError) {
-    return res.status(500).json({ error: actorThreadError.message });
+    return c.json({ error: actorThreadError.message }, 500);
   }
 
   const candidateThreadIds = Array.from(new Set((actorThreadRows ?? []).map((row) => String((row as { thread_id: string }).thread_id))));
@@ -672,7 +699,7 @@ router.post('/threads/emergency', async (req, res) => {
       .eq('kind', 'emergency');
 
     if (candidateThreadsError) {
-      return res.status(500).json({ error: candidateThreadsError.message });
+      return c.json({ error: candidateThreadsError.message }, 500);
     }
 
     const emergencyThreadIds = (candidateThreadsData ?? []).map((thread) => String((thread as { id: string }).id));
@@ -683,7 +710,7 @@ router.post('/threads/emergency', async (req, res) => {
         .in('thread_id', emergencyThreadIds);
 
       if (candidateParticipantsError) {
-        return res.status(500).json({ error: candidateParticipantsError.message });
+        return c.json({ error: candidateParticipantsError.message }, 500);
       }
 
       const keysByThread = new Map<string, string[]>();
@@ -702,7 +729,7 @@ router.post('/threads/emergency', async (req, res) => {
         if (threadKeys.length !== desiredKeys.length) continue;
         const isSameSet = threadKeys.every((value, idx) => value === desiredKeys[idx]);
         if (isSameSet) {
-          return res.status(201).json({ id: thread.id });
+          return c.json({ id: thread.id }, 201);
         }
       }
     }
@@ -720,7 +747,7 @@ router.post('/threads/emergency', async (req, res) => {
     .single();
 
   if (threadError || !threadData) {
-    return res.status(500).json({ error: threadError?.message ?? 'Failed to create chat thread' });
+    return c.json({ error: threadError?.message ?? 'Failed to create chat thread' }, 500);
   }
 
   const dedupedParticipants = uniqueIdentities.map((item) => ({
@@ -738,17 +765,16 @@ router.post('/threads/emergency', async (req, res) => {
 
   if (participantsError) {
     await serviceSupabase.from('chat_threads').delete().eq('id', threadData.id);
-    return res.status(500).json({ error: participantsError.message });
+    return c.json({ error: participantsError.message }, 500);
   }
 
-  return res.status(201).json({ id: threadData.id });
+  return c.json({ id: threadData.id }, 201);
 });
 
-router.get('/threads', async (req, res) => {
-  const authReq = req as unknown as AuthRequest;
-  const actor = await resolveActor(authReq);
+router.get('/threads', async (c) => {
+  const actor = await resolveActor(c);
   if (!actor) {
-    return res.status(403).json({ error: 'Chat access denied' });
+    return c.json({ error: 'Chat access denied' }, 403);
   }
 
   const { data: ownParticipationRows, error: ownParticipationError } = await serviceSupabase
@@ -758,13 +784,13 @@ router.get('/threads', async (req, res) => {
     .eq('participant_id', actor.dbId);
 
   if (ownParticipationError) {
-    return res.status(500).json({ error: ownParticipationError.message });
+    return c.json({ error: ownParticipationError.message }, 500);
   }
 
   const ownParticipations = (ownParticipationRows ?? []) as ChatParticipantRow[];
   const threadIds = ownParticipations.map((row) => row.thread_id);
   if (threadIds.length === 0) {
-    return res.json([]);
+    return c.json([]);
   }
 
   const { data: threadsData, error: threadsError } = await serviceSupabase
@@ -774,7 +800,7 @@ router.get('/threads', async (req, res) => {
     .order('updated_at', { ascending: false });
 
   if (threadsError) {
-    return res.status(500).json({ error: threadsError.message });
+    return c.json({ error: threadsError.message }, 500);
   }
 
   const { data: participantsData, error: participantsError } = await serviceSupabase
@@ -783,7 +809,7 @@ router.get('/threads', async (req, res) => {
     .in('thread_id', threadIds);
 
   if (participantsError) {
-    return res.status(500).json({ error: participantsError.message });
+    return c.json({ error: participantsError.message }, 500);
   }
 
   const threads = (threadsData ?? []) as ChatThreadRow[];
@@ -863,29 +889,26 @@ router.get('/threads', async (req, res) => {
 
   const filtered = result.filter((thread) => thread.latestMessage !== null);
 
-  return res.json(filtered);
+  return c.json(filtered);
 });
 
-router.get('/threads/:threadId/messages', async (req, res) => {
-  const authReq = req as unknown as AuthRequest;
-  const actor = await resolveActor(authReq);
+router.get('/threads/:threadId/messages', async (c) => {
+  const actor = await resolveActor(c);
   if (!actor) {
-    return res.status(403).json({ error: 'Chat access denied' });
+    return c.json({ error: 'Chat access denied' }, 403);
   }
 
-  const threadId = String(req.params.threadId || '');
+  const threadId = String(c.req.param('threadId') || '');
   if (!threadId) {
-    return res.status(400).json({ error: 'Thread id is required' });
+    return c.json({ error: 'Thread id is required' }, 400);
   }
 
   const canAccess = await ensureParticipant(threadId, actor);
   if (!canAccess) {
-    return res.status(403).json({ error: 'Thread access denied' });
+    return c.json({ error: 'Thread access denied' }, 403);
   }
 
-  const markReadRaw = typeof req.query.markRead === 'string'
-    ? req.query.markRead.trim().toLowerCase()
-    : 'true';
+  const markReadRaw = (c.req.query('markRead') ?? 'true').trim().toLowerCase();
   const shouldMarkRead = markReadRaw !== 'false';
 
   if (shouldMarkRead) {
@@ -894,7 +917,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     });
   }
 
-  const requestedLimit = Number(req.query.limit);
+  const requestedLimit = Number(c.req.query('limit'));
   const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(200, requestedLimit)) : 100;
 
   const { data, error } = await serviceSupabase
@@ -905,7 +928,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     .limit(limit);
 
   if (error) {
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
   const { data: participantsData, error: participantsError } = await serviceSupabase
@@ -914,7 +937,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     .eq('thread_id', threadId);
 
   if (participantsError) {
-    return res.status(500).json({ error: participantsError.message });
+    return c.json({ error: participantsError.message }, 500);
   }
 
   const participants = (participantsData ?? []) as ChatParticipantRow[];
@@ -928,23 +951,23 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   if (!readRowsError) {
     readReceipts = (readRows ?? []) as ChatMessageReadRow[];
   } else if (readRowsError.code !== '42P01') {
-    return res.status(500).json({ error: readRowsError.message });
+    return c.json({ error: readRowsError.message }, 500);
   }
 
   // Fetch attachments for all messages in this thread
   let allAttachments: ChatAttachmentRow[] = [];
   let allAttachmentReads: ChatAttachmentReadRow[] = [];
-  
+
   if (rows.length > 0) {
     const messageIds = rows.map((r) => r.id);
-    
+
     const { data: attachmentData, error: attachmentError } = await serviceSupabase
       .from('chat_attachments')
       .select('*')
       .in('message_id', messageIds);
 
     if (attachmentError && attachmentError.code !== '42P01') {
-      return res.status(500).json({ error: attachmentError.message });
+      return c.json({ error: attachmentError.message }, 500);
     }
 
     allAttachments = (attachmentData ?? []) as ChatAttachmentRow[];
@@ -957,7 +980,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
         .in('attachment_id', attachmentIds);
 
       if (readError && readError.code !== '42P01') {
-        return res.status(500).json({ error: readError.message });
+        return c.json({ error: readError.message }, 500);
       }
 
       allAttachmentReads = (readData ?? []) as ChatAttachmentReadRow[];
@@ -969,7 +992,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     messageById.set(row.id, row);
   }
 
-  return res.json(rows.map((message) => {
+  return c.json(rows.map((message) => {
     const receiptSeenBy = groupSeenByFromReadReceipts(readReceipts, message);
     const heuristicSeenBy = buildSeenByForMessage(message, participants, rows);
     const seenBy = Array.from(
@@ -979,7 +1002,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     const officersSeenCount = seenBy.filter((viewer) => viewer.roleId === ROLE_OFFICER).length;
     const superUsersSeenCount = seenBy.filter((viewer) => viewer.roleId === ROLE_SUPERVISOR || viewer.roleId === ROLE_ADMIN).length;
     const replyTo = message.reply_to_message_id ? messageById.get(message.reply_to_message_id) ?? null : null;
-    
+
     const messageAttachments = allAttachments.filter((a) => a.message_id === message.id);
     const attachments = messageAttachments.map((att) => formatAttachment(att, allAttachmentReads));
 
@@ -1013,22 +1036,21 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   }));
 });
 
-router.post('/threads/:threadId/messages', async (req, res) => {
-  const authReq = req as unknown as AuthRequest;
-  const actor = await resolveActor(authReq);
+router.post('/threads/:threadId/messages', async (c) => {
+  const actor = await resolveActor(c);
   if (!actor) {
-    return res.status(403).json({ error: 'Chat access denied' });
+    return c.json({ error: 'Chat access denied' }, 403);
   }
 
-  const threadId = String(req.params.threadId || '');
-  const body = (req.body ?? {}) as Record<string, unknown>;
+  const threadId = String(c.req.param('threadId') || '');
+  const body = await readJson(c);
   const text = typeof body.body === 'string' ? body.body.trim() : '';
   const isEmergency = body.isEmergency !== false;
   const priority = normalizePriority(body.priority);
   const replyToMessageId = Number.isInteger(body.replyToMessageId)
     ? Number(body.replyToMessageId)
     : null;
-  
+
   // Normalize attachments array
   const attachmentsInput = Array.isArray(body.attachments) ? body.attachments : [];
   const attachments = attachmentsInput.slice(0, MAX_FILES_PER_MESSAGE).map((att: unknown) => {
@@ -1044,24 +1066,24 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   }).filter((att) => att.fileName && att.storageUrl && att.fileSize > 0);
 
   if (!threadId) {
-    return res.status(400).json({ error: 'Thread id is required' });
+    return c.json({ error: 'Thread id is required' }, 400);
   }
 
   if (!text && attachments.length === 0) {
-    return res.status(400).json({ error: 'Message body or attachments are required' });
+    return c.json({ error: 'Message body or attachments are required' }, 400);
   }
 
   if (text.length > 4000) {
-    return res.status(400).json({ error: 'Message body exceeds 4000 characters' });
+    return c.json({ error: 'Message body exceeds 4000 characters' }, 400);
   }
 
   if (replyToMessageId !== null && replyToMessageId <= 0) {
-    return res.status(400).json({ error: 'replyToMessageId must be a positive integer' });
+    return c.json({ error: 'replyToMessageId must be a positive integer' }, 400);
   }
 
   const canAccess = await ensureParticipant(threadId, actor);
   if (!canAccess) {
-    return res.status(403).json({ error: 'Thread access denied' });
+    return c.json({ error: 'Thread access denied' }, 403);
   }
 
   let replyToMessage: ChatMessageRow | null = null;
@@ -1074,11 +1096,11 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       .maybeSingle();
 
     if (replyError) {
-      return res.status(500).json({ error: replyError.message });
+      return c.json({ error: replyError.message }, 500);
     }
 
     if (!replyData) {
-      return res.status(400).json({ error: 'Reply target message was not found in this thread' });
+      return c.json({ error: 'Reply target message was not found in this thread' }, 400);
     }
 
     replyToMessage = replyData as ChatMessageRow;
@@ -1101,11 +1123,11 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     .single();
 
   if (error || !data) {
-    return res.status(500).json({ error: error?.message ?? 'Failed to send message' });
+    return c.json({ error: error?.message ?? 'Failed to send message' }, 500);
   }
 
   const insertedMessage = data as ChatMessageRow;
-  
+
   // Insert attachments if provided
   let insertedAttachments: ChatAttachmentRow[] = [];
   if (attachments.length > 0) {
@@ -1124,7 +1146,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       .select('*');
 
     if (attachmentError) {
-      return res.status(500).json({ error: `Failed to save attachments: ${attachmentError.message}` });
+      return c.json({ error: `Failed to save attachments: ${attachmentError.message}` }, 500);
     }
 
     insertedAttachments = (attachmentData ?? []) as ChatAttachmentRow[];
@@ -1133,7 +1155,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   try {
     await markThreadAsRead(threadId, actor);
   } catch (err) {
-    return res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to mark thread as read' });
+    return c.json({ error: err instanceof Error ? err.message : 'Failed to mark thread as read' }, 500);
   }
 
   const { data: threadMessagesData, error: threadMessagesError } = await serviceSupabase
@@ -1143,7 +1165,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     .order('created_at', { ascending: true });
 
   if (threadMessagesError) {
-    return res.status(500).json({ error: threadMessagesError.message });
+    return c.json({ error: threadMessagesError.message }, 500);
   }
 
   const { data: participantsData, error: participantsError } = await serviceSupabase
@@ -1152,7 +1174,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     .eq('thread_id', threadId);
 
   if (participantsError) {
-    return res.status(500).json({ error: participantsError.message });
+    return c.json({ error: participantsError.message }, 500);
   }
 
   const { data: readRows, error: readRowsError } = await serviceSupabase
@@ -1162,7 +1184,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     .eq('message_id', insertedMessage.id);
 
   if (readRowsError && readRowsError.code !== '42P01') {
-    return res.status(500).json({ error: readRowsError.message });
+    return c.json({ error: readRowsError.message }, 500);
   }
 
   const rows = (threadMessagesData ?? []) as ChatMessageRow[];
@@ -1177,7 +1199,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   const officersSeenCount = seenBy.filter((viewer) => viewer.roleId === ROLE_OFFICER).length;
   const superUsersSeenCount = seenBy.filter((viewer) => viewer.roleId === ROLE_SUPERVISOR || viewer.roleId === ROLE_ADMIN).length;
 
-  return res.status(201).json({
+  return c.json({
     id: insertedMessage.id,
     threadId,
     replyToMessageId: insertedMessage.reply_to_message_id,
@@ -1212,56 +1234,54 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       createdAt: att.created_at
     })),
     createdAt: insertedMessage.created_at
-  });
+  }, 201);
 });
 
-router.post('/threads/:threadId/read', async (req, res) => {
-  const authReq = req as unknown as AuthRequest;
-  const actor = await resolveActor(authReq);
+router.post('/threads/:threadId/read', async (c) => {
+  const actor = await resolveActor(c);
   if (!actor) {
-    return res.status(403).json({ error: 'Chat access denied' });
+    return c.json({ error: 'Chat access denied' }, 403);
   }
 
-  const threadId = String(req.params.threadId || '');
+  const threadId = String(c.req.param('threadId') || '');
   if (!threadId) {
-    return res.status(400).json({ error: 'Thread id is required' });
+    return c.json({ error: 'Thread id is required' }, 400);
   }
 
   const canAccess = await ensureParticipant(threadId, actor);
   if (!canAccess) {
-    return res.status(403).json({ error: 'Thread access denied' });
+    return c.json({ error: 'Thread access denied' }, 403);
   }
 
   await markThreadAsRead(threadId, actor).catch(() => {
     // Best-effort read stamping; do not block debug reads.
   });
 
-  return res.json({ ok: true });
+  return c.json({ ok: true });
 });
 
-router.get('/threads/:threadId/messages/:messageId/seen-debug', async (req, res) => {
-  const authReq = req as unknown as AuthRequest;
-  const actor = await resolveActor(authReq);
+router.get('/threads/:threadId/messages/:messageId/seen-debug', async (c) => {
+  const actor = await resolveActor(c);
   if (!actor) {
-    return res.status(403).json({ error: 'Chat access denied' });
+    return c.json({ error: 'Chat access denied' }, 403);
   }
 
-  const threadId = String(req.params.threadId || '');
-  const messageId = Number(req.params.messageId);
+  const threadId = String(c.req.param('threadId') || '');
+  const messageId = Number(c.req.param('messageId'));
 
   if (!threadId || !Number.isInteger(messageId) || messageId <= 0) {
-    return res.status(400).json({ error: 'Valid thread id and message id are required' });
+    return c.json({ error: 'Valid thread id and message id are required' }, 400);
   }
 
   const canAccess = await ensureParticipant(threadId, actor);
   if (!canAccess) {
-    return res.status(403).json({ error: 'Thread access denied' });
+    return c.json({ error: 'Thread access denied' }, 403);
   }
 
   try {
     await markThreadAsRead(threadId, actor);
   } catch (err) {
-    return res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to mark thread as read' });
+    return c.json({ error: err instanceof Error ? err.message : 'Failed to mark thread as read' }, 500);
   }
 
   const { data: messageData, error: messageError } = await serviceSupabase
@@ -1272,11 +1292,11 @@ router.get('/threads/:threadId/messages/:messageId/seen-debug', async (req, res)
     .maybeSingle();
 
   if (messageError) {
-    return res.status(500).json({ error: messageError.message });
+    return c.json({ error: messageError.message }, 500);
   }
 
   if (!messageData) {
-    return res.status(404).json({ error: 'Message not found in thread' });
+    return c.json({ error: 'Message not found in thread' }, 404);
   }
 
   const message = messageData as ChatMessageRow;
@@ -1288,7 +1308,7 @@ router.get('/threads/:threadId/messages/:messageId/seen-debug', async (req, res)
     .order('created_at', { ascending: true });
 
   if (threadMessagesError) {
-    return res.status(500).json({ error: threadMessagesError.message });
+    return c.json({ error: threadMessagesError.message }, 500);
   }
 
   const { data: participantsData, error: participantsError } = await serviceSupabase
@@ -1297,7 +1317,7 @@ router.get('/threads/:threadId/messages/:messageId/seen-debug', async (req, res)
     .eq('thread_id', threadId);
 
   if (participantsError) {
-    return res.status(500).json({ error: participantsError.message });
+    return c.json({ error: participantsError.message }, 500);
   }
 
   const participants = (participantsData ?? []) as ChatParticipantRow[];
@@ -1311,7 +1331,7 @@ router.get('/threads/:threadId/messages/:messageId/seen-debug', async (req, res)
   if (!readRowsError) {
     readReceipts = (readRows ?? []) as ChatMessageReadRow[];
   } else if (readRowsError.code !== '42P01') {
-    return res.status(500).json({ error: readRowsError.message });
+    return c.json({ error: readRowsError.message }, 500);
   }
 
   const readSeenBy = participants
@@ -1357,7 +1377,7 @@ router.get('/threads/:threadId/messages/:messageId/seen-debug', async (req, res)
     ...receiptSeenBy
   ].map((viewer) => [personIdentityKey(viewer.name, viewer.badgeNumber, viewer.source, viewer.participantId), viewer])).values());
 
-  return res.json({
+  return c.json({
     threadId,
     message: {
       id: message.id,
@@ -1379,14 +1399,14 @@ router.get('/threads/:threadId/messages/:messageId/seen-debug', async (req, res)
   });
 });
 
-router.delete('/threads/empty', async (_req, res) => {
+router.delete('/threads/empty', async (c) => {
   const { data: emergencyThreads, error: emergencyThreadsError } = await serviceSupabase
     .from('chat_threads')
     .select('id')
     .eq('kind', 'emergency');
 
   if (emergencyThreadsError) {
-    return res.status(500).json({ error: emergencyThreadsError.message });
+    return c.json({ error: emergencyThreadsError.message }, 500);
   }
 
   const { data: messageThreadRows, error: messageThreadRowsError } = await serviceSupabase
@@ -1394,7 +1414,7 @@ router.delete('/threads/empty', async (_req, res) => {
     .select('thread_id');
 
   if (messageThreadRowsError) {
-    return res.status(500).json({ error: messageThreadRowsError.message });
+    return c.json({ error: messageThreadRowsError.message }, 500);
   }
 
   const threadIdsWithMessages = new Set(
@@ -1406,7 +1426,7 @@ router.delete('/threads/empty', async (_req, res) => {
     .filter((id) => !threadIdsWithMessages.has(id));
 
   if (ids.length === 0) {
-    return res.json({ deleted: 0 });
+    return c.json({ deleted: 0 });
   }
 
   const { error: deleteError } = await serviceSupabase
@@ -1415,22 +1435,21 @@ router.delete('/threads/empty', async (_req, res) => {
     .in('id', ids);
 
   if (deleteError) {
-    return res.status(500).json({ error: deleteError.message });
+    return c.json({ error: deleteError.message }, 500);
   }
 
-  return res.json({ deleted: ids.length });
+  return c.json({ deleted: ids.length });
 });
 
-router.post('/attachments/:attachmentId/opened', async (req, res) => {
-  const authReq = req as unknown as AuthRequest;
-  const actor = await resolveActor(authReq);
+router.post('/attachments/:attachmentId/opened', async (c) => {
+  const actor = await resolveActor(c);
   if (!actor) {
-    return res.status(403).json({ error: 'Chat access denied' });
+    return c.json({ error: 'Chat access denied' }, 403);
   }
 
-  const attachmentId = Number(req.params.attachmentId);
+  const attachmentId = Number(c.req.param('attachmentId'));
   if (!Number.isInteger(attachmentId) || attachmentId <= 0) {
-    return res.status(400).json({ error: 'Invalid attachment id' });
+    return c.json({ error: 'Invalid attachment id' }, 400);
   }
 
   // Verify the attachment exists and the user has access to the message
@@ -1441,11 +1460,11 @@ router.post('/attachments/:attachmentId/opened', async (req, res) => {
     .maybeSingle();
 
   if (attachmentError) {
-    return res.status(500).json({ error: attachmentError.message });
+    return c.json({ error: attachmentError.message }, 500);
   }
 
   if (!attachmentData) {
-    return res.status(404).json({ error: 'Attachment not found' });
+    return c.json({ error: 'Attachment not found' }, 404);
   }
 
   const messageId = (attachmentData as { id: number; message_id: number }).message_id;
@@ -1457,18 +1476,18 @@ router.post('/attachments/:attachmentId/opened', async (req, res) => {
     .maybeSingle();
 
   if (messageError) {
-    return res.status(500).json({ error: messageError.message });
+    return c.json({ error: messageError.message }, 500);
   }
 
   if (!messageData) {
-    return res.status(404).json({ error: 'Message not found' });
+    return c.json({ error: 'Message not found' }, 404);
   }
 
   const threadId = (messageData as { thread_id: string }).thread_id;
 
   const canAccess = await ensureParticipant(threadId, actor);
   if (!canAccess) {
-    return res.status(403).json({ error: 'Thread access denied' });
+    return c.json({ error: 'Thread access denied' }, 403);
   }
 
   // Record the attachment view
@@ -1488,10 +1507,10 @@ router.post('/attachments/:attachmentId/opened', async (req, res) => {
     );
 
   if (insertError) {
-    return res.status(500).json({ error: insertError.message });
+    return c.json({ error: insertError.message }, 500);
   }
 
-  return res.status(200).json({ ok: true });
+  return c.json({ ok: true }, 200);
 });
 
 export default router;

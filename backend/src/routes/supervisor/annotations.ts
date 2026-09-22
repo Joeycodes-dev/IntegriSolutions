@@ -1,22 +1,12 @@
-import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
-import { requireSupervisor, type SupervisorRequest } from '../../middleware/requireSupervisor';
+import { Hono } from 'hono';
+import type { AppEnv } from '../../env';
+import { serviceSupabase } from '../../serviceSupabase';
+import { requireSupervisor } from '../../middleware/requireSupervisor';
 import { writeAuditLog } from '../../utilities/auditLog';
-import { asyncHandler } from '../../asyncHandler';
+import { readJson } from '../../utilities/jsonBody';
 import { publishCaseUpdated } from '../../utilities/testEvents';
 
-const router = Router();
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
+const router = new Hono<AppEnv>();
 
 const CASE_STATUSES = ['new', 'under_review', 'verified', 'referred', 'invalidated', 'closed'] as const;
 const ANNOTATION_STATUSES = [...CASE_STATUSES, 'pending', 'approved'] as const;
@@ -47,10 +37,10 @@ async function upsertCaseRecord(
   }
 }
 
-router.use(requireSupervisor);
+router.use('*', requireSupervisor);
 
-router.get('/:testId', async (req, res) => {
-  const testId = String(req.params.testId);
+router.get('/:testId', async (c) => {
+  const testId = String(c.req.param('testId'));
 
   const { data, error } = await serviceSupabase
     .from('annotations')
@@ -60,25 +50,30 @@ router.get('/:testId', async (req, res) => {
 
   if (error) {
     if (error.message.includes('annotations') || error.code === '42P01') {
-      return res.status(503).json({
-        error: 'Annotations table is not set up. Run backend/sql/annotations.sql in your Supabase SQL Editor.'
-      });
+      return c.json(
+        {
+          error: 'Annotations table is not set up. Run backend/sql/annotations.sql in your Supabase SQL Editor.'
+        },
+        503
+      );
     }
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
-  return res.json(data ?? []);
+  return c.json(data ?? []);
 });
 
-router.post('/:testId', asyncHandler(async (req, res) => {
-  const authReq = req as unknown as SupervisorRequest;
-  const testId = String(req.params.testId);
-  const { comment, status } = req.body as { comment?: string; status?: string };
+router.post('/:testId', async (c) => {
+  const testId = String(c.req.param('testId'));
+  const { comment, status } = await readJson<{ comment?: string; status?: string }>(c);
 
   if (!status || !(ANNOTATION_STATUSES as readonly string[]).includes(status)) {
-    return res.status(400).json({
-      error: `Status must be one of: ${ANNOTATION_STATUSES.join(', ')}`
-    });
+    return c.json(
+      {
+        error: `Status must be one of: ${ANNOTATION_STATUSES.join(', ')}`
+      },
+      400
+    );
   }
 
   const { data: testExists } = await serviceSupabase
@@ -88,21 +83,21 @@ router.post('/:testId', asyncHandler(async (req, res) => {
     .limit(1);
 
   if (!testExists?.length) {
-    return res.status(404).json({ error: 'Test record not found' });
+    return c.json({ error: 'Test record not found' }, 404);
   }
 
   const { data: inserted, error } = await serviceSupabase
     .from('annotations')
     .insert([{
       test_id: testId,
-      supervisor_email: authReq.userEmail ?? 'unknown',
+      supervisor_email: c.get('userEmail') ?? 'unknown',
       comment: comment?.trim() || null,
       status
     }])
     .select('*');
 
   if (error) {
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
   const caseStatus = CASE_STATUSES.includes(status as (typeof CASE_STATUSES)[number])
@@ -111,21 +106,24 @@ router.post('/:testId', asyncHandler(async (req, res) => {
       ? 'verified'
       : 'under_review';
 
-  await upsertCaseRecord(testId, authReq.userEmail ?? 'unknown', caseStatus, comment);
+  await upsertCaseRecord(testId, c.get('userEmail') ?? 'unknown', caseStatus, comment);
 
   // Notify supervisors via SSE so case queues refresh without polling
-  publishCaseUpdated(testId, caseStatus, authReq.userEmail ?? 'unknown');
+  await publishCaseUpdated(c.env, testId, caseStatus, c.get('userEmail') ?? 'unknown');
 
   await writeAuditLog(
-    authReq.userEmail ?? 'unknown',
+    c.get('userEmail') ?? 'unknown',
     `Annotated test ${testId} as ${status}`,
     testId
   );
 
-  return res.status(201).json({
-    ...(inserted?.[0] ?? null),
-    case_status: caseStatus
-  });
-}));
+  return c.json(
+    {
+      ...(inserted?.[0] ?? null),
+      case_status: caseStatus
+    },
+    201
+  );
+});
 
 export default router;

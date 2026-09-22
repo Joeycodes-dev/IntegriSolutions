@@ -1,6 +1,7 @@
-import { Router } from 'express';
-import { requireAdmin, type AdminRequest } from '../../middleware/requireAdmin';
-import { asyncHandler } from '../../asyncHandler';
+import { Hono } from 'hono';
+import type { AppEnv } from '../../env';
+import { requireAdmin } from '../../middleware/requireAdmin';
+import { readJson } from '../../utilities/jsonBody';
 import {
   getAdminConfig,
   updateAdminSettings,
@@ -8,46 +9,48 @@ import {
   SettingsConflictError
 } from '../../config/systemSettings';
 
-const router = Router();
+const router = new Hono<AppEnv>();
 
-router.use(requireAdmin);
+router.use('*', requireAdmin);
 
-router.get('/', asyncHandler(async (_req, res) => {
-  return res.json(await getAdminConfig());
-}));
+router.get('/', async (c) => {
+  return c.json(await getAdminConfig());
+});
 
-router.patch('/', asyncHandler(async (req, res) => {
-  const authReq = req as unknown as AdminRequest;
-  const body = (req.body ?? {}) as { expectedRevision?: unknown; values?: unknown };
+router.patch('/', async (c) => {
+  const body = await readJson<{ expectedRevision?: unknown; values?: unknown }>(c);
 
   const expectedRevision = Number(body.expectedRevision);
   if (!Number.isInteger(expectedRevision) || expectedRevision < 1) {
-    return res.status(400).json({ error: 'expectedRevision must be a positive integer' });
+    return c.json({ error: 'expectedRevision must be a positive integer' }, 400);
   }
 
   if (!body.values || typeof body.values !== 'object' || Array.isArray(body.values)) {
-    return res.status(400).json({ error: 'values must be an object of setting key/value pairs' });
+    return c.json({ error: 'values must be an object of setting key/value pairs' }, 400);
   }
 
   try {
     const config = await updateAdminSettings(
-      authReq.userEmail ?? 'unknown',
+      c.get('userEmail') ?? 'unknown',
       expectedRevision,
       body.values as Record<string, unknown>
     );
-    return res.json(config);
+    return c.json(config);
   } catch (err) {
     if (err instanceof SettingsValidationError) {
-      return res.status(400).json({ error: err.message });
+      return c.json({ error: err.message }, 400);
     }
     if (err instanceof SettingsConflictError) {
-      return res.status(409).json({
-        error: err.message,
-        currentRevision: err.currentRevision
-      });
+      return c.json(
+        {
+          error: err.message,
+          currentRevision: err.currentRevision
+        },
+        409
+      );
     }
     throw err;
   }
-}));
+});
 
 export default router;

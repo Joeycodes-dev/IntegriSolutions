@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../helpers/request';
 
 jest.mock('../../src/supabase', () => ({
   supabase: {
@@ -11,10 +11,10 @@ jest.mock('../../src/supabase', () => ({
 
 import geocodeRoutes from '../../src/routes/geocode';
 import { supabase } from '../../src/supabase';
+import type { AppEnv } from '../../src/env';
 
-const app = express();
-app.use(express.json());
-app.use('/api/geocode', geocodeRoutes);
+const app = new Hono<AppEnv>();
+app.route('/api/geocode', geocodeRoutes);
 
 const originalFetch = global.fetch;
 

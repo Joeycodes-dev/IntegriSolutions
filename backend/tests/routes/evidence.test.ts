@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../helpers/request';
 
 const mockServiceSupabase = {
   from: jest.fn(),
@@ -21,10 +21,10 @@ jest.mock('@supabase/supabase-js', () => ({
 }));
 
 jest.mock('../../src/middleware/auth', () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.userEmail = 'officer@example.com';
-    req.userId = 'officer-123';
-    next();
+  requireAuth: async (c: any, next: any) => {
+    c.set('userEmail', 'officer@example.com');
+    c.set('userId', 'officer-123');
+    await next();
   },
   AuthRequest: {},
 }));
@@ -33,55 +33,11 @@ jest.mock('../../src/utilities/auditLog', () => ({
   writeAuditLog: jest.fn(),
 }));
 
-jest.mock('multer', () => {
-  const parseFormData = (req: any): Promise<void> =>
-    new Promise((resolve) => {
-      if (!req.body) req.body = {};
-      const contentType = String(req.headers?.['content-type'] ?? '');
-      if (!contentType.includes('multipart/form-data')) {
-        resolve();
-        return;
-      }
-      const boundaryMatch = /boundary=(.+)$/.exec(contentType);
-      const boundary = boundaryMatch ? boundaryMatch[1].replace(/^"|"$/g, '') : null;
-      if (!boundary) {
-        resolve();
-        return;
-      }
-      const chunks: Buffer[] = [];
-      req.on('data', (chunk: Buffer) => chunks.push(chunk));
-      req.on('end', () => {
-        const raw = Buffer.concat(chunks).toString('utf8');
-        const fieldPattern = new RegExp(
-          `--${boundary}\\r\\nContent-Disposition: form-data; name="([^"]+)"\\r\\n\\r\\n([^\\r\\n]*)`,
-          'g'
-        );
-        let match: RegExpExecArray | null;
-        while ((match = fieldPattern.exec(raw))) {
-          req.body[match[1]] = match[2];
-        }
-        resolve();
-      });
-    });
-
-  const single = () => async (req: any, _res: any, next: any) => {
-    await parseFormData(req);
-    req.file = {
-      buffer: Buffer.from('fake-image-bytes'),
-      mimetype: 'image/jpeg',
-      originalname: 'photo.jpg',
-    };
-    next();
-  };
-  const memoryStorage = () => ({});
-  return Object.assign(() => ({ single, memoryStorage }), { memoryStorage, single });
-});
-
 import evidenceRoutes from '../../src/routes/evidence';
+import type { AppEnv } from '../../src/env';
 
-const app = express();
-app.use(express.json());
-app.use('/api/evidence', evidenceRoutes);
+const app = new Hono<AppEnv>();
+app.route('/api/evidence', evidenceRoutes);
 
 describe('Evidence Routes', () => {
   beforeEach(() => {

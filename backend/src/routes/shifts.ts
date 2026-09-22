@@ -1,20 +1,10 @@
-import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
-import { requireAuth, type AuthRequest } from '../middleware/auth';
+import { Hono } from 'hono';
+import type { AppEnv } from '../env';
+import { requireAuth } from '../middleware/auth';
 import { resolveProfileByEmail } from '../utilities/resolveProfile';
+import { serviceSupabase } from '../serviceSupabase';
 
-const router = Router();
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
+const router = new Hono<AppEnv>();
 
 function isMissingTable(error: { message?: string; code?: string } | null | undefined): boolean {
   return !!error && (error.code === '42P01' || /roadblock_shift|roadblock_shifts/i.test(error.message ?? ''));
@@ -40,20 +30,21 @@ function toRoadblockShift(row: Record<string, unknown>, assignmentStatus: string
   };
 }
 
-router.use(requireAuth);
+router.use('*', requireAuth);
 
-router.get('/active', async (req, res) => {
-  const authReq = req as AuthRequest;
+router.get('/active', async (c) => {
+  const userEmail = c.get('userEmail') ?? '';
+  const userId = c.get('userId');
   let resolved;
   try {
-    resolved = await resolveProfileByEmail(authReq.userEmail ?? '', authReq.userId);
+    resolved = await resolveProfileByEmail(userEmail, userId);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Officer profile lookup failed';
-    return res.status(500).json({ error: message });
+    return c.json({ error: message }, 500);
   }
 
   if (!resolved || resolved.source !== 'officer_users' || typeof resolved.profile.officerId !== 'number') {
-    return res.status(403).json({ error: 'Only officer accounts can view roadblock shift assignments' });
+    return c.json({ error: 'Only officer accounts can view roadblock shift assignments' }, 403);
   }
 
   const officerId = resolved.profile.officerId;
@@ -65,14 +56,14 @@ router.get('/active', async (req, res) => {
 
   if (assignmentError) {
     if (isMissingTable(assignmentError)) {
-      return res.status(503).json({ error: 'Roadblock shift tables are not set up. Run backend/migrations/20260731_shift_roadblock_operations.sql.' });
+      return c.json({ error: 'Roadblock shift tables are not set up. Run backend/migrations/20260731_shift_roadblock_operations.sql.' }, 503);
     }
-    return res.status(500).json({ error: assignmentError.message });
+    return c.json({ error: assignmentError.message }, 500);
   }
 
   const assignmentRows = assignments ?? [];
   const shiftIds = Array.from(new Set(assignmentRows.map((row) => String(row.shift_id)).filter(Boolean)));
-  if (shiftIds.length === 0) return res.json([]);
+  if (shiftIds.length === 0) return c.json([]);
 
   const nowIso = new Date().toISOString();
   const { data: shifts, error: shiftError } = await serviceSupabase
@@ -86,16 +77,16 @@ router.get('/active', async (req, res) => {
 
   if (shiftError) {
     if (isMissingTable(shiftError)) {
-      return res.status(503).json({ error: 'Roadblock shift tables are not set up. Run backend/migrations/20260731_shift_roadblock_operations.sql.' });
+      return c.json({ error: 'Roadblock shift tables are not set up. Run backend/migrations/20260731_shift_roadblock_operations.sql.' }, 503);
     }
-    return res.status(500).json({ error: shiftError.message });
+    return c.json({ error: shiftError.message }, 500);
   }
 
   const assignmentStatusByShift = new Map(
     assignmentRows.map((row) => [String(row.shift_id), String(row.assignment_status)])
   );
 
-  return res.json((shifts ?? []).map((row) => toRoadblockShift(
+  return c.json((shifts ?? []).map((row) => toRoadblockShift(
     row as Record<string, unknown>,
     assignmentStatusByShift.get(String(row.id)) ?? null
   )));

@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../helpers/request';
 import crypto from 'crypto';
 
 const mockServiceSupabase = {
@@ -25,10 +25,10 @@ jest.mock('../../src/utilities/testIntegrity', () => ({
 import verificationTokensRoutes from '../../src/routes/supervisor/verificationTokens';
 import { supabase } from '../../src/supabase';
 import { getTestHashValidity } from '../../src/utilities/testIntegrity';
+import type { AppEnv } from '../../src/env';
 
-const app = express();
-app.use(express.json());
-app.use('/api/supervisor/verification-tokens', verificationTokensRoutes);
+const app = new Hono<AppEnv>();
+app.route('/api/supervisor/verification-tokens', verificationTokensRoutes);
 
 function sha256(value: string): string {
   return crypto.createHash('sha256').update(value, 'utf8').digest('hex');

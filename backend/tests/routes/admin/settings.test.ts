@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../../helpers/request';
 
 const mockServiceSupabase = {
   from: jest.fn(),
@@ -19,10 +19,10 @@ jest.mock('@supabase/supabase-js', () => ({
 
 import settingsRoutes from '../../../src/routes/admin/settings';
 import { supabase } from '../../../src/supabase';
+import type { AppEnv } from '../../../src/env';
 
-const app = express();
-app.use(express.json());
-app.use('/api/admin/settings', settingsRoutes);
+const app = new Hono<AppEnv>();
+app.route('/api/admin/settings', settingsRoutes);
 
 const STORED_SETTINGS: Array<Record<string, unknown>> = [
   { key: 'auth.session_timeout_minutes', value: '30', updated_at: '2026-08-02T08:00:00Z', updated_by: null },

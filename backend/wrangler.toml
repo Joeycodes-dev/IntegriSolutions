@@ -1,0 +1,60 @@
+name = "integri-backend"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Create with: wrangler kv namespace create GEOCODE_CACHE
+# then replace the id below.
+[[kv_namespaces]]
+binding = "GEOCODE_CACHE"
+id = "f90525fb01e849b7985131ec93a4ffba"
+
+[[durable_objects.bindings]]
+name = "SSE_HUB"
+class_name = "SseHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SseHub"]
+
+# Rate-limit windows are fixed at 10s or 60s (Cloudflare binding constraint).
+# 15-minute express-rate-limit windows were mapped to equivalent per-minute density:
+#   auth   5/15min  -> 5/60s     (same burst, shorter window)
+#   api    400/15min -> 27/60s   (~400 per 15 minutes sustained)
+#   verify 60/15min -> 4/60s     (~60 per 15 minutes sustained)
+#   sync   10/60s   -> 10/60s    (unchanged)
+#   geocode 20/60s  -> 20/60s    (unchanged)
+[[unsafe.bindings]]
+name = "AUTH_RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 5, period = 60 }
+
+[[unsafe.bindings]]
+name = "API_RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1002"
+simple = { limit = 27, period = 60 }
+
+[[unsafe.bindings]]
+name = "SYNC_RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1003"
+simple = { limit = 10, period = 60 }
+
+[[unsafe.bindings]]
+name = "VERIFY_RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1004"
+simple = { limit = 4, period = 60 }
+
+[[unsafe.bindings]]
+name = "GEOCODE_RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1005"
+simple = { limit = 20, period = 60 }
+
+# Non-secret vars. Secrets (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FRONTEND_URL)
+# should be set with `wrangler secret put <NAME>` or a local `.dev.vars`.
+[vars]
+# FRONTEND_URL = "https://your-frontend.example.com"

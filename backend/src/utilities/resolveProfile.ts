@@ -1,17 +1,7 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { serviceSupabase } from '../serviceSupabase';
 import type { UserProfile } from '../types';
 import { normalizeDutyStatus } from '../constants/dutyStatus';
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
 
 interface OfficerRow {
   officer_id: number;

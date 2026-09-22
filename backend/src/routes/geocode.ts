@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { Hono } from 'hono';
+import type { AppEnv } from '../env';
 import { requireAuth } from '../middleware/auth';
-import { asyncHandler } from '../asyncHandler';
 
-const router = Router();
+const router = new Hono<AppEnv>();
 
 const NOMINATIM_SEARCH_URL = 'https://nominatim.openstreetmap.org/search';
 // Identifies this app to Nominatim, as their usage policy requires — see
@@ -30,6 +30,9 @@ export interface GeocodeResult {
 }
 
 let lastRequestAt = 0;
+// In-isolate fallback cache: imperfect across isolates, but GEOCODE_CACHE KV
+// (checked below when bound) covers cross-isolate hits, and this Map keeps
+// single-isolate deployments (and tests) without a KV binding working.
 const cache = new Map<string, { results: GeocodeResult[]; expiresAt: number }>();
 
 function sleep(ms: number): Promise<void> {
@@ -67,19 +70,28 @@ function parseResults(payload: unknown): GeocodeResult[] {
     .filter((row) => Number.isFinite(row.lat) && Number.isFinite(row.lng) && row.label !== '');
 }
 
-router.get('/search', requireAuth, asyncHandler(async (req, res) => {
-  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+router.get('/search', requireAuth, async (c) => {
+  const rawQ = c.req.query('q');
+  const q = typeof rawQ === 'string' ? rawQ.trim() : '';
   if (q.length < MIN_QUERY_LENGTH) {
-    return res.status(400).json({ error: `Search text must be at least ${MIN_QUERY_LENGTH} characters` });
+    return c.json({ error: `Search text must be at least ${MIN_QUERY_LENGTH} characters` }, 400);
   }
   if (q.length > MAX_QUERY_LENGTH) {
-    return res.status(400).json({ error: `Search text must be at most ${MAX_QUERY_LENGTH} characters` });
+    return c.json({ error: `Search text must be at most ${MAX_QUERY_LENGTH} characters` }, 400);
+  }
+
+  const kv = c.env?.GEOCODE_CACHE;
+  const kvKey = `geo:${q}`;
+
+  if (kv) {
+    const cachedKv = await kv.get(kvKey);
+    if (cachedKv) return c.json(JSON.parse(cachedKv));
   }
 
   const cacheKey = q.toLowerCase();
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
-    return res.json(cached.results);
+    return c.json(cached.results);
   }
 
   const url = `${NOMINATIM_SEARCH_URL}?format=jsonv2&limit=${RESULT_LIMIT}&q=${encodeURIComponent(q)}`;
@@ -89,23 +101,24 @@ router.get('/search', requireAuth, asyncHandler(async (req, res) => {
   } catch {
     // Unreachable, DNS failure, or our own timeout abort — all look the same
     // to the caller: the geocoder isn't answering right now.
-    return res.status(502).json({ error: UNAVAILABLE_MESSAGE });
+    return c.json({ error: UNAVAILABLE_MESSAGE }, 502);
   }
   if (!response.ok) {
-    return res.status(502).json({ error: UNAVAILABLE_MESSAGE });
+    return c.json({ error: UNAVAILABLE_MESSAGE }, 502);
   }
 
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
-    return res.status(502).json({ error: UNAVAILABLE_MESSAGE });
+    return c.json({ error: UNAVAILABLE_MESSAGE }, 502);
   }
 
   const results = parseResults(payload);
   cache.set(cacheKey, { results, expiresAt: Date.now() + CACHE_TTL_MS });
+  await kv?.put(kvKey, JSON.stringify(results), { expirationTtl: 300 });
 
-  return res.json(results);
-}));
+  return c.json(results);
+});
 
 export default router;

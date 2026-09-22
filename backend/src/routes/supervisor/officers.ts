@@ -1,10 +1,11 @@
-import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { Hono } from 'hono';
+import type { AppEnv } from '../../env';
+import { serviceSupabase } from '../../serviceSupabase';
 import { ROLE_OFFICER } from '../../constants/roles';
 import { normalizeDutyStatus } from '../../constants/dutyStatus';
-import { requireSupervisor, type SupervisorRequest } from '../../middleware/requireSupervisor';
+import { requireSupervisor } from '../../middleware/requireSupervisor';
 import { writeAuditLog } from '../../utilities/auditLog';
-import { asyncHandler } from '../../asyncHandler';
+import { readJson } from '../../utilities/jsonBody';
 import {
   buildOfficerInviteLink,
   generateOfficerInviteToken,
@@ -13,20 +14,9 @@ import {
 } from '../../utilities/officerInvites';
 import { sendOfficerInviteEmail } from '../../utilities/email';
 
-const router = Router();
+const router = new Hono<AppEnv>();
 
 type DbError = { message?: string; code?: string; details?: string; hint?: string };
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
 
 function digitsOnly(value?: string): string {
   return value?.replace(/\D/g, '') ?? '';
@@ -92,9 +82,9 @@ function toFieldOfficer(row: Record<string, unknown>) {
   };
 }
 
-router.use(requireSupervisor);
+router.use('*', requireSupervisor);
 
-router.get('/', async (_req, res) => {
+router.get('/', async (c) => {
   const { data, error } = await serviceSupabase
     .from('officer_users')
     .select('*')
@@ -102,15 +92,14 @@ router.get('/', async (_req, res) => {
     .order('created_at', { ascending: false });
 
   if (error) {
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
-  return res.json((data ?? []).map((row) => toFieldOfficer(row as Record<string, unknown>)));
+  return c.json((data ?? []).map((row) => toFieldOfficer(row as Record<string, unknown>)));
 });
 
-router.post('/', asyncHandler(async (req, res) => {
-  const authReq = req as unknown as SupervisorRequest;
-  const body = (req.body ?? {}) as Record<string, unknown>;
+router.post('/', async (c) => {
+  const body = await readJson(c);
   const email = String(body.email ?? '').trim().toLowerCase();
   const name = String(body.name ?? '');
   const surname = String(body.surname ?? '');
@@ -121,9 +110,12 @@ router.post('/', asyncHandler(async (req, res) => {
   const idNumber = body.idNumber != null ? String(body.idNumber) : undefined;
 
   if (!email || !name || !surname || !serviceNumber) {
-    return res.status(400).json({
-      error: 'Email, name, surname, and service number are required'
-    });
+    return c.json(
+      {
+        error: 'Email, name, surname, and service number are required'
+      },
+      400
+    );
   }
 
   const { data: existing } = await serviceSupabase
@@ -133,7 +125,7 @@ router.post('/', asyncHandler(async (req, res) => {
     .limit(1);
 
   if (existing?.length) {
-    return res.status(409).json({ error: 'A user with this email already exists' });
+    return c.json({ error: 'A user with this email already exists' }, 409);
   }
 
   const { data: existingSupervisors } = await serviceSupabase
@@ -143,13 +135,13 @@ router.post('/', asyncHandler(async (req, res) => {
     .limit(1);
 
   if (existingSupervisors?.length) {
-    return res.status(409).json({ error: 'A user with this email already exists' });
+    return c.json({ error: 'A user with this email already exists' }, 409);
   }
 
   const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
   const existingAuth = authList?.users?.find((u) => u.email?.toLowerCase() === email);
   if (existingAuth) {
-    return res.status(409).json({ error: 'An auth account with this email already exists' });
+    return c.json({ error: 'An auth account with this email already exists' }, 409);
   }
 
   const officerIdNumber = await allocateOfficerIdNumber(phone, serviceNumber, idNumber);
@@ -173,7 +165,7 @@ router.post('/', asyncHandler(async (req, res) => {
     .select('*');
 
   if (insertError || !inserted?.length) {
-    return res.status(500).json({ error: formatDbError(insertError as DbError | null) });
+    return c.json({ error: formatDbError(insertError as DbError | null) }, 500);
   }
 
   const created = toFieldOfficer(inserted[0] as Record<string, unknown>);
@@ -187,7 +179,7 @@ router.post('/', asyncHandler(async (req, res) => {
   const { error: inviteError } = await serviceSupabase.from('officer_invitations').insert([{
     officer_id: created.officerId,
     token_hash: hashOfficerInviteToken(token),
-    created_by_email: authReq.userEmail ?? null,
+    created_by_email: c.get('userEmail') ?? null,
     expires_at: expiresAt
   }]);
 
@@ -221,29 +213,28 @@ router.post('/', asyncHandler(async (req, res) => {
   };
 
   await writeAuditLog(
-    authReq.userEmail ?? 'unknown',
+    c.get('userEmail') ?? 'unknown',
     inviteEmailSent
       ? 'Created field officer invite'
       : 'Created field officer invite (email not sent)',
     created.userId
   );
 
-  return res.status(201).json(createdWithInvite);
-}));
+  return c.json(createdWithInvite, 201);
+});
 
 const OFFICER_STATUSES = ['Active', 'Inactive', 'Invited', 'Suspended'] as const;
 
-router.patch('/:officerId', asyncHandler(async (req, res) => {
-  const authReq = req as unknown as SupervisorRequest;
-  const officerId = Number(req.params.officerId);
-  const body = (req.body ?? {}) as {
+router.patch('/:officerId', async (c) => {
+  const officerId = Number(c.req.param('officerId'));
+  const body = await readJson<{
     status?: string;
     rank?: string;
     station?: string;
-  };
+  }>(c);
 
   if (!Number.isFinite(officerId)) {
-    return res.status(400).json({ error: 'Invalid officer id' });
+    return c.json({ error: 'Invalid officer id' }, 400);
   }
 
   const status = body.status?.trim();
@@ -251,13 +242,16 @@ router.patch('/:officerId', asyncHandler(async (req, res) => {
   const station = body.station?.trim();
 
   if (!status && rank === undefined && station === undefined) {
-    return res.status(400).json({ error: 'Provide status, rank, and/or station to update' });
+    return c.json({ error: 'Provide status, rank, and/or station to update' }, 400);
   }
 
   if (status && !(OFFICER_STATUSES as readonly string[]).includes(status)) {
-    return res.status(400).json({
-      error: `Status must be one of: ${OFFICER_STATUSES.join(', ')}`
-    });
+    return c.json(
+      {
+        error: `Status must be one of: ${OFFICER_STATUSES.join(', ')}`
+      },
+      400
+    );
   }
 
   const { data: existingRows, error: fetchError } = await serviceSupabase
@@ -268,12 +262,12 @@ router.patch('/:officerId', asyncHandler(async (req, res) => {
     .limit(1);
 
   if (fetchError) {
-    return res.status(500).json({ error: fetchError.message });
+    return c.json({ error: fetchError.message }, 500);
   }
 
   const existing = Array.isArray(existingRows) ? existingRows[0] : null;
   if (!existing) {
-    return res.status(404).json({ error: 'Field officer not found' });
+    return c.json({ error: 'Field officer not found' }, 404);
   }
 
   const patch: Record<string, unknown> = {};
@@ -290,20 +284,23 @@ router.patch('/:officerId', asyncHandler(async (req, res) => {
     .limit(1);
 
   if (updateError || !updatedRows?.length) {
-    return res.status(500).json({
-      error: formatDbError(updateError as DbError | null)
-    });
+    return c.json(
+      {
+        error: formatDbError(updateError as DbError | null)
+      },
+      500
+    );
   }
 
   const updated = toFieldOfficer(updatedRows[0] as Record<string, unknown>);
 
   await writeAuditLog(
-    authReq.userEmail ?? 'unknown',
+    c.get('userEmail') ?? 'unknown',
     `Updated field officer (${Object.keys(patch).join(', ')})`,
     updated.userId
   );
 
-  return res.json(updated);
-}));
+  return c.json(updated);
+});
 
 export default router;
