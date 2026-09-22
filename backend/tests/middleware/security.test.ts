@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import request from '../helpers/request';
-import { corsMiddleware } from '../../src/middleware/security';
+import { corsMiddleware, securityHeaders } from '../../src/middleware/security';
 import type { AppEnv } from '../../src/env';
 
 const app = new Hono<AppEnv>();
@@ -66,5 +66,29 @@ describe('CORS middleware (FRONTEND_URL allowlist)', () => {
 
     expect(response.status).toBe(200);
     expect(response.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
+  it('keeps middleware headers on routes that return a raw Response (SSE stream)', async () => {
+    const streamApp = new Hono<AppEnv>();
+    streamApp.use('*', securityHeaders);
+    streamApp.use('*', corsMiddleware);
+    streamApp.get('/api/tests/stream', () =>
+      new Response('data: {"type":"connected"}\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' }
+      })
+    );
+
+    const response = await request(streamApp)
+      .get('/api/tests/stream')
+      .set('Origin', 'https://integrisolutions.pages.dev')
+      .withEnv({ FRONTEND_URL: 'https://integrisolutions.pages.dev' });
+
+    expect(response.status).toBe(200);
+    // Without realizing c.res, Hono drops headers set before next() when the
+    // route returns a raw Response; the browser's EventSource then fails CORS.
+    expect(response.get('Access-Control-Allow-Origin')).toBe('https://integrisolutions.pages.dev');
+    expect(response.get('Vary')).toBe('Origin');
+    expect(response.get('Content-Security-Policy')).toBeTruthy();
+    expect(response.get('Content-Type')).toBe('text/event-stream');
   });
 });

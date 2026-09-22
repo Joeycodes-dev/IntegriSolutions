@@ -16,6 +16,11 @@ function isDevLocalOrigin(origin: string): boolean {
 
 // Defaults mirror helmet()'s baseline header set for the previous Express app.
 export const securityHeaders: MiddlewareHandler = async (c, next) => {
+  // Realize the response object before setting headers. Hono only merges
+  // headers set before next() into the response if c.res already exists;
+  // routes returning a raw Response (e.g. /api/tests/stream, which forwards
+  // the SseHub response) otherwise silently drop them.
+  void c.res;
   c.header(
     'Content-Security-Policy',
     "default-src 'self'; base-uri 'self'; font-src 'self' https: data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data:; object-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self' https: 'unsafe-inline'; upgrade-insecure-requests"
@@ -39,6 +44,10 @@ function normalizeOrigin(value: string): string {
 }
 
 export const corsMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
+  // See securityHeaders: without realizing c.res the CORS headers would be
+  // dropped on raw Responses, and the browser's cross-origin EventSource to
+  // /api/tests/stream would fail the CORS check ("Live sync disconnected").
+  void c.res;
   const origin = c.req.header('origin');
   const frontendUrl = normalizeOrigin(c.env?.FRONTEND_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:3000');
   const allowedOrigins = new Set([
