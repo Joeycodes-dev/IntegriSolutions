@@ -20,5 +20,7 @@ backend/gmp-demo-project-957048784-14f098f3587c.json
 # dotenv environment variable files
 .env
 .env.local
+.dev.vars
+.dev.vars.*
 .gga
 AGENTS.md.git.disabled-*/

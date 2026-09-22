@@ -34,9 +34,13 @@ export const securityHeaders: MiddlewareHandler = async (c, next) => {
   await next();
 };
 
+function normalizeOrigin(value: string): string {
+  return value.trim().replace(/\/+$/, '');
+}
+
 export const corsMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
   const origin = c.req.header('origin');
-  const frontendUrl = c.env?.FRONTEND_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:3000';
+  const frontendUrl = normalizeOrigin(c.env?.FRONTEND_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:3000');
   const allowedOrigins = new Set([
     frontendUrl,
     'http://localhost:3000',
