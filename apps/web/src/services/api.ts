@@ -28,6 +28,71 @@ function isExpiredTokenResponse(status: number, message: string): boolean {
   return status === 401 && /invalid or expired access token/i.test(message);
 }
 
+/** Thrown when the backend answers 429. This is a "not right now", not a
+ * rejection of the request, so callers should treat it as deferrable rather
+ * than terminal. */
+export class RateLimitError extends Error {
+  readonly retryAfterMs: number;
+
+  constructor(message: string, retryAfterMs: number) {
+    super(message);
+    this.name = 'RateLimitError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export function isRateLimitError(err: unknown): boolean {
+  return err instanceof RateLimitError;
+}
+
+/**
+ * Shared back-off window for the whole tab. It has to be shared rather than
+ * per-caller: if only the request that hit the 429 slowed down, chat polling,
+ * the unread badge and the audit refresh would all keep their old cadence and
+ * the budget would never recover.
+ */
+let throttleUntilMs = 0;
+let consecutiveRateLimits = 0;
+
+const DEFAULT_RETRY_AFTER_MS = 5_000;
+const MAX_RETRY_AFTER_MS = 60_000;
+const MAX_INLINE_WAIT_MS = 8_000;
+
+/** Milliseconds left before the server's limit window is expected to have
+ * reset. Polling loops use this to skip a tick instead of stacking up requests
+ * that are only going to be rejected. */
+export function getRateLimitCooldownMs(now = Date.now()): number {
+  return Math.max(0, throttleUntilMs - now);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function registerRateLimit(response: Response): number {
+  const header = response.headers.get('Retry-After');
+  const fromHeader = header ? Number(header) * 1000 : NaN;
+  consecutiveRateLimits += 1;
+  // Without a server-provided Retry-After we escalate: 5s, 10s, 20s, 40s…
+  const fallback = Math.min(DEFAULT_RETRY_AFTER_MS * 2 ** (consecutiveRateLimits - 1), MAX_RETRY_AFTER_MS);
+  const waitMs = Math.min(
+    Number.isFinite(fromHeader) && fromHeader > 0 ? fromHeader : fallback,
+    MAX_RETRY_AFTER_MS
+  );
+  throttleUntilMs = Math.max(throttleUntilMs, Date.now() + waitMs);
+  return waitMs;
+}
+
+async function waitForRateLimitWindow(): Promise<void> {
+  const cooldownMs = getRateLimitCooldownMs();
+  if (cooldownMs <= 0) return;
+  if (cooldownMs > MAX_INLINE_WAIT_MS) {
+    throw new RateLimitError('Too many requests — waiting for the limit to reset before retrying.', cooldownMs);
+  }
+  // Jitter so requests released together don't stampede straight back into a 429.
+  await sleep(cooldownMs + Math.random() * 500);
+}
+
 function request<T>(path: string, options: RequestInit = {}) {
   const method = (options.method ?? 'GET').toUpperCase();
   const sentToken = getAccessToken();
@@ -51,6 +116,7 @@ function request<T>(path: string, options: RequestInit = {}) {
 }
 
 async function performRequest<T>(path: string, options: RequestInit, sentToken: string | null) {
+  await waitForRateLimitWindow();
   const { headers: optionHeaders, body, ...rest } = options;
   
   // Don't set Content-Type for FormData - let the browser set it automatically with boundary
@@ -84,12 +150,18 @@ async function performRequest<T>(path: string, options: RequestInit, sentToken: 
       (typeof payload.message === 'string' ? payload.message : null) ||
       (rawText ? rawText.slice(0, 300) : null) ||
       `Request failed (${response.status} ${response.statusText})`;
+
+    if (response.status === 429) {
+      throw new RateLimitError(message, registerRateLimit(response));
+    }
+
     if (isExpiredTokenResponse(response.status, message)) {
       emitAuthExpired(message, sentToken);
     }
     throw new Error(message);
   }
 
+  consecutiveRateLimits = 0;
   return payload as T;
 }
 

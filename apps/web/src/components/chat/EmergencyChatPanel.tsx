@@ -4,6 +4,7 @@ import {
   getChatOfficerContacts,
   getChatThreadMessages,
   getChatThreads,
+  getRateLimitCooldownMs,
   sendChatMessage
 } from '../../services/api';
 import type { ChatMessage, ChatOfficerContact, ChatThreadSummary, UserProfile } from '../../types';
@@ -193,8 +194,19 @@ export function EmergencyChatPanel({ profile }: Props) {
     void load();
 
     let removeRealtime: (() => void) | null = null;
+    // Two deliberate cost cutbacks. The thread roster and officer contacts
+    // change far less often than messages, and Supabase realtime (below) already
+    // pushes new messages through — this poll is a safety net, not the delivery
+    // path. Fetching all three every 7s was ~26 req/min on its own, i.e. almost
+    // the entire old shared API budget for one tab.
+    let tick = 0;
     const interval = window.setInterval(() => {
-      void loadThreadsAndContacts();
+      // Don't stack up polls we know will be rejected.
+      if (getRateLimitCooldownMs() > 0) return;
+      tick += 1;
+      if (tick % 2 === 0) {
+        void loadThreadsAndContacts();
+      }
       if (selectedThreadId) {
         void loadMessages(selectedThreadId);
       }

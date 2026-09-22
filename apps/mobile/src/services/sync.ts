@@ -2,7 +2,7 @@ import { sha256 } from 'js-sha256';
 import { insertTest, updateSyncStatus, getPendingSync, type LocalTestRecord } from '../db/repository';
 import type { TestLocationPayload } from '../lib/testLocation';
 import type { DeviceEvidencePayload } from './breathalyzer';
-import { syncRecords, uploadEvidencePhoto, acknowledgeAlert, isNetworkRequestError } from './api';
+import { syncRecords, uploadEvidencePhoto, acknowledgeAlert, isNetworkRequestError, isRateLimitError } from './api';
 import { logAuditEvent } from './audit';
 import { getAccessToken } from './auth';
 import {
@@ -234,8 +234,13 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
   const pending = await getPendingSync(officerId);
   const attachmentResults: Awaited<ReturnType<typeof syncPendingRecords>>['attachmentResults'] = [];
   const processedAttachmentTestIds = new Set<string>();
+  // Flipped as soon as the server tells us to back off. Attachments are one HTTP
+  // request each, so without this a throttled batch would keep spending the
+  // budget we have just been told has run out.
+  let throttled = false;
 
   const uploadAttachmentsFor = async (testId: string) => {
+    if (throttled) return;
     processedAttachmentTestIds.add(testId);
     const attachments = await getPendingAttachments();
     const owned = attachments.filter((attachment) => attachment.testId === testId);
@@ -255,6 +260,19 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
         }
       } catch (photoError) {
         const message = photoError instanceof Error ? photoError.message : 'Photo upload failed';
+        if (isRateLimitError(photoError)) {
+          // 429 means "not now", not "never": leave the retry budget untouched
+          // and drop the rest of this pass.
+          throttled = true;
+          attachmentResults.push({
+            testId,
+            attachmentId: attachment.id,
+            category: attachment.category,
+            status: 'pending',
+            error: message
+          });
+          return;
+        }
         if (attachment.retryCount >= 4) {
           await updateAttachmentSyncStatus(attachment.id, 'failed');
           attachmentResults.push({
@@ -370,6 +388,22 @@ export async function syncPendingRecords(officerId?: number | null): Promise<{
     return { synced: syncedIds, failed: failedIds, attachmentResults };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+
+    if (isRateLimitError(error)) {
+      // Throttled, not rejected: leave every record pending with its retry
+      // budget intact. The old behaviour burned the 4-retry cap in ~40s of
+      // throttling and then marked real tests 'failed' for good.
+      await logAuditEvent({
+        action: 'sync.batch.throttled',
+        outcome: 'failure',
+        severity: 'warning',
+        message: `Sync batch throttled, deferring ${pending.length} record(s)`,
+        entityType: 'sync',
+        metadata: { attempted: pending.length, deferred: pending.length, error: message }
+      });
+      return { synced: [], failed: [], attachmentResults: [] };
+    }
+
     const failedIds: { id: string; error: string }[] = [];
     for (const record of pending) {
       const entry = { id: record.id, error: message };
@@ -433,8 +467,10 @@ export async function syncPendingAlertAcks(): Promise<{ synced: string[]; failed
       });
     } catch (error) {
       failed.push(ack.alertId);
-      if (isNetworkRequestError(error)) {
-        // Still offline (or server unreachable) — leave queued, retry next tick.
+      if (isNetworkRequestError(error) || isRateLimitError(error)) {
+        // Still offline, or the server is throttling us — leave queued and retry
+        // next tick. Neither is the server rejecting the acknowledgement, so
+        // neither should cost retry budget or drop the ack after 4 attempts.
         continue;
       }
       // Server rejected the request outright (e.g. alert no longer eligible).

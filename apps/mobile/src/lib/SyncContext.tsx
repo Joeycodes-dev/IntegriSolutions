@@ -11,6 +11,7 @@ import {
   type LocalTestRecord
 } from '../db/repository';
 import { syncPendingRecords, syncPendingAlertAcks } from '../services/sync';
+import { getRateLimitCooldownMs } from '../services/api';
 import { useAuth } from '../lib/AuthContext';
 
 type SyncContextType = {
@@ -98,6 +99,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
     if (!isOnline) return;
     if (!token) return;
+    // While the backend is throttling us the queue is safe left alone — forcing
+    // a sync now just earns another 429 and spends retry budget we no longer
+    // have to spare.
+    if (getRateLimitCooldownMs() > 0) return;
 
     isSyncingRef.current = true;
     setIsSyncing(true);
@@ -115,10 +120,9 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           console.warn(`  ${f.id}: ${f.error}`);
         }
       }
-      // Retry failed records that haven't hit the cap, unless auth has failed.
-      if (result.failed.length > 0 && !hasAuthFailure) {
-        await syncPendingRecords(officerId);
-      }
+      // Note: deliberately no immediate re-pass on failure. Retrying straight
+      // away doubles the traffic at the moment the server is least able to take
+      // it; the 10s heartbeat picks these up again instead.
 
       if (!hasAuthFailure) {
         await syncPendingAlertAcks();

@@ -28,6 +28,12 @@ export function createApp(): Hono<AppEnv> {
 
   app.get('/api/health', (c) => c.json({ status: 'ok' }));
 
+  // Limiter notes (see middleware/rateLimiter.ts for the keying rules):
+  //  - /api/public/* is anonymous and capped by its own tighter limiter only;
+  //    apiLimiter skips it explicitly, so this does NOT depend on the ordering
+  //    of these lines.
+  //  - /api/auth/* and /api/sync/* intentionally stack their specific limiter on
+  //    top of the shared apiLimiter budget.
   app.use('/api/public/*', verifyLimiter);
   app.route('/api/public', publicVerificationRoutes);
 

@@ -30,6 +30,9 @@ export interface Env {
   SYNC_RATE_LIMITER?: RateLimitBinding;
   VERIFY_RATE_LIMITER?: RateLimitBinding;
   GEOCODE_RATE_LIMITER?: RateLimitBinding;
+  /** Wide per-IP ceiling applied on top of every identity-keyed limiter, so a
+   * forged `sub` cannot sidestep rate limiting. See middleware/rateLimiter.ts. */
+  IP_RATE_LIMITER?: RateLimitBinding;
   GEOCODE_CACHE?: KVNamespaceLike;
   SSE_HUB?: DurableObjectNamespaceLike;
 }

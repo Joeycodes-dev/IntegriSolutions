@@ -77,11 +77,12 @@ Deploy with `npm run deploy`. The first deploy applies the `SseHub` Durable Obje
 |---------|------|---------|
 | `GEOCODE_CACHE` | KV namespace | Cached Nominatim geocode lookups |
 | `SSE_HUB` | Durable Object | SSE broadcast hub for the supervisor event stream |
-| `AUTH_RATE_LIMITER` | Rate limit | 5 req / 60s on `/api/auth/*` |
-| `API_RATE_LIMITER` | Rate limit | 27 req / 60s on `/api/*` (health + SSE stream excluded) |
-| `SYNC_RATE_LIMITER` | Rate limit | 10 req / 60s on `/api/sync/*` |
-| `VERIFY_RATE_LIMITER` | Rate limit | 4 req / 60s on `/api/public/*` |
-| `GEOCODE_RATE_LIMITER` | Rate limit | 20 req / 60s on `/api/geocode/*` |
+| `AUTH_RATE_LIMITER` | Rate limit | 10 req / 60s on `/api/auth/*` (keyed per IP — login is anonymous) |
+| `API_RATE_LIMITER` | Rate limit | 120 req / 60s on `/api/*`, keyed per signed-in user (health, SSE stream and `/api/public/*` excluded) |
+| `SYNC_RATE_LIMITER` | Rate limit | 60 req / 60s on `/api/sync/*`, per user (stacks on `API_RATE_LIMITER`) |
+| `VERIFY_RATE_LIMITER` | Rate limit | 20 req / 60s on `/api/public/*` (keyed per IP — anonymous) |
+| `GEOCODE_RATE_LIMITER` | Rate limit | 20 req / 60s on `/api/geocode/*`, per user |
+| `IP_RATE_LIMITER` | Rate limit | 600 req / 60s per IP backstop for identity-keyed requests |
 
 ## Invite Email
 

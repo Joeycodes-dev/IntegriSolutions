@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getChatThreads } from '../services/api';
+import { getChatThreads, getRateLimitCooldownMs } from '../services/api';
 import { hasSupabaseRealtimeConfig, supabaseRealtime } from '../lib/supabaseRealtime';
 
 export function useChatUnreadCount(enabled: boolean) {
@@ -29,6 +29,9 @@ export function useChatUnreadCount(enabled: boolean) {
 
     let removeRealtime: (() => void) | null = null;
     const interval: ReturnType<typeof setInterval> = setInterval(() => {
+      // Skip the tick while the API is throttling us — the badge is not worth
+      // spending budget we have just been told we don't have.
+      if (getRateLimitCooldownMs() > 0) return;
       void refresh();
     }, 12000);
 

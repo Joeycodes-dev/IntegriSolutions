@@ -39,12 +39,77 @@ export function isNetworkRequestError(err: unknown): boolean {
   return err instanceof Error && /^Network error requesting/.test(err.message);
 }
 
+/** Thrown when the backend answers 429. This is a "not right now", not a
+ * rejection of the work being sent, so callers must treat it as deferrable
+ * rather than terminal — see services/sync.ts. */
+export class RateLimitError extends Error {
+  readonly retryAfterMs: number;
+
+  constructor(message: string, retryAfterMs: number) {
+    super(message);
+    this.name = 'RateLimitError';
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export function isRateLimitError(err: unknown): boolean {
+  return err instanceof RateLimitError;
+}
+
+/**
+ * Shared back-off window for the whole app. It has to be shared rather than
+ * per-feature: if only the caller that hit the 429 slowed down, chat polling
+ * would keep running at its old cadence and the budget would never recover.
+ */
+let throttleUntilMs = 0;
+let consecutiveRateLimits = 0;
+
+const DEFAULT_RETRY_AFTER_MS = 5_000;
+const MAX_RETRY_AFTER_MS = 60_000;
+const MAX_INLINE_WAIT_MS = 8_000;
+
+/** Milliseconds remaining before the server's rate limit window is expected to
+ * have reset. Sync loops use this to skip a tick instead of forcing a doomed
+ * request. */
+export function getRateLimitCooldownMs(now = Date.now()): number {
+  return Math.max(0, throttleUntilMs - now);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function registerRateLimit(response: Response): number {
+  const header = response.headers.get('Retry-After');
+  const fromHeader = header ? Number(header) * 1000 : NaN;
+  consecutiveRateLimits += 1;
+  // Without a server-provided Retry-After we escalate: 5s, 10s, 20s, 40s…
+  const fallback = Math.min(DEFAULT_RETRY_AFTER_MS * 2 ** (consecutiveRateLimits - 1), MAX_RETRY_AFTER_MS);
+  const waitMs = Math.min(
+    Number.isFinite(fromHeader) && fromHeader > 0 ? fromHeader : fallback,
+    MAX_RETRY_AFTER_MS
+  );
+  throttleUntilMs = Math.max(throttleUntilMs, Date.now() + waitMs);
+  return waitMs;
+}
+
+async function waitForRateLimitWindow(): Promise<void> {
+  const cooldownMs = getRateLimitCooldownMs();
+  if (cooldownMs <= 0) return;
+  if (cooldownMs > MAX_INLINE_WAIT_MS) {
+    throw new RateLimitError('Too many requests — waiting for the limit to reset before retrying.', cooldownMs);
+  }
+  // Jitter so requests released together don't stampede straight back into a 429.
+  await sleep(cooldownMs + Math.random() * 500);
+}
+
 function extractErrorMessage(payload: unknown): string {
   const candidate = (payload as { error?: unknown })?.error;
   return typeof candidate === 'string' && candidate.trim() ? candidate : 'API request failed';
 }
 
 async function request<T>(path: string, options: RequestInit = {}, behavior: RequestBehavior = {}) {
+  await waitForRateLimitWindow();
   const token = await getAccessToken();
   const storedProfile = await getStoredProfile();
   const roleId = Number(storedProfile?.roleId);
@@ -86,6 +151,11 @@ async function request<T>(path: string, options: RequestInit = {}, behavior: Req
 
   if (!response.ok) {
     const errorMessage = extractErrorMessage(payload);
+
+    if (response.status === 429) {
+      throw new RateLimitError(errorMessage, registerRateLimit(response));
+    }
+
     const shouldRetryWithoutAuth =
       response.status === 401
       && !!token
@@ -103,9 +173,14 @@ async function request<T>(path: string, options: RequestInit = {}, behavior: Req
 
       payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(extractErrorMessage(payload));
+        const retryMessage = extractErrorMessage(payload);
+        if (response.status === 429) {
+          throw new RateLimitError(retryMessage, registerRateLimit(response));
+        }
+        throw new Error(retryMessage);
       }
 
+      consecutiveRateLimits = 0;
       return payload as T;
     }
 
@@ -118,6 +193,7 @@ async function request<T>(path: string, options: RequestInit = {}, behavior: Req
     throw new Error(errorMessage);
   }
 
+  consecutiveRateLimits = 0;
   return payload as T;
 }
 
