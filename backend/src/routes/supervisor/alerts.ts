@@ -1,24 +1,15 @@
-import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
-import multer from 'multer';
-import { requireSupervisor, type SupervisorRequest } from '../../middleware/requireSupervisor';
+import { Hono } from 'hono';
+import type { MiddlewareHandler } from 'hono';
+import type { AppEnv } from '../../env';
+import { serviceSupabase } from '../../serviceSupabase';
+import { requireSupervisor } from '../../middleware/requireSupervisor';
 import { ROLE_SUPERVISOR, ROLE_OFFICER } from '../../constants/roles';
 import { writeAuditLog } from '../../utilities/auditLog';
-import { asyncHandler } from '../../asyncHandler';
+import { readJson } from '../../utilities/jsonBody';
+import { readUpload } from '../../utilities/uploads';
 import { priorityWeight } from '../../utilities/alertPriority';
 
-const router = Router();
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
+const router = new Hono<AppEnv>();
 
 const ALERT_TYPES = new Set(['bolo_person', 'bolo_vehicle', 'hazard', 'general']);
 const BOLO_TYPES = new Set(['bolo_person', 'bolo_vehicle']);
@@ -191,11 +182,8 @@ async function resolveEligibleOfficerIds(
   return { ids: [] };
 }
 
-const photoUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
-  fileFilter: (_req, file, callback) => callback(null, ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype))
-});
+const ALLOWED_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
 function isMissingTable(error: { message?: string; code?: string } | null | undefined): boolean {
   return !!error && (error.code === '42P01' || /operational_alert/i.test(error.message ?? ''));
@@ -271,19 +259,17 @@ function toOperationalAlert(row: Record<string, unknown>, extra: Record<string, 
  * not originating operational content (see supervisor/shifts.ts, cases.ts, etc.,
  * none of which Admin has a UI path to author either).
  */
-function requireSupervisorRole(req: any, res: any, next: any) {
-  const authReq = req as SupervisorRequest;
-  if (authReq.roleId !== ROLE_SUPERVISOR) {
-    return res.status(403).json({ error: 'Only supervisor accounts can issue operational alerts' });
+const requireSupervisorRole: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (c.get('roleId') !== ROLE_SUPERVISOR) {
+    return c.json({ error: 'Only supervisor accounts can issue operational alerts' }, 403);
   }
-  return next();
-}
+  await next();
+};
 
-router.use(requireSupervisor);
+router.use('*', requireSupervisor);
 
-router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
-  const authReq = req as SupervisorRequest;
-  const body = (req.body ?? {}) as Record<string, unknown>;
+router.post('/', requireSupervisorRole, async (c) => {
+  const body = await readJson(c);
 
   const alertType = String(body.alertType ?? '');
   const rawPriority = body.priority;
@@ -300,42 +286,45 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
   const explicitExpiresAt = body.expiresAt ? parseDate(body.expiresAt) : null;
 
   if (!ALERT_TYPES.has(alertType)) {
-    return res.status(400).json({ error: 'A valid alert type is required' });
+    return c.json({ error: 'A valid alert type is required' }, 400);
   }
   if (rawPriority != null && (typeof rawPriority !== 'string' || !PRIORITIES.has(rawPriority))) {
-    return res.status(400).json({ error: `priority must be one of: ${Array.from(PRIORITIES).join(', ')}` });
+    return c.json({ error: `priority must be one of: ${Array.from(PRIORITIES).join(', ')}` }, 400);
   }
   if (!description) {
-    return res.status(400).json({ error: 'Description is required' });
+    return c.json({ error: 'Description is required' }, 400);
   }
   if (!TARGET_SCOPES.has(targetScope)) {
-    return res.status(400).json({ error: 'A valid target scope is required' });
+    return c.json({ error: 'A valid target scope is required' }, 400);
   }
   if (targetScope === 'shift' && !targetShiftId) {
-    return res.status(400).json({ error: 'targetShiftId is required when targetScope is shift' });
+    return c.json({ error: 'targetShiftId is required when targetScope is shift' }, 400);
   }
   if (targetScope === 'officers' && officerIds.length === 0) {
-    return res.status(400).json({ error: 'At least one officer id is required when targetScope is officers' });
+    return c.json({ error: 'At least one officer id is required when targetScope is officers' }, 400);
   }
   if (BOLO_TYPES.has(alertType) && sourceType !== 'external') {
-    return res.status(400).json({
-      error: 'BOLO alerts for a person or vehicle must come from an external authority — set source type to external with an authority and reference'
-    });
+    return c.json(
+      {
+        error: 'BOLO alerts for a person or vehicle must come from an external authority — set source type to external with an authority and reference'
+      },
+      400
+    );
   }
   if (sourceType === 'external' && (!sourceAuthority || !sourceReference)) {
-    return res.status(400).json({ error: 'External alerts require both a source authority and a source reference' });
+    return c.json({ error: 'External alerts require both a source authority and a source reference' }, 400);
   }
   if (personReference && PERSON_REFERENCE_ID_NUMBER_PATTERN.test(personReference)) {
-    return res.status(400).json({ error: 'Do not enter a full ID number in the person reference — use a partial reference or description' });
+    return c.json({ error: 'Do not enter a full ID number in the person reference — use a partial reference or description' }, 400);
   }
   if (location.lat != null && !isValidLatitude(Number(location.lat))) {
-    return res.status(400).json({ error: 'location.lat must be between -90 and 90' });
+    return c.json({ error: 'location.lat must be between -90 and 90' }, 400);
   }
   if (location.lng != null && !isValidLongitude(Number(location.lng))) {
-    return res.status(400).json({ error: 'location.lng must be between -180 and 180' });
+    return c.json({ error: 'location.lng must be between -180 and 180' }, 400);
   }
   if (location.radiusMeters != null && !isValidRadiusMeters(Number(location.radiusMeters))) {
-    return res.status(400).json({ error: `location.radiusMeters must be a positive number up to ${MAX_LOCATION_RADIUS_METERS}` });
+    return c.json({ error: `location.radiusMeters must be a positive number up to ${MAX_LOCATION_RADIUS_METERS}` }, 400);
   }
 
   // BOLO/hazard bulletins get a documented operational default expiry when
@@ -343,7 +332,7 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
   // general alerts stay open-ended, matching prior behavior.
   const expiresAt = resolveDefaultExpiresAt(alertType, explicitExpiresAt);
 
-  const supervisorEmail = authReq.userEmail ?? 'unknown';
+  const supervisorEmail = c.get('userEmail') ?? 'unknown';
   const insertPayload = {
     alert_type: alertType,
     priority,
@@ -358,7 +347,7 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
     location_label: optionalTrimmedString(location.label),
     location_radius_meters: optionalNumber(location.radiusMeters),
     issued_by_source: 'supervisor_users',
-    issued_by_id: authReq.supervisorOfficerId,
+    issued_by_id: c.get('supervisorOfficerId'),
     issued_by_name: supervisorNameFromEmail(supervisorEmail),
     target_scope: targetScope,
     target_shift_id: targetScope === 'shift' ? targetShiftId : null,
@@ -375,9 +364,9 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
 
   if (insertError || !inserted?.length) {
     if (isMissingTable(insertError)) {
-      return res.status(503).json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' });
+      return c.json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' }, 503);
     }
-    return res.status(400).json({ error: insertError?.message ?? 'Failed to create operational alert' });
+    return c.json({ error: insertError?.message ?? 'Failed to create operational alert' }, 400);
   }
 
   const alertRow = inserted[0] as Record<string, unknown>;
@@ -389,18 +378,18 @@ router.post('/', requireSupervisorRole, asyncHandler(async (req, res) => {
 
     if (targetError) {
       await serviceSupabase.from('operational_alerts').delete().eq('id', alertRow.id);
-      return res.status(500).json({ error: targetError.message });
+      return c.json({ error: targetError.message }, 500);
     }
   }
 
   await writeAuditLog(supervisorEmail, `Created operational alert (${alertType})`, String(alertRow.id));
 
-  return res.status(201).json(toOperationalAlert(alertRow, {
+  return c.json(toOperationalAlert(alertRow, {
     assignedOfficerIds: targetScope === 'officers' ? officerIds : []
-  }));
-}));
+  }), 201);
+});
 
-router.get('/', asyncHandler(async (_req, res) => {
+router.get('/', async (c) => {
   const { data: rows, error } = await serviceSupabase
     .from('operational_alerts')
     .select('*')
@@ -409,9 +398,9 @@ router.get('/', asyncHandler(async (_req, res) => {
 
   if (error) {
     if (isMissingTable(error)) {
-      return res.status(503).json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' });
+      return c.json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' }, 503);
     }
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
   const alertIds = (rows ?? []).map((row) => String(row.id));
@@ -446,17 +435,16 @@ router.get('/', asyncHandler(async (_req, res) => {
     targetsByAlert.set(key, [...(targetsByAlert.get(key) ?? []), Number(row.officer_id)]);
   }
 
-  return res.json((rows ?? []).map((row) => toOperationalAlert(row as Record<string, unknown>, {
+  return c.json((rows ?? []).map((row) => toOperationalAlert(row as Record<string, unknown>, {
     acknowledgementCount: ackCounts.get(String(row.id)) ?? 0,
     matchCount: matchCounts.get(String(row.id)) ?? 0,
     assignedOfficerIds: targetsByAlert.get(String(row.id)) ?? []
   })));
-}));
+});
 
-router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
-  const authReq = req as SupervisorRequest;
-  const alertId = String(req.params.id);
-  const body = (req.body ?? {}) as Record<string, unknown>;
+router.patch('/:id', requireSupervisorRole, async (c) => {
+  const alertId = String(c.req.param('id'));
+  const body = await readJson(c);
 
   const { data: existingRow, error: existingError } = await serviceSupabase
     .from('operational_alerts')
@@ -464,8 +452,8 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
     .eq('id', alertId)
     .maybeSingle();
 
-  if (existingError) return res.status(500).json({ error: existingError.message });
-  if (!existingRow) return res.status(404).json({ error: 'Operational alert not found' });
+  if (existingError) return c.json({ error: existingError.message }, 500);
+  if (!existingRow) return c.json({ error: 'Operational alert not found' }, 404);
   const existing = existingRow as Record<string, unknown>;
 
   const status = typeof body.status === 'string' ? body.status : undefined;
@@ -489,28 +477,28 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
   const isClosingStatus = status === 'resolved' || status === 'cancelled';
 
   if (!status && !hasExpiresPatch && !hasLocationPatch && !hasPriorityPatch && !hasDescriptionPatch && !hasTargetPatch && !hasSourcePatch) {
-    return res.status(400).json({ error: 'Provide at least one field to update' });
+    return c.json({ error: 'Provide at least one field to update' }, 400);
   }
   if (status && !STATUSES.has(status)) {
-    return res.status(400).json({ error: `Status must be one of: ${Array.from(STATUSES).join(', ')}` });
+    return c.json({ error: `Status must be one of: ${Array.from(STATUSES).join(', ')}` }, 400);
   }
   if (isClosingStatus && !reason) {
-    return res.status(400).json({ error: `A reason is required when marking an alert as ${status}` });
+    return c.json({ error: `A reason is required when marking an alert as ${status}` }, 400);
   }
   if (location?.lat != null && !isValidLatitude(Number(location.lat))) {
-    return res.status(400).json({ error: 'location.lat must be between -90 and 90' });
+    return c.json({ error: 'location.lat must be between -90 and 90' }, 400);
   }
   if (location?.lng != null && !isValidLongitude(Number(location.lng))) {
-    return res.status(400).json({ error: 'location.lng must be between -180 and 180' });
+    return c.json({ error: 'location.lng must be between -180 and 180' }, 400);
   }
   if (location?.radiusMeters != null && !isValidRadiusMeters(Number(location.radiusMeters))) {
-    return res.status(400).json({ error: `location.radiusMeters must be a positive number up to ${MAX_LOCATION_RADIUS_METERS}` });
+    return c.json({ error: `location.radiusMeters must be a positive number up to ${MAX_LOCATION_RADIUS_METERS}` }, 400);
   }
 
   let priority: string | undefined;
   if (hasPriorityPatch) {
     if (typeof body.priority !== 'string' || !PRIORITIES.has(body.priority)) {
-      return res.status(400).json({ error: `priority must be one of: ${Array.from(PRIORITIES).join(', ')}` });
+      return c.json({ error: `priority must be one of: ${Array.from(PRIORITIES).join(', ')}` }, 400);
     }
     priority = body.priority;
   }
@@ -519,7 +507,7 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
   if (hasDescriptionPatch) {
     description = String(body.description ?? '').trim();
     if (!description) {
-      return res.status(400).json({ error: 'Description cannot be empty' });
+      return c.json({ error: 'Description cannot be empty' }, 400);
     }
   }
 
@@ -532,7 +520,7 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
   if (hasTargetPatch) {
     targetScope = typeof body.targetScope === 'string' ? body.targetScope : existingTargetScope;
     if (!TARGET_SCOPES.has(targetScope)) {
-      return res.status(400).json({ error: 'A valid target scope is required' });
+      return c.json({ error: 'A valid target scope is required' }, 400);
     }
     if (Object.prototype.hasOwnProperty.call(body, 'targetShiftId')) {
       targetShiftId = optionalTrimmedString(body.targetShiftId);
@@ -542,10 +530,10 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
     officerIds = Object.prototype.hasOwnProperty.call(body, 'officerIds') ? sanitizeOfficerIds(body.officerIds) : undefined;
 
     if (targetScope === 'shift' && !targetShiftId) {
-      return res.status(400).json({ error: 'targetShiftId is required when targetScope is shift' });
+      return c.json({ error: 'targetShiftId is required when targetScope is shift' }, 400);
     }
     if (targetScope === 'officers' && (!officerIds || officerIds.length === 0)) {
-      return res.status(400).json({ error: 'At least one officer id is required when targetScope is officers' });
+      return c.json({ error: 'At least one officer id is required when targetScope is officers' }, 400);
     }
   }
 
@@ -562,12 +550,15 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
       : (existing.source_reference == null ? '' : String(existing.source_reference));
 
     if (BOLO_TYPES.has(existingAlertType) && sourceType !== 'external') {
-      return res.status(400).json({
-        error: 'BOLO alerts for a person or vehicle must come from an external authority — set source type to external with an authority and reference'
-      });
+      return c.json(
+        {
+          error: 'BOLO alerts for a person or vehicle must come from an external authority — set source type to external with an authority and reference'
+        },
+        400
+      );
     }
     if (sourceType === 'external' && (!sourceAuthority || !sourceReference)) {
-      return res.status(400).json({ error: 'External alerts require both a source authority and a source reference' });
+      return c.json({ error: 'External alerts require both a source authority and a source reference' }, 400);
     }
   }
 
@@ -581,7 +572,7 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
       .from('operational_alert_officers')
       .select('officer_id')
       .eq('alert_id', alertId);
-    if (existingTargetError) return res.status(500).json({ error: existingTargetError.message });
+    if (existingTargetError) return c.json({ error: existingTargetError.message }, 500);
     existingOfficerIds = ((existingTargetRows ?? []) as Array<{ officer_id: unknown }>).map((row) => Number(row.officer_id));
   }
 
@@ -631,7 +622,7 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
   if (status) updatePayload.status = status;
   if (isClosingStatus) {
     updatePayload.status_reason = reason;
-    updatePayload.status_reason_by = authReq.userEmail ?? 'unknown';
+    updatePayload.status_reason_by = c.get('userEmail') ?? 'unknown';
     updatePayload.status_reason_at = new Date().toISOString();
   }
   if (hasExpiresPatch) updatePayload.expires_at = nextExpiresAtIso ?? null;
@@ -665,45 +656,52 @@ router.patch('/:id', requireSupervisorRole, asyncHandler(async (req, res) => {
     .select('*')
     .maybeSingle();
 
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: 'Operational alert not found' });
+  if (error) return c.json({ error: error.message }, 500);
+  if (!data) return c.json({ error: 'Operational alert not found' }, 404);
 
   if (hasTargetPatch) {
     const { error: deleteTargetError } = await serviceSupabase
       .from('operational_alert_officers')
       .delete()
       .eq('alert_id', alertId);
-    if (deleteTargetError) return res.status(500).json({ error: deleteTargetError.message });
+    if (deleteTargetError) return c.json({ error: deleteTargetError.message }, 500);
 
     if (targetScope === 'officers' && officerIds && officerIds.length) {
       const { error: insertTargetError } = await serviceSupabase
         .from('operational_alert_officers')
         .insert(officerIds.map((officerId) => ({ alert_id: alertId, officer_id: officerId })));
-      if (insertTargetError) return res.status(500).json({ error: insertTargetError.message });
+      if (insertTargetError) return c.json({ error: insertTargetError.message }, 500);
     }
   }
 
   await writeAuditLog(
-    authReq.userEmail ?? 'unknown',
+    c.get('userEmail') ?? 'unknown',
     `Updated operational alert ${alertId}${status ? ` to ${status}` : ''}`
       + (isClosingStatus ? `: ${reason}` : '')
       + (material ? ` (material change — now v${nextVersion}, re-acknowledgement required: ${reasons.join('; ')})` : ''),
     alertId
   );
 
-  return res.json(toOperationalAlert(data as Record<string, unknown>, {
+  return c.json(toOperationalAlert(data as Record<string, unknown>, {
     ...(hasTargetPatch && targetScope === 'officers' ? { assignedOfficerIds: officerIds ?? [] } : {}),
     materialChange: material
   }));
-}));
+});
 
-router.post('/:id/photo', requireSupervisorRole, photoUpload.single('photo'), asyncHandler(async (req, res) => {
-  const authReq = req as SupervisorRequest;
-  const alertId = String(req.params.id);
-  const file = req.file as Express.Multer.File | undefined;
+router.post('/:id/photo', requireSupervisorRole, async (c) => {
+  const alertId = String(c.req.param('id'));
+  let file: { originalname: string; mimetype: string; buffer: Uint8Array; size: number } | null = null;
+  try {
+    file = (await readUpload(c, 'photo')).file;
+  } catch {
+    file = null;
+  }
 
-  if (!file) {
-    return res.status(400).json({ error: 'A photo file is required' });
+  if (!file || !ALLOWED_PHOTO_TYPES.includes(file.mimetype)) {
+    return c.json({ error: 'A photo file is required' }, 400);
+  }
+  if (file.size > MAX_PHOTO_BYTES) {
+    throw new Error('File too large');
   }
 
   const { data: existing, error: existingError } = await serviceSupabase
@@ -712,8 +710,8 @@ router.post('/:id/photo', requireSupervisorRole, photoUpload.single('photo'), as
     .eq('id', alertId)
     .maybeSingle();
 
-  if (existingError) return res.status(500).json({ error: existingError.message });
-  if (!existing) return res.status(404).json({ error: 'Operational alert not found' });
+  if (existingError) return c.json({ error: existingError.message }, 500);
+  if (!existing) return c.json({ error: 'Operational alert not found' }, 404);
 
   const extension = file.originalname.split('.').pop()?.replace(/[^a-z0-9]/gi, '') || 'jpg';
   const storagePath = `operational-alerts/${alertId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
@@ -723,7 +721,7 @@ router.post('/:id/photo', requireSupervisorRole, photoUpload.single('photo'), as
     .upload(storagePath, file.buffer, { contentType: file.mimetype, upsert: false });
 
   if (storageError) {
-    return res.status(500).json({ error: `Alert photo upload failed: ${storageError.message}` });
+    return c.json({ error: `Alert photo upload failed: ${storageError.message}` }, 500);
   }
 
   const { data: urlData } = serviceSupabase.storage.from('evidence').getPublicUrl(storagePath);
@@ -739,22 +737,22 @@ router.post('/:id/photo', requireSupervisorRole, photoUpload.single('photo'), as
     .select('*')
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) return c.json({ error: error.message }, 500);
 
-  await writeAuditLog(authReq.userEmail ?? 'unknown', `Attached photo to operational alert ${alertId}`, alertId);
+  await writeAuditLog(c.get('userEmail') ?? 'unknown', `Attached photo to operational alert ${alertId}`, alertId);
 
-  return res.status(201).json(toOperationalAlert(data as Record<string, unknown>));
-}));
+  return c.json(toOperationalAlert(data as Record<string, unknown>), 201);
+});
 
-router.get('/:id/acknowledgements', asyncHandler(async (req, res) => {
-  const alertId = req.params.id;
+router.get('/:id/acknowledgements', async (c) => {
+  const alertId = c.req.param('id');
 
   const { data: alertRow, error: alertError } = await serviceSupabase
     .from('operational_alerts')
     .select('version')
     .eq('id', alertId)
     .maybeSingle();
-  if (alertError) return res.status(500).json({ error: alertError.message });
+  if (alertError) return c.json({ error: alertError.message }, 500);
   const currentVersion = alertRow && !Array.isArray(alertRow) && (alertRow as Record<string, unknown>).version != null
     ? Number((alertRow as Record<string, unknown>).version)
     : 1;
@@ -765,13 +763,13 @@ router.get('/:id/acknowledgements', asyncHandler(async (req, res) => {
     .eq('alert_id', alertId)
     .order('acknowledged_at', { ascending: false });
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) return c.json({ error: error.message }, 500);
 
   // A material edit bumps the alert's version — an acknowledgement recorded
   // against an earlier version no longer counts as coverage for the alert as
   // it exists today, so it's excluded here rather than being surfaced as if
   // the officer had seen the current content.
-  return res.json((data ?? [])
+  return c.json((data ?? [])
     .filter((row) => (row.alert_version == null ? 1 : Number(row.alert_version)) === currentVersion)
     .map((row) => ({
       officerId: Number(row.officer_id),
@@ -779,7 +777,7 @@ router.get('/:id/acknowledgements', asyncHandler(async (req, res) => {
       badgeNumber: String(row.badge_number),
       acknowledgedAt: String(row.acknowledged_at)
     })));
-}));
+});
 
 /**
  * Acknowledgement coverage for the alert's *current* version, resolved
@@ -790,29 +788,29 @@ router.get('/:id/acknowledgements', asyncHandler(async (req, res) => {
  * isCriticalNonAckWarning — never a trigger for automatic dispatch,
  * punishment, or escalation.
  */
-router.get('/:id/coverage', asyncHandler(async (req, res) => {
-  const alertId = String(req.params.id);
+router.get('/:id/coverage', async (c) => {
+  const alertId = String(c.req.param('id'));
 
   const { data: alertRow, error: alertError } = await serviceSupabase
     .from('operational_alerts')
     .select('*')
     .eq('id', alertId)
     .maybeSingle();
-  if (alertError) return res.status(500).json({ error: alertError.message });
-  if (!alertRow) return res.status(404).json({ error: 'Operational alert not found' });
+  if (alertError) return c.json({ error: alertError.message }, 500);
+  if (!alertRow) return c.json({ error: 'Operational alert not found' }, 404);
   const alert = alertRow as Record<string, unknown>;
   const currentVersion = alert.version == null ? 1 : Number(alert.version);
   const targetScope = String(alert.target_scope);
   const targetShiftId = alert.target_shift_id == null ? null : String(alert.target_shift_id);
 
   const { ids: eligibleOfficerIds, error: eligibilityError } = await resolveEligibleOfficerIds(alertId, targetScope, targetShiftId);
-  if (eligibilityError) return res.status(500).json({ error: eligibilityError });
+  if (eligibilityError) return c.json({ error: eligibilityError }, 500);
 
   const { data: ackRows, error: ackError } = await serviceSupabase
     .from('operational_alert_acknowledgements')
     .select('*')
     .eq('alert_id', alertId);
-  if (ackError) return res.status(500).json({ error: ackError.message });
+  if (ackError) return c.json({ error: ackError.message }, 500);
 
   const currentAcksByOfficer = new Map<number, Record<string, unknown>>();
   for (const row of (ackRows ?? []) as Record<string, unknown>[]) {
@@ -832,7 +830,7 @@ router.get('/:id/coverage', asyncHandler(async (req, res) => {
       .from('officer_users')
       .select('officer_id, officer_name, officer_surname, badge_number')
       .in('officer_id', outstandingOfficerIds);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return c.json({ error: error.message }, 500);
     for (const row of (data ?? []) as Record<string, unknown>[]) outstandingProfiles.set(Number(row.officer_id), row);
   }
 
@@ -841,7 +839,7 @@ router.get('/:id/coverage', asyncHandler(async (req, res) => {
   const outstandingCount = outstandingOfficerIds.length;
   const percentage = totalTargeted > 0 ? Math.round((acknowledgedCount / totalTargeted) * 100) : 0;
 
-  return res.json({
+  return c.json({
     alertId,
     version: currentVersion,
     priority: String(alert.priority),
@@ -871,18 +869,18 @@ router.get('/:id/coverage', asyncHandler(async (req, res) => {
     criticalNonAckWarning: isCriticalNonAckWarning(alert, outstandingCount),
     criticalNonAckThresholdMinutes: CRITICAL_UNACK_WARNING_MINUTES
   });
-}));
+});
 
-router.get('/:id/matches', asyncHandler(async (req, res) => {
+router.get('/:id/matches', async (c) => {
   const { data, error } = await serviceSupabase
     .from('operational_alert_matches')
     .select('*')
-    .eq('alert_id', req.params.id)
+    .eq('alert_id', c.req.param('id'))
     .order('created_at', { ascending: false });
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) return c.json({ error: error.message }, 500);
 
-  return res.json((data ?? []).map((row) => ({
+  return c.json((data ?? []).map((row) => ({
     id: Number(row.id),
     officerId: Number(row.officer_id),
     officerName: String(row.officer_name),
@@ -892,7 +890,7 @@ router.get('/:id/matches', asyncHandler(async (req, res) => {
     locationLng: row.location_lng == null ? null : Number(row.location_lng),
     createdAt: String(row.created_at)
   })));
-}));
+});
 
 /**
  * Cross-alert sighting listing for the supervisor Map / Heatmap views.
@@ -903,16 +901,19 @@ router.get('/:id/matches', asyncHandler(async (req, res) => {
  * exists purely to feed a map, not as a general audit trail (use
  * GET /:id/matches for that).
  */
-router.get('/sightings', asyncHandler(async (req, res) => {
-  const alertTypeFilter = typeof req.query.alertType === 'string' && ALERT_TYPES.has(req.query.alertType)
-    ? req.query.alertType
+router.get('/sightings', async (c) => {
+  const alertTypeParam = c.req.query('alertType');
+  const priorityParam = c.req.query('priority');
+  const alertIdParam = c.req.query('alertId');
+  const alertTypeFilter = typeof alertTypeParam === 'string' && ALERT_TYPES.has(alertTypeParam)
+    ? alertTypeParam
     : null;
-  const priorityFilter = typeof req.query.priority === 'string' && PRIORITIES.has(req.query.priority)
-    ? req.query.priority
+  const priorityFilter = typeof priorityParam === 'string' && PRIORITIES.has(priorityParam)
+    ? priorityParam
     : null;
-  const alertIdFilter = typeof req.query.alertId === 'string' && req.query.alertId.trim() ? req.query.alertId.trim() : null;
-  const fromFilter = parseDate(req.query.from);
-  const toFilter = parseDate(req.query.to);
+  const alertIdFilter = typeof alertIdParam === 'string' && alertIdParam.trim() ? alertIdParam.trim() : null;
+  const fromFilter = parseDate(c.req.query('from'));
+  const toFilter = parseDate(c.req.query('to'));
 
   let matchesQuery = serviceSupabase
     .from('operational_alert_matches')
@@ -929,9 +930,9 @@ router.get('/sightings', asyncHandler(async (req, res) => {
   const { data: matchRows, error: matchError } = await matchesQuery;
   if (matchError) {
     if (isMissingTable(matchError)) {
-      return res.status(503).json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' });
+      return c.json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' }, 503);
     }
-    return res.status(500).json({ error: matchError.message });
+    return c.json({ error: matchError.message }, 500);
   }
 
   const matches = (matchRows ?? []) as Record<string, unknown>[];
@@ -944,7 +945,7 @@ router.get('/sightings', asyncHandler(async (req, res) => {
       .select('id, alert_type, priority, description, source_type, source_authority, status')
       .in('id', alertIds);
 
-    if (alertError) return res.status(500).json({ error: alertError.message });
+    if (alertError) return c.json({ error: alertError.message }, 500);
     for (const row of (alertRows ?? []) as Record<string, unknown>[]) {
       alertsById.set(String(row.id), row);
     }
@@ -979,7 +980,7 @@ router.get('/sightings', asyncHandler(async (req, res) => {
       sourceAuthority: alert!.source_authority == null ? null : String(alert!.source_authority)
     }));
 
-  return res.json(sightings);
-}));
+  return c.json(sightings);
+});
 
 export default router;

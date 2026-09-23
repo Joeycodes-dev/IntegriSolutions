@@ -1,5 +1,6 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../helpers/request';
+import type { AppEnv } from '../../src/env';
 
 const mockServiceSupabase = {
   from: jest.fn(),
@@ -16,8 +17,8 @@ jest.mock('../../src/utilities/testIntegrity', () => ({
 import publicVerificationRoutes from '../../src/routes/publicVerification';
 import { getTestHashValidity } from '../../src/utilities/testIntegrity';
 
-const app = express();
-app.use('/api/public', publicVerificationRoutes);
+const app = new Hono<AppEnv>();
+app.route('/api/public', publicVerificationRoutes);
 
 let tokenRows: Record<string, unknown>[] = [];
 let tokenError: { message: string } | null = null;
@@ -147,8 +148,8 @@ describe('Public Verification Route', () => {
       .get('/api/public/verify')
       .set('X-Verification-Token', 'opaque-token');
 
-    expect(response.headers['cache-control']).toContain('no-store');
-    expect(response.headers['x-robots-tag']).toBe('noindex, nofollow');
+    expect(response.get('cache-control')).toContain('no-store');
+    expect(response.get('x-robots-tag')).toBe('noindex, nofollow');
   });
 
   it('returns 400 when the token header is missing', async () => {

@@ -1,28 +1,34 @@
-import fs from 'fs';
-import path from 'path';
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-const envFile = fs.existsSync(path.resolve(process.cwd(), '.env.local'))
-  ? '.env.local'
-  : '.env';
+let cached: SupabaseClient | undefined;
 
-dotenv.config({ path: envFile });
+function getClient(): SupabaseClient {
+  if (!cached) {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !supabaseServiceRoleKey) {
+      throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in the environment');
+    }
 
-if (!supabaseUrl || !supabaseServiceRoleKey) {
-  throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in the environment');
+    if (supabaseServiceRoleKey.startsWith('sb_publishable_')) {
+      throw new Error('SUPABASE_SERVICE_ROLE_KEY must be the Supabase service role key, not a publishable key');
+    }
+
+    cached = createClient(supabaseUrl, supabaseServiceRoleKey, {
+      auth: {
+        persistSession: false,
+        detectSessionInUrl: false
+      }
+    });
+  }
+  return cached;
 }
 
-if (supabaseServiceRoleKey.startsWith('sb_publishable_')) {
-  throw new Error('SUPABASE_SERVICE_ROLE_KEY must be the Supabase service role key, not a publishable key');
-}
-
-export const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
-  auth: {
-    persistSession: false,
-    detectSessionInUrl: false
+export const supabase = new Proxy({} as SupabaseClient, {
+  get(_target, prop, _receiver) {
+    const client = getClient() as unknown as Record<string | symbol, unknown>;
+    const value = client[prop];
+    return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(client) : value;
   }
 });

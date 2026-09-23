@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../helpers/request';
 
 const mockServiceSupabase: any = {
   from: jest.fn(),
@@ -19,13 +19,10 @@ jest.mock('../../src/utilities/resolveProfile', () => ({
 
 import chatRoutes from '../../src/routes/chat';
 import { supabase } from '../../src/supabase';
+import type { AppEnv } from '../../src/env';
 
-const app = express();
-app.use(express.json());
-app.use('/api/chat', chatRoutes);
-app.use((err: any, _req: any, res: any, _next: any) => {
-  res.status(500).json({ error: err?.message ?? 'Internal server error' });
-});
+const app = new Hono<AppEnv>();
+app.route('/api/chat', chatRoutes);
 
 function mockAuthAs(email = 'officer@example.com', id = 'user-123') {
   (supabase.auth.getUser as jest.Mock).mockResolvedValue({

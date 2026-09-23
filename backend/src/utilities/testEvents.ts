@@ -1,3 +1,5 @@
+import type { Env, DurableObjectNamespaceLike } from '../env';
+
 export type TestInsertedEvent = {
   type: 'test-inserted';
   source: 'mobile-sync' | 'web-create';
@@ -15,36 +17,56 @@ export type CaseUpdatedEvent = {
 
 export type SupervisorEvent = TestInsertedEvent | CaseUpdatedEvent;
 
-type Listener = (payload: SupervisorEvent) => void;
+const HUB_NAME = 'global';
 
-const listeners = new Set<Listener>();
+function getHubStub(env: Env | undefined) {
+  const namespace: DurableObjectNamespaceLike | undefined = env?.SSE_HUB;
+  if (!namespace) return null;
+  const id = namespace.idFromName(HUB_NAME);
+  return namespace.get(id);
+}
 
-export function publishTestInserted(source: 'mobile-sync' | 'web-create', count: number): void {
-  const payload: SupervisorEvent = { type: 'test-inserted', source, count, at: new Date().toISOString() };
-  for (const listener of listeners) {
-    listener(payload);
+async function broadcast(env: Env | undefined, event: SupervisorEvent): Promise<void> {
+  const stub = getHubStub(env);
+  if (!stub) return;
+
+  try {
+    await stub.fetch('https://sse-hub/broadcast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(event)
+    });
+  } catch (err) {
+    console.error('[sse] broadcast failed:', err);
   }
 }
 
-export function publishCaseUpdated(testId: string, caseStatus: string, supervisorEmail: string): void {
+export async function publishTestInserted(
+  env: Env | undefined,
+  source: 'mobile-sync' | 'web-create',
+  count: number
+): Promise<void> {
+  const payload: SupervisorEvent = {
+    type: 'test-inserted',
+    source,
+    count,
+    at: new Date().toISOString()
+  };
+  await broadcast(env, payload);
+}
+
+export async function publishCaseUpdated(
+  env: Env | undefined,
+  testId: string,
+  caseStatus: string,
+  supervisorEmail: string
+): Promise<void> {
   const payload: SupervisorEvent = {
     type: 'case-updated',
     testId,
     caseStatus,
     supervisorEmail,
-    at: new Date().toISOString(),
+    at: new Date().toISOString()
   };
-  for (const listener of listeners) {
-    listener(payload);
-  }
+  await broadcast(env, payload);
 }
-
-export function subscribeTestInserted(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-// Alias for generic supervisor events (test-inserted + case-updated)
-export const subscribeSupervisorEvents = subscribeTestInserted;

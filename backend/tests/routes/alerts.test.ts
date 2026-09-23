@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../helpers/request';
 
 const mockServiceSupabase: any = {
   from: jest.fn(),
@@ -24,10 +24,10 @@ jest.mock('../../src/utilities/resolveProfile', () => ({
 
 import alertsRoutes, { MATCH_ESCALATION_DISCLAIMER } from '../../src/routes/alerts';
 import { supabase } from '../../src/supabase';
+import type { AppEnv } from '../../src/env';
 
-const app = express();
-app.use(express.json());
-app.use('/api/alerts', alertsRoutes);
+const app = new Hono<AppEnv>();
+app.route('/api/alerts', alertsRoutes);
 
 function chainable(result: { data?: unknown; error?: unknown }) {
   const handler: Record<string, unknown> = {};

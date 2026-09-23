@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../helpers/request';
 
 const mockServiceSupabase = {
   from: jest.fn(),
@@ -25,10 +25,10 @@ jest.mock('../../src/utilities/resolveProfile', () => ({
 import syncRoutes from '../../src/routes/sync';
 import { supabase } from '../../src/supabase';
 import { hashData } from '../../src/utilities/hash';
+import type { AppEnv } from '../../src/env';
 
-const app = express();
-app.use(express.json());
-app.use('/api/sync', syncRoutes);
+const app = new Hono<AppEnv>();
+app.route('/api/sync', syncRoutes);
 
 const baseRecord = {
   id: 'test-123',

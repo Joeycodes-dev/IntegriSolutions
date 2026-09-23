@@ -1,40 +1,29 @@
-import { Router, Request, Response, NextFunction } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { Hono } from 'hono';
+import type { AppEnv } from '../env';
 import { supabase } from '../supabase';
-import type { AuthRequest } from '../middleware/auth';
+import { serviceSupabase } from '../serviceSupabase';
 import { hashData } from '../utilities/hash';
 import { resolveProfileByEmail } from '../utilities/resolveProfile';
 import { publishTestInserted } from '../utilities/testEvents';
+import { readJson } from '../utilities/jsonBody';
 
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
-
-const router = Router();
+const router = new Hono<AppEnv>();
 const SHA256_HEX = /^[a-f0-9]{64}$/i;
 
-router.use(async (req: Request, _res: Response, next: NextFunction) => {
-  const authHeader = req.headers.authorization;
+router.use('*', async (c, next) => {
+  const authHeader = c.req.header('authorization');
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
   if (token) {
     const { data, error } = await supabase.auth.getUser(token);
     if (error || !data.user) {
-      return _res.status(401).json({ error: 'Invalid or expired access token' });
+      return c.json({ error: 'Invalid or expired access token' }, 401);
     }
-    const authReq = req as AuthRequest;
-    authReq.userId = data.user.id;
-    authReq.userEmail = data.user.email ?? null;
+    c.set('userId', data.user.id);
+    c.set('userEmail', data.user.email ?? null);
   }
 
-  return next();
+  await next();
 });
 
 interface SyncRecord {
@@ -136,42 +125,43 @@ function formatOfficerName(profile: { name: string; surname?: string | null }): 
   return `${profile.name} ${profile.surname ?? ''}`.trim() || profile.name;
 }
 
-router.post('/', async (req, res) => {
-  const { records } = req.body as { records: SyncRecord[] };
+router.post('/', async (c) => {
+  const { records } = await readJson<{ records: SyncRecord[] }>(c);
   console.log(`[/api/sync] received ${records?.length ?? 0} records`);
 
   if (!Array.isArray(records) || records.length === 0) {
-    return res.status(400).json({ error: 'Records array is required and must not be empty' });
+    return c.json({ error: 'Records array is required and must not be empty' }, 400);
   }
 
   if (records.length > 50) {
-    return res.status(400).json({ error: 'Batch size cannot exceed 50 records' });
+    return c.json({ error: 'Batch size cannot exceed 50 records' }, 400);
   }
 
   const synced: string[] = [];
   const failed: { id: string; error: string }[] = [];
   const duplicates: string[] = [];
-  const authReq = req as Partial<AuthRequest>;
+  const userEmail = c.get('userEmail');
+  const userId = c.get('userId');
 
-  if (!authReq.userEmail || !authReq.userId) {
-    return res.status(401).json({ error: 'Officer authentication required' });
+  if (!userEmail || !userId) {
+    return c.json({ error: 'Officer authentication required' }, 401);
   }
 
   let authenticatedOfficer: { officerId: number; officerName: string; badgeNumber: string };
   let resolved;
   try {
-    resolved = await resolveProfileByEmail(authReq.userEmail, authReq.userId);
+    resolved = await resolveProfileByEmail(userEmail, userId);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Officer profile lookup failed';
-    return res.status(500).json({ error: message });
+    return c.json({ error: message }, 500);
   }
 
   if (!resolved) {
-    return res.status(404).json({ error: 'Officer profile not found' });
+    return c.json({ error: 'Officer profile not found' }, 404);
   }
 
   if (resolved.source !== 'officer_users' || typeof resolved.profile.officerId !== 'number') {
-    return res.status(403).json({ error: 'Only officer accounts can sync test records' });
+    return c.json({ error: 'Only officer accounts can sync test records' }, 403);
   }
 
   authenticatedOfficer = {
@@ -295,10 +285,10 @@ router.post('/', async (req, res) => {
   }
 
   if (synced.length > 0) {
-    publishTestInserted('mobile-sync', synced.length);
+    await publishTestInserted(c.env, 'mobile-sync', synced.length);
   }
 
-  return res.json({ synced, failed, duplicates });
+  return c.json({ synced, failed, duplicates });
 });
 
 export default router;

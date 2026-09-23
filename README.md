@@ -15,14 +15,14 @@ IntegriSolutions/
 ├── apps/
 │   ├── mobile/       # React Native (Expo) — Traffic Officer mobile app
 │   └── web/          # React + Vite — Supervisor web dashboard
-├── backend/          # Node.js + Express — REST API
+├── backend/          # Cloudflare Workers (Hono) — REST API
 ```
 
 | Package | Description | Tech |
 |---------|-------------|------|
-| `apps/mobile` | Roadside app used by traffic officers to scan IDs, capture breathalyser readings, and store records offline | React Native, Expo, TypeScript |
+| `apps/mobile` | Roadside app used by traffic officers to scan IDs, capture breathalyser readings, and store records offline | React Native, Expo, TypeScript, expo-ai-kit (on-device OCR) |
 | `apps/web` | Supervisor dashboard for reviewing records, annotating cases, and exporting court-ready reports | React, Vite, TypeScript |
-| `backend` | REST API handling authentication, enforcement records, offline sync, and audit logging | Node.js, Express, TypeScript, Supabase |
+| `backend` | REST API handling authentication, enforcement records, offline sync, and audit logging | Cloudflare Workers, Hono, TypeScript, Supabase |
 
 ---
 
@@ -40,13 +40,40 @@ IntegriSolutions/
 
 ---
 
+## Deployments
+
+Deployment targets are **branch-specific**:
+
+| Branch | Web dashboard | Backend API | Platform |
+|--------|---------------|-------------|----------|
+| `main` | DigitalOcean static site | `https://integriscan-backend-seyjs.ondigitalocean.app` | DigitalOcean (Express API) |
+| `cloudflare-version` | <https://integrisolutions.pages.dev> | <https://integri-backend.thabza102.workers.dev> | Cloudflare (Pages + Workers) |
+
+`main` stays on DigitalOcean; everything on the `cloudflare-version` branch (backend + web) is
+deployed to Cloudflare. Clients built from this branch must point at the Cloudflare API:
+
+```env
+# apps/web — build-time (Pages project env vars)
+VITE_API_BASE_URL=https://integri-backend.thabza102.workers.dev
+VITE_PUBLIC_WEB_URL=https://integrisolutions.pages.dev
+
+# apps/mobile — EAS build env
+EXPO_PUBLIC_API_BASE_URL=https://integri-backend.thabza102.workers.dev/api
+```
+
+The Worker's `FRONTEND_URL` secret must exactly equal the deployed web origin
+(`https://integrisolutions.pages.dev` — no trailing slash), otherwise browser requests are
+rejected by CORS. Deployment steps live in [`backend/README.md`](backend/README.md).
+
+---
+
 ## Getting Started
 
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) v20 or higher
 - [npm](https://npmjs.com/) v10 or higher
-- [Expo Go](https://expo.dev/go) on your phone or emulator
+- [Expo Go](https://expo.dev/go) on your phone or emulator, or an Expo dev build / [EAS build](https://docs.expo.dev/build/introduction/) for the mobile app (front-photo OCR uses `expo-ai-kit`, which does not run in Expo Go)
 - A [Supabase](https://supabase.com/) account with a project created (can skip for now — auth is toggleable)
 
 ### 1. Clone the repo
@@ -58,29 +85,31 @@ cd IntegriSolutions
 
 ### 2. Set up environment variables
 
-Each package has its own `.env.example`. Copy and fill in your values:
-
-```bash
-cp backend/.env.example backend/.env.local
-cp apps/web/.env.example apps/web/.env.local
-```
-
-The key variables you need:
+The backend runs on Cloudflare Workers. For local development `wrangler` reads `backend/.dev.vars` (never commit this file):
 
 ```env
-# backend/.env.local
+# backend/.dev.vars
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-PORT=4000
 FRONTEND_URL=http://localhost:3000
-
-# apps/web/.env.local
-VITE_API_BASE_URL=http://localhost:4000
-VITE_PUBLIC_WEB_URL=http://localhost:3000
-
+# Optional — invite emails via Resend
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=
 ```
 
-> **Never commit `.env.local` files.** They are listed in each package's `.gitignore`.
+In production the same values are Cloudflare secrets, pushed with `npx wrangler secret put <NAME>` — see [`backend/README.md`](backend/README.md).
+
+The web dashboard uses Vite env files:
+
+```env
+# apps/web/.env.local
+VITE_API_BASE_URL=http://localhost:8787
+VITE_PUBLIC_WEB_URL=http://localhost:3000
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
+
+> **Never commit `.env.local` / `.dev.vars` files.** They are listed in `.gitignore`.
 
 ### 3. Install dependencies
 
@@ -115,15 +144,17 @@ In your Supabase project, open the **SQL Editor** and run these files **in order
 ### 5. Start the development servers
 
 ```bash
-# Terminal 1 — Backend API (runs on http://localhost:4000)
+# Terminal 1 — Backend API (wrangler dev — runs on http://localhost:8787)
 cd backend && npm run dev
 
 # Terminal 2 — Web dashboard (runs on http://localhost:3000)
 cd apps/web && npm run dev
 
-# Terminal 3 — Mobile app (opens Expo Go)
+# Terminal 3 — Mobile app (dev build; on-device OCR needs expo-ai-kit, so not Expo Go)
 cd apps/mobile && npx expo start
 ```
+
+For mobile development against the local Worker, set `EXPO_PUBLIC_API_BASE_URL=http://<your-lan-ip>:8787/api` — the built-in fallback assumes the legacy port `4000`.
 
 ---
 
@@ -138,6 +169,7 @@ All endpoints except `/api/auth/login`, `/api/auth/register`, and invite accepta
 | `POST` | `/api/auth/supervisor-invite` | Accept supervisor invite + set password | Public |
 | `GET` | `/api/tests` | List enforcement test records | Authenticated |
 | `POST` | `/api/sync` | Sync offline officer captures | Officer |
+| `POST` | `/api/scan` | Parse on-device OCR text from a photographed licence (body: `{ "text": "...", "retry": false }`) | Officer |
 | `GET` | `/api/shifts/active` | List active roadblock shifts assigned to the signed-in officer | Officer |
 | `GET` | `/api/supervisor/shifts` | List roadblock shift assignments | Supervisor |
 | `POST` | `/api/supervisor/shifts` | Create a roadblock shift and assign officers | Supervisor |
@@ -165,7 +197,7 @@ No raw PII, GPS, notes, annotations, or evidence URLs are exposed.
 
 - Each export receives fresh high-entropy tokens; only SHA-256 hashes of tokens are stored.
 - Tokens never expire but can be revoked by clearing `revoked_at` via the database.
-- Set `VITE_PUBLIC_WEB_URL` (web) to the public origin so scanned QRs resolve correctly.
+- Set `VITE_PUBLIC_WEB_URL` (web) to the public origin so scanned QRs resolve correctly (`https://integrisolutions.pages.dev` in production).
 - The public page verifies the immutable test record — not the generated PDF bytes themselves.
 
 ---
@@ -177,15 +209,17 @@ No raw PII, GPS, notes, annotations, or evidence URLs are exposed.
 │   Mobile App         │     │   Web Dashboard       │
 │   (React Native)     │     │   (React + Vite)      │
 │   Officer workflow   │     │   Supervisor review   │
+│   On-device OCR      │     │   (Cloudflare Pages)  │
 └────────┬─────────────┘     └──────────┬────────────┘
          │  HTTPS / JWT                 │  HTTPS / JWT
          └──────────────┬───────────────┘
                         │
-               ┌────────▼────────┐
-               │   Backend API   │
-               │  Node / Express │
-               │  JWT + RBAC     │
-               └────────┬────────┘
+               ┌────────▼─────────┐
+               │   Backend API    │
+               │ Cloudflare Worker│
+               │  Hono + JWT/RBAC │
+               │  SSE (DO) + KV   │
+               └────────┬─────────┘
                         │
                ┌────────▼────────┐
                │   PostgreSQL    │
@@ -202,7 +236,8 @@ The mobile app stores records locally when offline and syncs to the cloud when c
 
 | Branch | Purpose |
 |--------|---------|
-| `main` | Production-ready code |
+| `main` | Production-ready code — backend + web on DigitalOcean |
+| `cloudflare-version` | Cloudflare migration — backend on Workers, web on Pages (`main` stays on DigitalOcean until merged) |
 | `feature/[name]` | Individual feature work (e.g. `feature/auth-login`) |
 
 All changes to `feature/[name]` and `main` go through a **Pull Request**.

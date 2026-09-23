@@ -1,52 +1,25 @@
-import { Router, Request, Response, NextFunction } from 'express';
-import { createClient } from '@supabase/supabase-js';
-import { supabase } from '../supabase';
-import { requireAuth, AuthRequest } from '../middleware/auth';
+import { Hono } from 'hono';
+import type { AppEnv } from '../env';
+import { serviceSupabase } from '../serviceSupabase';
+import { requireAuth } from '../middleware/auth';
 import { requireSupervisor } from '../middleware/requireSupervisor';
 import { hashData } from '../utilities/hash';
 import { getTestHashValidity } from '../utilities/testIntegrity';
 import { mapDeviceCustodyRow } from '../utilities/deviceCustody';
 import type { TestRecord } from '../types';
-import { publishTestInserted, subscribeTestInserted } from '../utilities/testEvents';
+import { publishTestInserted } from '../utilities/testEvents';
+import { readJson } from '../utilities/jsonBody';
 
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
+const router = new Hono<AppEnv>();
+
+router.get('/stream', requireSupervisor, async (c) => {
+  const hub = c.env.SSE_HUB;
+  if (!hub) {
+    return c.json({ error: 'Event stream unavailable' }, 503);
   }
-);
-
-const router = Router();
-
-router.get('/stream', requireSupervisor, (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
-
-  const send = (event: unknown) => {
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
-  };
-
-  send({ type: 'connected', at: new Date().toISOString() });
-
-  const unsubscribe = subscribeTestInserted((payload) => {
-    send(payload);
-  });
-
-  const heartbeat = setInterval(() => {
-    res.write(': keepalive\n\n');
-  }, 25000);
-
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    unsubscribe();
-    res.end();
-  });
+  const id = hub.idFromName('global');
+  const stub = hub.get(id);
+  return stub.fetch(c.req.raw);
 });
 
 function normalizeLocationField(location: unknown): string {
@@ -91,13 +64,13 @@ function toCamelCase(row: any): TestRecord {
   };
 }
 
-router.get('/', requireSupervisor, async (req, res) => {
+router.get('/', requireSupervisor, async (c) => {
   let query = serviceSupabase
     .from('tests')
     .select('*')
     .order('created_at', { ascending: false });
 
-  const { search, result, officer, driverLicense, dateFrom, dateTo, bacMin, bacMax } = req.query;
+  const { search, result, officer, driverLicense, dateFrom, dateTo, bacMin, bacMax } = c.req.query();
 
   if (typeof search === 'string' && search.trim()) {
     const term = `%${search.trim()}%`;
@@ -141,34 +114,33 @@ router.get('/', requireSupervisor, async (req, res) => {
   const { data, error } = await query;
 
   if (error) {
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
   const records = (data ?? []).map(toCamelCase);
-  return res.json(records);
+  return c.json(records);
 });
 
-router.post('/', requireAuth, async (req, res) => {
-  const authReq = req as AuthRequest;
-  const { driverName, driverId, driverDob, bacReading, result, location, originalTestId } = req.body;
+router.post('/', requireAuth, async (c) => {
+  const { driverName, driverId, driverDob, bacReading, result, location, originalTestId } = await readJson(c);
 
   if (!driverName || !driverId || !driverDob || typeof bacReading !== 'number' || !result || !location) {
-    return res.status(400).json({ error: 'Missing or invalid test payload' });
+    return c.json({ error: 'Missing or invalid test payload' }, 400);
   }
 
   const { data: officer, error: officerError } = await serviceSupabase
     .from('officer_users')
     .select('officer_id, officer_name, badge_number')
-    .eq('officer_email_address', authReq.userEmail)
+    .eq('officer_email_address', c.get('userEmail'))
     .single();
 
   if (officerError || !officer) {
-    return res.status(404).json({ error: officerError?.message ?? 'Officer profile not found' });
+    return c.json({ error: officerError?.message ?? 'Officer profile not found' }, 404);
   }
 
   const officerId = Number(officer.officer_id);
   if (!Number.isFinite(officerId)) {
-    return res.status(500).json({ error: 'Officer profile has an invalid officer id' });
+    return c.json({ error: 'Officer profile has an invalid officer id' }, 500);
   }
 
   const record = {
@@ -194,12 +166,12 @@ router.post('/', requireAuth, async (req, res) => {
   const inserted = data ?? [];
 
   if (error || !inserted.length) {
-    return res.status(500).json({ error: error?.message ?? 'Failed to save test record' });
+    return c.json({ error: error?.message ?? 'Failed to save test record' }, 500);
   }
 
-  publishTestInserted('web-create', 1);
+  await publishTestInserted(c.env, 'web-create', 1);
 
-  return res.status(201).json(toCamelCase(inserted[0]));
+  return c.json(toCamelCase(inserted[0]), 201);
 });
 
 export default router;

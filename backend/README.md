@@ -1,6 +1,13 @@
 # Integriscan Server
 
-Node.js + Express REST API for the IntegriScan platform. Handles authentication, test records, and profile management via Supabase.
+Cloudflare Workers (Hono) REST API for the IntegriScan platform. Handles authentication, test records, offline sync, SSE, and profile management via Supabase.
+
+- **Live (`cloudflare-version` branch):** <https://integri-backend.thabza102.workers.dev>
+- **Runtime:** Cloudflare Workers — Hono router, `nodejs_compat` (`wrangler.toml`)
+
+> The `main` branch still runs the original Express server on DigitalOcean
+> (`https://integriscan-backend-seyjs.ondigitalocean.app`). Everything in this
+> branch is the Cloudflare migration and deploys to Workers.
 
 ## Account hierarchy
 
@@ -10,13 +17,23 @@ Node.js + Express REST API for the IntegriScan platform. Handles authentication,
 
 Admins are stored in `admin_users`. Supervisors are stored in `supervisor_users`. Field officers are stored in `officer_users`.
 
-## Getting Started
+## Local development
 
 1. Install dependencies:
    `npm install`
 
-2. Copy env vars and fill in your values:
-   `cp .env.example .env.local`
+2. Create `backend/.dev.vars` (gitignored — never commit it):
+
+   ```env
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   FRONTEND_URL=http://localhost:3000
+   # Optional — invite emails via Resend
+   RESEND_API_KEY=
+   RESEND_FROM_EMAIL=
+   OFFICER_INVITE_BASE_URL=integriscan://onboard
+   SUPERVISOR_INVITE_BASE_URL=
+   ```
 
 3. Apply SQL in the Supabase SQL Editor (in order):
    - `migrations/20260729_core_schema.sql` — users, immutable `tests`, invalidations, settings
@@ -34,16 +51,44 @@ Note: **Test records cannot be updated or deleted** (WORM triggers). Account sta
 - `PATCH /api/admin/users/:id` (activate/deactivate supervisors & admins)
 - `PATCH /api/supervisor/officers/:id` (activate/deactivate field officers)
 
-4. Run the app:
-   `npm run dev`
+4. Run the worker:
+   `npm run dev` — starts `wrangler dev` on <http://localhost:8787>
 
-The server starts on `http://localhost:4000` by default.
+   Verification:
+   `npm test` (jest) · `npm run typecheck` (tsc) · `npm run deploy` (deploy)
+
+## Deployment (Cloudflare Workers)
+
+One-time setup:
+
+- Create the geocode cache namespace and paste its id into `wrangler.toml`:
+  `npx wrangler kv namespace create GEOCODE_CACHE`
+- Push the secrets:
+  - `npx wrangler secret put SUPABASE_URL`
+  - `npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY`
+  - `npx wrangler secret put FRONTEND_URL` — the deployed web origin (CORS allowlist), e.g. `https://integrisolutions.pages.dev` — exact origin, **no trailing slash**
+  - Optional: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `OFFICER_INVITE_BASE_URL`, `SUPERVISOR_INVITE_BASE_URL`
+
+Deploy with `npm run deploy`. The first deploy applies the `SseHub` Durable Object migration automatically.
+
+### Bindings
+
+| Binding | Type | Purpose |
+|---------|------|---------|
+| `GEOCODE_CACHE` | KV namespace | Cached Nominatim geocode lookups |
+| `SSE_HUB` | Durable Object | SSE broadcast hub for the supervisor event stream |
+| `AUTH_RATE_LIMITER` | Rate limit | 10 req / 60s on `/api/auth/*` (keyed per IP — login is anonymous) |
+| `API_RATE_LIMITER` | Rate limit | 120 req / 60s on `/api/*`, keyed per signed-in user (health, SSE stream and `/api/public/*` excluded) |
+| `SYNC_RATE_LIMITER` | Rate limit | 60 req / 60s on `/api/sync/*`, per user (stacks on `API_RATE_LIMITER`) |
+| `VERIFY_RATE_LIMITER` | Rate limit | 20 req / 60s on `/api/public/*` (keyed per IP — anonymous) |
+| `GEOCODE_RATE_LIMITER` | Rate limit | 20 req / 60s on `/api/geocode/*`, per user |
+| `IP_RATE_LIMITER` | Rate limit | 600 req / 60s per IP backstop for identity-keyed requests |
 
 ## Invite Email
 
 Supervisor and officer onboarding emails are sent with Resend when admins add supervisors or supervisors add officers.
 
-Required environment variables:
+Required environment variables (Worker secrets in production, `.dev.vars` locally):
 
 - `RESEND_API_KEY`: API key from Resend.
 - `RESEND_FROM_EMAIL`: Verified sender, for example `IntegriScan <noreply@your-domain.com>`.
@@ -54,14 +99,20 @@ If Resend is not configured or email delivery fails, the account profile + invit
 
 ## OCR
 
-`POST /api/scan` currently uses the local Tesseract pipeline as the primary OCR engine. Google Cloud Vision remains available in the route but is temporarily disabled while its billing account is repaired.
+`POST /api/scan` does **not** run OCR on the server. The mobile app runs OCR on-device
+(`expo-ai-kit` — ML Kit Text Recognition v2 on Android, Apple Vision on iOS) and posts the
+recognized text:
 
-When re-enabling Google Vision, configure one of the following:
+```json
+{ "text": "REPUBLIC OF SOUTH AFRICA\nDRIVING LICENCE\n...", "retry": false }
+```
 
-- `GOOGLE_APPLICATION_CREDENTIALS` + `GOOGLE_CLOUD_PROJECT_ID` for a service-account JSON file.
-- `GOOGLE_CLOUD_VISION_CREDENTIALS_BASE64` for base64-encoded service-account JSON in hosted environments that reject raw JSON values.
-- `GOOGLE_CLOUD_VISION_CREDENTIALS_JSON` for inline service-account JSON in hosted environments.
-- `GOOGLE_CLOUD_CLIENT_EMAIL`, `GOOGLE_CLOUD_PRIVATE_KEY`, and `GOOGLE_CLOUD_PROJECT_ID` for split service-account values.
-- `GOOGLE_CLOUD_VISION_API_KEY` for API-key mode.
+The route parses the driver fields and scores confidence:
 
-When Google Vision is re-enabled, the configured credentials will restore the Vision-first scan flow with Tesseract fallback.
+- `400` — missing text
+- `413` — text exceeds the size limit
+- `422` — fields could not be read reliably (`{ error, partial }`; `partial` carries the low-confidence parse plus the `_ocr` debug block)
+- `200` — `DriverLicenseData` plus `_ocr` (`engine: "ml-kit"`, overall/field confidence, pass preview)
+
+Front-photo OCR is disabled on the web dashboard (barcode scanning is unaffected). The server has
+no Google Vision, Tesseract, or image-processing dependencies.

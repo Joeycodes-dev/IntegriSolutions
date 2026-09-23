@@ -1,62 +1,50 @@
-import { Router, Request, Response } from 'express';
-import { createClient } from '@supabase/supabase-js';
+import { Hono } from 'hono';
+import type { AppEnv } from '../env';
 import { supabase } from '../supabase';
-import type { AuthRequest } from '../middleware/auth';
+import { serviceSupabase } from '../serviceSupabase';
 import { resolveProfileByEmail } from '../utilities/resolveProfile';
+import { readJson } from '../utilities/jsonBody';
 
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
+const router = new Hono<AppEnv>();
 
-const router = Router();
-
-router.use(async (req: Request, _res: Response, next) => {
-  const authHeader = req.headers.authorization;
+router.use('*', async (c, next) => {
+  const authHeader = c.req.header('authorization');
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
   if (token) {
     const { data, error } = await supabase.auth.getUser(token);
     if (error || !data.user) {
-      return _res.status(401).json({ error: 'Invalid or expired access token' });
+      return c.json({ error: 'Invalid or expired access token' }, 401);
     }
-    const authReq = req as AuthRequest;
-    authReq.userId = data.user.id;
-    authReq.userEmail = data.user.email ?? null;
+    c.set('userId', data.user.id);
+    c.set('userEmail', data.user.email ?? null);
   }
 
-  return next();
+  await next();
 });
 
-router.post('/:testId', async (req, res) => {
-  const authReq = req as unknown as AuthRequest;
-  const { testId } = req.params;
-  const { reason } = req.body;
+router.post('/:testId', async (c) => {
+  const { testId } = c.req.param();
+  const { reason } = await readJson<{ reason?: unknown }>(c);
 
-  if (!authReq.userId) {
-    return res.status(401).json({ error: 'Authentication required' });
+  if (!c.get('userId')) {
+    return c.json({ error: 'Authentication required' }, 401);
   }
 
   if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
-    return res.status(400).json({ error: 'Reason for invalidation is required' });
+    return c.json({ error: 'Reason for invalidation is required' }, 400);
   }
 
   let resolved;
   try {
-    resolved = await resolveProfileByEmail(authReq.userEmail ?? '', authReq.userId);
+    resolved = await resolveProfileByEmail(c.get('userEmail') ?? '', c.get('userId'));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Officer profile lookup failed';
-    return res.status(500).json({ error: message });
+    return c.json({ error: message }, 500);
   }
 
   if (!resolved || resolved.source !== 'officer_users' || typeof resolved.profile.officerId !== 'number') {
-    return res.status(404).json({ error: 'Officer profile not found' });
+    return c.json({ error: 'Officer profile not found' }, 404);
   }
 
   const officerId = resolved.profile.officerId;
@@ -69,7 +57,7 @@ router.post('/:testId', async (req, res) => {
     .single();
 
   if (testError || !test) {
-    return res.status(404).json({ error: 'Test record not found' });
+    return c.json({ error: 'Test record not found' }, 404);
   }
 
   // Check if already invalidated
@@ -80,7 +68,7 @@ router.post('/:testId', async (req, res) => {
     .single();
 
   if (existing) {
-    return res.status(409).json({ error: 'Test has already been invalidated' });
+    return c.json({ error: 'Test has already been invalidated' }, 409);
   }
 
   // Create invalidation record
@@ -96,19 +84,18 @@ router.post('/:testId', async (req, res) => {
 
   if (error) {
     console.error('Invalidation insert error:', error);
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
-  return res.status(201).json(invalidation);
+  return c.json(invalidation, 201);
 });
 
-router.get('/:testId', async (req, res) => {
-  const authReq = req as unknown as AuthRequest;
-  if (!authReq.userId) {
-    return res.status(401).json({ error: 'Authentication required' });
+router.get('/:testId', async (c) => {
+  if (!c.get('userId')) {
+    return c.json({ error: 'Authentication required' }, 401);
   }
 
-  const { testId } = req.params;
+  const { testId } = c.req.param();
 
   const { data: invalidations, error } = await serviceSupabase
     .from('invalidations')
@@ -127,10 +114,10 @@ router.get('/:testId', async (req, res) => {
 
   if (error) {
     console.error('Invalidation fetch error:', error);
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
-  return res.json(invalidations || []);
+  return c.json(invalidations || []);
 });
 
 export default router;

@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../../helpers/request';
 
 const mockServiceSupabase = {
   from: jest.fn(),
@@ -20,10 +20,10 @@ jest.mock('@supabase/supabase-js', () => ({
 import casesRoutes from '../../../src/routes/supervisor/cases';
 import { supabase } from '../../../src/supabase';
 import { hashData } from '../../../src/utilities/hash';
+import type { AppEnv } from '../../../src/env';
 
-const app = express();
-app.use(express.json());
-app.use('/api/supervisor/cases', casesRoutes);
+const app = new Hono<AppEnv>();
+app.route('/api/supervisor/cases', casesRoutes);
 
 // Matches the record hash the mobile sync endpoint stores for this row.
 const testOneHash = hashData({

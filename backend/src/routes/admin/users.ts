@@ -1,6 +1,7 @@
-import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
-import { requireAdmin, type AdminRequest } from '../../middleware/requireAdmin';
+import { Hono } from 'hono';
+import type { AppEnv } from '../../env';
+import { requireAdmin } from '../../middleware/requireAdmin';
+import { serviceSupabase } from '../../serviceSupabase';
 import {
   PORTAL_ROLES,
   ROLE_ADMIN,
@@ -9,7 +10,7 @@ import {
   roleLabel
 } from '../../constants/roles';
 import { writeAuditLog } from '../../utilities/auditLog';
-import { asyncHandler } from '../../asyncHandler';
+import { readJson } from '../../utilities/jsonBody';
 import {
   buildSupervisorInviteLink,
   generateOfficerInviteToken,
@@ -18,21 +19,10 @@ import {
 } from '../../utilities/officerInvites';
 import { sendSupervisorInviteEmail } from '../../utilities/email';
 
-const router = Router();
+const router = new Hono<AppEnv>();
 
 type DbError = { message?: string; code?: string; details?: string; hint?: string };
 type PortalSource = 'officer_users' | 'supervisor_users' | 'admin_users';
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
 
 function digitsOnly(value?: string): string {
   return value?.replace(/\D/g, '') ?? '';
@@ -171,9 +161,9 @@ function toPortalUserFromAdmin(row: Record<string, unknown>) {
   };
 }
 
-router.use(requireAdmin);
+router.use('*', requireAdmin);
 
-router.get('/', async (_req, res) => {
+router.get('/', async (c) => {
   const [adminsResult, supervisorsResult] = await Promise.all([
     serviceSupabase
       .from('admin_users')
@@ -187,10 +177,10 @@ router.get('/', async (_req, res) => {
   ]);
 
   if (adminsResult.error) {
-    return res.status(500).json({ error: adminsResult.error.message });
+    return c.json({ error: adminsResult.error.message }, 500);
   }
   if (supervisorsResult.error) {
-    return res.status(500).json({ error: supervisorsResult.error.message });
+    return c.json({ error: supervisorsResult.error.message }, 500);
   }
 
   // Also surface legacy supervisors that were incorrectly stored in officer_users.
@@ -201,7 +191,7 @@ router.get('/', async (_req, res) => {
     .order('created_at', { ascending: false });
 
   if (legacyError) {
-    return res.status(500).json({ error: legacyError.message });
+    return c.json({ error: legacyError.message }, 500);
   }
 
   const users = [
@@ -212,12 +202,11 @@ router.get('/', async (_req, res) => {
     ...(legacySupervisors ?? []).map((row) => toPortalUserFromOfficer(row as Record<string, unknown>))
   ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  return res.json(users);
+  return c.json(users);
 });
 
-router.post('/', asyncHandler(async (req, res) => {
-  const authReq = req as unknown as AdminRequest;
-  const body = (req.body ?? {}) as Record<string, unknown>;
+router.post('/', async (c) => {
+  const body = await readJson(c);
   const {
     email,
     password,
@@ -245,27 +234,30 @@ router.post('/', asyncHandler(async (req, res) => {
   };
 
   if (!email || !name || !surname) {
-    return res.status(400).json({
-      error:
-        Object.keys(body).length === 0
-          ? 'Request body is missing. Send JSON with Content-Type: application/json.'
-          : 'Email, name, and surname are required'
-    });
+    return c.json(
+      {
+        error:
+          Object.keys(body).length === 0
+            ? 'Request body is missing. Send JSON with Content-Type: application/json.'
+            : 'Email, name, and surname are required'
+      },
+      400
+    );
   }
 
   const resolvedRoleId = Number(roleId);
   if (resolvedRoleId !== ROLE_SUPERVISOR && resolvedRoleId !== ROLE_ADMIN) {
-    return res.status(400).json({ error: 'Role must be Supervisor or Admin' });
+    return c.json({ error: 'Role must be Supervisor or Admin' }, 400);
   }
 
   if (resolvedRoleId === ROLE_ADMIN && !password) {
-    return res.status(400).json({ error: 'Password is required when creating an admin account' });
+    return c.json({ error: 'Password is required when creating an admin account' }, 400);
   }
 
   const normalizedEmail = email.trim().toLowerCase();
 
   if (await emailTaken(normalizedEmail)) {
-    return res.status(409).json({ error: 'A user with this email already exists' });
+    return c.json({ error: 'A user with this email already exists' }, 409);
   }
 
   let created:
@@ -277,7 +269,7 @@ router.post('/', asyncHandler(async (req, res) => {
     const { data: authList } = await serviceSupabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
     const existingAuth = authList?.users?.find((u) => u.email?.toLowerCase() === normalizedEmail);
     if (existingAuth) {
-      return res.status(409).json({ error: 'An auth account with this email already exists' });
+      return c.json({ error: 'An auth account with this email already exists' }, 409);
     }
 
     const supervisorIdNumber = await allocateIdNumber(
@@ -308,10 +300,13 @@ router.post('/', asyncHandler(async (req, res) => {
 
     if (insertError || !inserted?.length) {
       console.error('[admin/users] supervisor insert failed:', insertError);
-      return res.status(500).json({
-        error: formatDbError(insertError as DbError | null),
-        code: (insertError as DbError | null)?.code
-      });
+      return c.json(
+        {
+          error: formatDbError(insertError as DbError | null),
+          code: (insertError as DbError | null)?.code
+        },
+        500
+      );
     }
 
     created = toPortalUserFromSupervisor(inserted[0] as Record<string, unknown>);
@@ -325,7 +320,7 @@ router.post('/', asyncHandler(async (req, res) => {
     const { error: inviteError } = await serviceSupabase.from('supervisor_invitations').insert([{
       supervisor_id: created.officerId,
       token_hash: hashOfficerInviteToken(token),
-      created_by_email: authReq.userEmail ?? null,
+      created_by_email: c.get('userEmail') ?? null,
       expires_at: expiresAt
     }]);
 
@@ -358,14 +353,14 @@ router.post('/', asyncHandler(async (req, res) => {
     };
 
     await writeAuditLog(
-      authReq.userEmail ?? 'unknown',
+      c.get('userEmail') ?? 'unknown',
       inviteEmailSent
         ? 'Created supervisor invite'
         : 'Created supervisor invite (email not sent)',
       created.userId
     );
 
-    return res.status(201).json(createdWithInvite);
+    return c.json(createdWithInvite, 201);
   } else {
     await removeOrphanAuthUser(normalizedEmail);
 
@@ -391,7 +386,7 @@ router.post('/', asyncHandler(async (req, res) => {
     if (authError || !authUserData.user) {
       const msg = authError?.message ?? 'Failed to create auth account';
       const statusCode = msg.toLowerCase().includes('already') ? 409 : 400;
-      return res.status(statusCode).json({ error: msg });
+      return c.json({ error: msg }, statusCode);
     }
 
     const adminIdNumber = await allocateIdNumber(
@@ -423,23 +418,26 @@ router.post('/', asyncHandler(async (req, res) => {
     if (insertError || !inserted?.length) {
       await safeDeleteAuthUser(authUserData.user.id);
       console.error('[admin/users] admin insert failed:', insertError);
-      return res.status(500).json({
-        error: formatDbError(insertError as DbError | null),
-        code: (insertError as DbError | null)?.code
-      });
+      return c.json(
+        {
+          error: formatDbError(insertError as DbError | null),
+          code: (insertError as DbError | null)?.code
+        },
+        500
+      );
     }
 
     created = toPortalUserFromAdmin(inserted[0] as Record<string, unknown>);
   }
 
   await writeAuditLog(
-    authReq.userEmail ?? 'unknown',
+    c.get('userEmail') ?? 'unknown',
     'Created admin account',
     created.userId
   );
 
-  return res.status(201).json(created);
-}));
+  return c.json(created, 201);
+});
 
 const PORTAL_STATUSES = ['Active', 'Inactive'] as const;
 type PortalUserResult =
@@ -452,36 +450,38 @@ type PortalUserResult =
   | { missing: true }
   | { error: string };
 
-router.patch('/:officerId', asyncHandler(async (req, res) => {
-  const authReq = req as unknown as AdminRequest;
-  const officerId = Number(req.params.officerId);
-  const sourceParam = String(req.query.source ?? '').trim() as PortalSource | '';
-  const roleIdParam = Number(req.query.roleId);
-  const body = (req.body ?? {}) as { status?: string; station?: string };
+router.patch('/:officerId', async (c) => {
+  const officerId = Number(c.req.param('officerId'));
+  const sourceParam = String(c.req.query('source') ?? '').trim() as PortalSource | '';
+  const roleIdParam = Number(c.req.query('roleId'));
+  const body = await readJson<{ status?: string; station?: string }>(c);
 
   if (!Number.isFinite(officerId)) {
-    return res.status(400).json({ error: 'Invalid user id' });
+    return c.json({ error: 'Invalid user id' }, 400);
   }
 
   const status = body.status?.trim();
   const station = body.station?.trim();
 
   if (!status && station === undefined) {
-    return res.status(400).json({ error: 'Provide status and/or station to update' });
+    return c.json({ error: 'Provide status and/or station to update' }, 400);
   }
 
   if (status && !(PORTAL_STATUSES as readonly string[]).includes(status)) {
-    return res.status(400).json({
-      error: `Status must be one of: ${PORTAL_STATUSES.join(', ')}`
-    });
+    return c.json(
+      {
+        error: `Status must be one of: ${PORTAL_STATUSES.join(', ')}`
+      },
+      400
+    );
   }
 
   if (
     status === 'Inactive' &&
-    officerId === authReq.adminProfileId &&
+    officerId === c.get('adminProfileId') &&
     (!sourceParam || sourceParam === 'admin_users' || roleIdParam === ROLE_ADMIN)
   ) {
-    return res.status(400).json({ error: 'You cannot deactivate your own account' });
+    return c.json({ error: 'You cannot deactivate your own account' }, 400);
   }
 
   const preferAdmin =
@@ -559,38 +559,37 @@ router.patch('/:officerId', asyncHandler(async (req, res) => {
   }
 
   if ('error' in result && result.error) {
-    return res.status(500).json({ error: result.error });
+    return c.json({ error: result.error }, 500);
   }
   if ('missing' in result && result.missing) {
-    return res.status(404).json({ error: 'User not found' });
+    return c.json({ error: 'User not found' }, 404);
   }
 
   const updated = (result as Extract<PortalUserResult, { user: unknown }>).user;
 
   await writeAuditLog(
-    authReq.userEmail ?? 'unknown',
+    c.get('userEmail') ?? 'unknown',
     `Updated portal user status to ${updated.status}`,
     updated.userId
   );
 
-  return res.json(updated);
-}));
+  return c.json(updated);
+});
 
-router.delete('/:officerId', async (req, res) => {
-  const authReq = req as unknown as AdminRequest;
-  const officerId = Number(req.params.officerId);
-  const sourceParam = String(req.query.source ?? '').trim() as PortalSource | '';
-  const roleIdParam = Number(req.query.roleId);
+router.delete('/:officerId', async (c) => {
+  const officerId = Number(c.req.param('officerId'));
+  const sourceParam = String(c.req.query('source') ?? '').trim() as PortalSource | '';
+  const roleIdParam = Number(c.req.query('roleId'));
 
   if (!Number.isFinite(officerId)) {
-    return res.status(400).json({ error: 'Invalid user id' });
+    return c.json({ error: 'Invalid user id' }, 400);
   }
 
   if (
-    officerId === authReq.adminProfileId &&
+    officerId === c.get('adminProfileId') &&
     (!sourceParam || sourceParam === 'admin_users' || roleIdParam === ROLE_ADMIN)
   ) {
-    return res.status(400).json({ error: 'You cannot remove your own account' });
+    return c.json({ error: 'You cannot remove your own account' }, 400);
   }
 
   const preferAdmin =
@@ -686,10 +685,10 @@ router.delete('/:officerId', async (req, res) => {
   }
 
   if ('error' in result && result.error) {
-    return res.status(500).json({ error: result.error });
+    return c.json({ error: result.error }, 500);
   }
   if ('missing' in result && result.missing) {
-    return res.status(404).json({ error: 'User not found' });
+    return c.json({ error: 'User not found' }, 404);
   }
 
   const { email, removedUserId } = result as { email: string; removedUserId: string };
@@ -704,9 +703,9 @@ router.delete('/:officerId', async (req, res) => {
     // Profile removed; auth cleanup is best-effort
   }
 
-  await writeAuditLog(authReq.userEmail ?? 'unknown', 'Removed portal user', removedUserId);
+  await writeAuditLog(c.get('userEmail') ?? 'unknown', 'Removed portal user', removedUserId);
 
-  return res.json({ removed: officerId });
+  return c.json({ removed: officerId });
 });
 
 export default router;

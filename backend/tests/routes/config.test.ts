@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../helpers/request';
 
 const mockServiceSupabase = {
   from: jest.fn(),
@@ -19,9 +19,10 @@ jest.mock('@supabase/supabase-js', () => ({
 
 import configRoutes from '../../src/routes/config';
 import { supabase } from '../../src/supabase';
+import type { AppEnv } from '../../src/env';
 
-const app = express();
-app.use('/api/config', configRoutes);
+const app = new Hono<AppEnv>();
+app.route('/api/config', configRoutes);
 
 describe('Runtime Config Route', () => {
   beforeEach(() => {

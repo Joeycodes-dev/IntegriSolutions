@@ -12,6 +12,7 @@ jest.mock('../../src/services/auth', () => ({
 jest.mock('../../src/services/api', () => ({
   acknowledgeAlert: jest.fn(),
   isNetworkRequestError: jest.fn((err: unknown) => err instanceof Error && /^Network error requesting/.test(err.message)),
+  isRateLimitError: jest.fn((err: unknown) => err instanceof Error && err.name === 'RateLimitError'),
 }));
 
 jest.mock('../../src/services/audit', () => ({

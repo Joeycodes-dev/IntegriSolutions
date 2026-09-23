@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../helpers/request';
 
 const mockServiceSupabase: any = {
   from: jest.fn(),
@@ -27,14 +27,10 @@ jest.mock('../../src/utilities/resolveProfile', () => ({
 
 import roadOffencesRoutes from '../../src/routes/roadOffences';
 import { supabase } from '../../src/supabase';
+import type { AppEnv } from '../../src/env';
 
-const app = express();
-app.use(express.json());
-app.use('/api/road-offences', roadOffencesRoutes);
-// Surface multer / route errors as JSON so tests get deterministic bodies.
-app.use((err: any, _req: any, res: any, _next: any) => {
-  res.status(500).json({ error: err?.message ?? 'Internal server error' });
-});
+const app = new Hono<AppEnv>();
+app.route('/api/road-offences', roadOffencesRoutes);
 
 const officerProfile = {
   source: 'officer_users' as const,

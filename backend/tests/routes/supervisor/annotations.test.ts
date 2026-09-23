@@ -1,5 +1,5 @@
-import request from 'supertest';
-import express from 'express';
+import { Hono } from 'hono';
+import request from '../../helpers/request';
 
 const mockServiceSupabase = {
   from: jest.fn(),
@@ -23,10 +23,10 @@ jest.mock('../../../src/utilities/auditLog', () => ({
 
 import annotationsRoutes from '../../../src/routes/supervisor/annotations';
 import { supabase } from '../../../src/supabase';
+import type { AppEnv } from '../../../src/env';
 
-const app = express();
-app.use(express.json());
-app.use('/api/supervisor/tests', annotationsRoutes);
+const app = new Hono<AppEnv>();
+app.route('/api/supervisor/tests', annotationsRoutes);
 
 describe('Annotations Routes', () => {
   beforeEach(() => {

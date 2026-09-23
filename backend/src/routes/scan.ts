@@ -1,14 +1,14 @@
-import { Router } from 'express';
-import sharp from 'sharp';
-import { ImageAnnotatorClient } from '@google-cloud/vision';
-import { createWorker } from 'tesseract.js';
-import { asyncHandler } from '../asyncHandler';
+import { Hono } from 'hono';
 import { requireAuth } from '../middleware/auth';
+import { readJson } from '../utilities/jsonBody';
+import type { AppEnv } from '../env';
 
-const router = Router();
-let workerPromise: ReturnType<typeof createWorker> | null = null;
-let visionClient: ImageAnnotatorClient | null | undefined;
-const VISION_TIMEOUT_MS = 12_000;
+const router = new Hono<AppEnv>();
+
+// The mobile app runs OCR on-device (ML Kit / Apple Vision) and posts the raw
+// text here; this route only parses fields and scores confidence.
+const MAX_TEXT_LENGTH = 200_000;
+const ON_DEVICE_PASS_CONFIDENCE = 85;
 
 interface DriverLicenseData {
   name: string;
@@ -34,7 +34,7 @@ interface OcrPassResult {
 }
 
 interface OcrDebug {
-  engine: 'google-vision' | 'tesseract';
+  engine: 'ml-kit';
   overallConfidence: number;
   fieldConfidence: Record<string, number>;
   passes: Array<{ name: string; confidence: number; preview: string }>;
@@ -45,103 +45,6 @@ interface OcrDebug {
 type ScanResponse = DriverLicenseData & { _ocr: OcrDebug };
 
 type BuiltOcrResult = { data: DriverLicenseData; scoreMap: Record<string, number>; overall: number };
-type ScanAttempt = { response: ScanResponse; valid: boolean };
-type VisionClientOptions = NonNullable<ConstructorParameters<typeof ImageAnnotatorClient>[0]>;
-
-type VisionTextNode = {
-  confidence?: number | null;
-  pages?: VisionTextNode[];
-  blocks?: VisionTextNode[];
-  paragraphs?: VisionTextNode[];
-  words?: VisionTextNode[];
-  symbols?: VisionTextNode[];
-};
-
-type VisionAnnotateResponse = {
-  responses?: Array<{
-    fullTextAnnotation?: (VisionTextNode & { text?: string | null }) | null;
-    textAnnotations?: Array<{ description?: string | null; score?: number | null }> | null;
-    error?: { message?: string | null } | null;
-  }>;
-};
-
-function getWorker() {
-  if (!workerPromise) {
-    workerPromise = createWorker('eng');
-  }
-  return workerPromise;
-}
-
-function normalizePrivateKey(value: string | undefined): string | undefined {
-  return value?.replace(/\\n/g, '\n');
-}
-
-function parseVisionCredentialsJson(): Record<string, unknown> | null {
-  const encoded = process.env.GOOGLE_CLOUD_VISION_CREDENTIALS_BASE64 ?? process.env.GOOGLE_CLOUD_CREDENTIALS_BASE64;
-  const raw = encoded
-    ? Buffer.from(encoded, 'base64').toString('utf8')
-    : process.env.GOOGLE_CLOUD_VISION_CREDENTIALS_JSON ?? process.env.GOOGLE_CLOUD_CREDENTIALS_JSON;
-  if (!raw) return null;
-
-  try {
-    const credentials = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof credentials.private_key === 'string') {
-      credentials.private_key = normalizePrivateKey(credentials.private_key);
-    }
-    return credentials;
-  } catch (error) {
-    console.warn('[scan] Google Vision credentials env could not be parsed:', error instanceof Error ? error.message : error);
-    return null;
-  }
-}
-
-function isGoogleVisionConfigured(): boolean {
-  return Boolean(
-    process.env.GOOGLE_CLOUD_VISION_API_KEY ||
-    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
-    process.env.GOOGLE_CLOUD_VISION_CREDENTIALS_BASE64 ||
-    process.env.GOOGLE_CLOUD_CREDENTIALS_BASE64 ||
-    process.env.GOOGLE_CLOUD_VISION_CREDENTIALS_JSON ||
-    process.env.GOOGLE_CLOUD_CREDENTIALS_JSON ||
-    (process.env.GOOGLE_CLOUD_CLIENT_EMAIL && process.env.GOOGLE_CLOUD_PRIVATE_KEY)
-  );
-}
-
-function getVisionClient(): ImageAnnotatorClient | null {
-  if (visionClient !== undefined) return visionClient;
-
-  if (process.env.GOOGLE_CLOUD_VISION_API_KEY) {
-    visionClient = null;
-    return visionClient;
-  }
-
-  if (!isGoogleVisionConfigured()) {
-    visionClient = null;
-    return visionClient;
-  }
-
-  const options: VisionClientOptions = {};
-  const credentials = parseVisionCredentialsJson();
-  const clientEmail = process.env.GOOGLE_CLOUD_CLIENT_EMAIL;
-  const privateKey = normalizePrivateKey(process.env.GOOGLE_CLOUD_PRIVATE_KEY);
-
-  if (credentials) {
-    options.credentials = credentials as VisionClientOptions['credentials'];
-    if (typeof credentials.project_id === 'string') {
-      options.projectId = credentials.project_id;
-    }
-  } else if (clientEmail && privateKey) {
-    options.credentials = { client_email: clientEmail, private_key: privateKey };
-  }
-
-  const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID ?? process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT;
-  if (projectId) {
-    options.projectId = projectId;
-  }
-
-  visionClient = new ImageAnnotatorClient(options);
-  return visionClient;
-}
 
 function normalizeSpaces(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
@@ -193,108 +96,6 @@ function normalizeDate(value: string): string {
   const yearRaw = match[6].padStart(4, '0');
   const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
   return `${year}-${match[5].padStart(2, '0')}-${match[4].padStart(2, '0')}`;
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`OCR timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    promise
-      .then((value) => {
-        clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-  });
-}
-
-function collectVisionConfidences(node: VisionTextNode | null | undefined, output: number[] = []): number[] {
-  if (!node) return output;
-
-  if (typeof node.confidence === 'number' && Number.isFinite(node.confidence) && node.confidence > 0) {
-    output.push(node.confidence);
-  }
-
-  for (const child of [
-    ...(node.pages ?? []),
-    ...(node.blocks ?? []),
-    ...(node.paragraphs ?? []),
-    ...(node.words ?? []),
-    ...(node.symbols ?? [])
-  ]) {
-    collectVisionConfidences(child, output);
-  }
-
-  return output;
-}
-
-function visionConfidence(annotation: VisionTextNode | null | undefined): number {
-  const values = collectVisionConfidences(annotation);
-  if (values.length === 0) return 90;
-
-  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-  return Math.max(0, Math.min(100, average <= 1 ? average * 100 : average));
-}
-
-function visionTextFromPayload(payload: VisionAnnotateResponse): OcrPassResult | null {
-  const result = payload.responses?.[0];
-  const errorMessage = result?.error?.message;
-  if (errorMessage) {
-    throw new Error(errorMessage);
-  }
-
-  const annotation = result?.fullTextAnnotation;
-  const text = annotation?.text ?? result?.textAnnotations?.[0]?.description ?? '';
-  if (!text.trim()) return null;
-
-  return {
-    name: 'google_vision_document_text',
-    text,
-    confidence: visionConfidence(annotation)
-  };
-}
-
-async function runGoogleVisionOcr(base64Image: string): Promise<OcrPassResult | null> {
-  const apiKey = process.env.GOOGLE_CLOUD_VISION_API_KEY;
-
-  if (apiKey) {
-    const response = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requests: [
-          {
-            image: { content: base64Image },
-            features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
-            imageContext: { languageHints: ['en'] }
-          }
-        ]
-      })
-    });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = (payload as { error?: { message?: string } })?.error?.message ?? 'Google Vision request failed';
-      throw new Error(message);
-    }
-
-    return visionTextFromPayload(payload as VisionAnnotateResponse);
-  }
-
-  const client = getVisionClient();
-  if (!client) return null;
-
-  const [result] = await client.documentTextDetection({
-    image: { content: Buffer.from(base64Image, 'base64') },
-    imageContext: { languageHints: ['en'] }
-  } as Parameters<ImageAnnotatorClient['documentTextDetection']>[0]);
-
-  return visionTextFromPayload({ responses: [result as NonNullable<VisionAnnotateResponse['responses']>[number]] });
 }
 
 function extractDateCandidates(text: string): string[] {
@@ -512,291 +313,6 @@ function parseRequiredFields(text: string, passConfidenceRaw: number, source: st
   return { initials, surname, idNumber, licenseNumber, expiryDate, dob };
 }
 
-function findInitialsAndSurname(lines: string[], source: string): { initials: FieldCandidate; surname: FieldCandidate; name: FieldCandidate } {
-  const skip = /DRIVING|LICEN|SOUTH|AFRICA|RESTRICT|ISSUED|VALID|CODE|BIRTH|NUMBER|ID\s*NO|RSA|ZA/i;
-
-  for (const raw of lines) {
-    const line = normalizeSpaces(raw.replace(/[^A-Za-z\s.'-]/g, ' '));
-    if (!line || skip.test(line)) continue;
-
-    const upperLine = line.toUpperCase();
-    const tokens = upperLine.split(' ').filter(Boolean);
-    if (tokens.length < 2) continue;
-
-    const initials = tokens[0].replace(/[^A-Z]/g, '');
-    const surname = tokens[1].replace(/[^A-Z'-]/g, '');
-    if (initials.length >= 1 && initials.length <= 3 && surname.length >= 3) {
-      return {
-        initials: { value: initials, score: 0.86, source },
-        surname: { value: surname, score: 0.84, source },
-        name: { value: initials, score: 0.65, source }
-      };
-    }
-  }
-
-  return {
-    initials: emptyCandidate(source),
-    surname: emptyCandidate(source),
-    name: emptyCandidate(source)
-  };
-}
-
-function parseFromText(text: string, source: string): {
-  initials: FieldCandidate;
-  surname: FieldCandidate;
-  name: FieldCandidate;
-  idNumber: FieldCandidate;
-  licenseNumber: FieldCandidate;
-  dob: FieldCandidate;
-  expiryDate: FieldCandidate;
-  licenseCodes: FieldCandidate;
-} {
-  const normalized = text.replace(/\r/g, '').replace(/[|;]/g, '\n');
-  const lines = normalized
-    .split(/\n+/)
-    .map((line) => normalizeSpaces(line))
-    .filter(Boolean);
-  const joined = lines.join('\n');
-
-  let initials = emptyCandidate(source);
-  let surname = emptyCandidate(source);
-  let name = emptyCandidate(source);
-  let idNumber = emptyCandidate(source);
-  let licenseNumber = emptyCandidate(source);
-  let dob = emptyCandidate(source);
-  let expiryDate = emptyCandidate(source);
-  let licenseCodes = emptyCandidate(source);
-
-  const nameBlock = findInitialsAndSurname(lines, `${source}:name-block`);
-  initials = pickBest(initials, nameBlock.initials);
-  surname = pickBest(surname, nameBlock.surname);
-  name = pickBest(name, nameBlock.name);
-
-  const labeledInitials = normalizeSpaces((joined.match(/initials?\s*[:#-]?\s*([^\n]+)/i)?.[1] ?? '').toUpperCase());
-  if (labeledInitials) {
-    initials = pickBest(initials, {
-      value: labeledInitials.replace(/[^A-Z]/g, ''),
-      score: 0.82,
-      source: `${source}:label-initials`
-    });
-  }
-
-  const labeledSurname = normalizeSpaces((joined.match(/(?:surname|last\s*name|family\s*name)\s*[:#-]?\s*([^\n]+)/i)?.[1] ?? '').toUpperCase());
-  if (labeledSurname) {
-    surname = pickBest(surname, {
-      value: labeledSurname.replace(/[^A-Z'-]/g, ''),
-      score: 0.82,
-      source: `${source}:label-surname`
-    });
-  }
-
-  const labeledIdRaw = normalizeSpaces((joined.match(/(?:id\s*no\.?|identity\s*number|id\s*number)\s*[:#-]?\s*([0-9OQI\s\/-]{8,22})/i)?.[1] ?? ''));
-  const labeledIdDigits = toDigits(labeledIdRaw);
-  const fallbackIdDigits = toDigits(joined.match(/\b[0-9OQI\/-\s]{13,22}\b/)?.[0] ?? '');
-  const bestIdDigits = labeledIdDigits || fallbackIdDigits;
-  if (bestIdDigits) {
-    const normalizedId = bestIdDigits.length > 13 ? bestIdDigits.slice(-13) : bestIdDigits.slice(0, 13);
-    const score = normalizedId.length === 13 ? (labeledIdDigits ? 0.92 : 0.78) : 0.5;
-    idNumber = pickBest(idNumber, {
-      value: normalizedId,
-      score,
-      source: labeledIdDigits ? `${source}:label-id` : `${source}:pattern-id`
-    });
-  }
-
-  const labeledLicenseRaw = normalizeSpaces((joined.match(/(?:driver\s*(?:licen[cs]e|permit)\s*(?:number|no\.?)?|licen[cs]e\s*number|licen[cs]e\s*no\.?)\s*[:#-]?\s*([^\n]+)/i)?.[1] ?? ''));
-  const labeledLicense = toAlphaNum(labeledLicenseRaw);
-  const fallbackLicense = toAlphaNum(
-    lines.find((line) => /[A-Z0-9]{7,}/i.test(line) && !/ID\s*NO|BIRTH|VALID|ISSUED|SOUTH|AFRICA/i.test(line)) ?? ''
-  );
-  const bestLicense = labeledLicense || fallbackLicense;
-  if (bestLicense) {
-    const hasLetter = /[A-Z]/.test(bestLicense);
-    const hasNumber = /[0-9]/.test(bestLicense);
-    const score = labeledLicense
-      ? 0.88
-      : (hasLetter && hasNumber ? 0.74 : 0.6);
-    licenseNumber = pickBest(licenseNumber, {
-      value: bestLicense,
-      score,
-      source: labeledLicense ? `${source}:label-license` : `${source}:pattern-license`
-    });
-  }
-
-  const labeledBirth = normalizeDate(normalizeSpaces((joined.match(/(?:date\s*of\s*birth|birth|dob)\s*[:#-]?\s*([^\n]+)/i)?.[1] ?? '')));
-  if (labeledBirth) {
-    dob = pickBest(dob, { value: labeledBirth, score: 0.86, source: `${source}:label-dob` });
-  }
-
-  const dateCandidates = extractDateCandidates(joined);
-  const validRange = joined.match(/valid[^\n]*?(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})[^\n]*?(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})/i);
-  const validExpiry = validRange?.[2] ? normalizeDate(validRange[2]) : '';
-  const labeledExpiry = normalizeDate(normalizeSpaces((joined.match(/(?:expiry\s*date|valid\s*until|expires|valid\s*to)\s*[:#-]?\s*([^\n]+)/i)?.[1] ?? '')));
-  const sortedCandidates = [...dateCandidates].sort();
-  const fallbackExpiry = sortedCandidates.length > 0 ? sortedCandidates[sortedCandidates.length - 1] : '';
-  const bestExpiry = validExpiry || labeledExpiry || fallbackExpiry;
-  if (bestExpiry) {
-    const score = validExpiry ? 0.9 : (labeledExpiry ? 0.82 : 0.62);
-    expiryDate = pickBest(expiryDate, {
-      value: bestExpiry,
-      score,
-      source: validExpiry ? `${source}:valid-range` : (labeledExpiry ? `${source}:label-expiry` : `${source}:pattern-expiry`)
-    });
-  }
-
-  const codeLabelRaw = normalizeSpaces((joined.match(/(?:codes?|categories|class)\s*[:#-]?\s*([^\n]+)/i)?.[1] ?? ''));
-  const codeLabel = toAlphaNum(codeLabelRaw);
-  const codeFallback = toAlphaNum(lines.find((line) => /^([A-Z]{1,2}\d?)$/.test(toAlphaNum(line))) ?? '');
-  const bestCode = codeLabel || codeFallback;
-  if (bestCode) {
-    licenseCodes = pickBest(licenseCodes, {
-      value: bestCode,
-      score: codeLabel ? 0.74 : 0.56,
-      source: codeLabel ? `${source}:label-code` : `${source}:pattern-code`
-    });
-  }
-
-  return { initials, surname, name, idNumber, licenseNumber, dob, expiryDate, licenseCodes };
-}
-
-async function makeFastVariants(base64Image: string, retryMode: boolean): Promise<Array<{ name: string; buffer: Buffer }>> {
-  const raw = Buffer.from(base64Image, 'base64');
-
-  const oriented = await sharp(raw, { failOn: 'none' })
-    .autoOrient()
-    .resize({ width: 1400, withoutEnlargement: true })
-    .toBuffer();
-
-  const normalized = await sharp(oriented)
-    .normalize()
-    .grayscale()
-    .sharpen({ sigma: 1.1 })
-    .toBuffer();
-
-  const variants: Array<{ name: string; buffer: Buffer }> = [{ name: 'pass_full', buffer: normalized }];
-
-  const darkBoost = await sharp(oriented)
-    .grayscale()
-    .gamma(1.45)
-    .linear(1.25, -16)
-    .normalize()
-    .sharpen({ sigma: 1.4 })
-    .toBuffer();
-  variants.push({ name: 'pass_dark_boost', buffer: darkBoost });
-
-  // Isolate yellow-highlighted ink (common evidence markup) to OCR marked values only.
-  const highlightMask = await sharp(oriented)
-    .recomb([
-      [1.1, 1.05, -1.35],
-      [1.1, 1.05, -1.35],
-      [1.1, 1.05, -1.35]
-    ])
-    .normalize()
-    .grayscale()
-    .threshold(142)
-    .toBuffer();
-  variants.push({ name: 'pass_highlight_mask', buffer: highlightMask });
-
-  const metadata = await sharp(normalized).metadata();
-  const width = metadata.width ?? 0;
-  const height = metadata.height ?? 0;
-  if (width > 0 && height > 0) {
-    const extract = {
-      left: Math.max(0, Math.floor(width * 0.06)),
-      top: Math.max(0, Math.floor(height * 0.1)),
-      width: Math.max(120, Math.floor(width * 0.88)),
-      height: Math.max(96, Math.floor(height * 0.78))
-    };
-
-    const textBand = await sharp(normalized).extract(extract).normalize().sharpen().toBuffer();
-    variants.push({ name: 'pass_text_band', buffer: textBand });
-
-    const highlightBand = await sharp(highlightMask)
-      .extract(extract)
-      .median(1)
-      .sharpen({ sigma: 1.3 })
-      .toBuffer();
-    variants.push({ name: 'pass_highlight_band', buffer: highlightBand });
-
-    if (retryMode) {
-      const retryBand = await sharp(textBand).linear(1.22, -10).median(1).toBuffer();
-      variants.push({ name: 'retry_text_band_boost', buffer: retryBand });
-
-      const retryBinary = await sharp(retryBand)
-        .threshold(152)
-        .toBuffer();
-      variants.push({ name: 'retry_text_band_binary', buffer: retryBinary });
-    }
-  }
-
-  return variants;
-}
-
-async function runOcrPasses(variants: Array<{ name: string; buffer: Buffer }>): Promise<OcrPassResult[]> {
-  const worker = await getWorker();
-  const passes: OcrPassResult[] = [];
-  for (const variant of variants) {
-    const result = (await worker.recognize(variant.buffer)) as any;
-    passes.push({
-      name: variant.name,
-      text: result?.data?.text ?? '',
-      confidence: Number(result?.data?.confidence ?? 0)
-    });
-  }
-  return passes;
-}
-
-async function runHighlightedOnlyPass(base64Image: string): Promise<OcrPassResult[] | null> {
-  const raw = Buffer.from(base64Image, 'base64');
-  const highlighted = await sharp(raw, { failOn: 'none' })
-    .autoOrient()
-    .resize({ width: 1200, withoutEnlargement: true })
-    .recomb([
-      [1.1, 1.05, -1.35],
-      [1.1, 1.05, -1.35],
-      [1.1, 1.05, -1.35]
-    ])
-    .normalize()
-    .grayscale()
-    .threshold(140)
-    .median(1)
-    .sharpen({ sigma: 1.3 })
-    .toBuffer();
-
-  const worker = await getWorker();
-  const result = await withTimeout(worker.recognize(highlighted), 5_000).catch(() => null);
-  if (!result) return null;
-
-  return [{
-    name: 'highlight_only_pass',
-    text: (result as any)?.data?.text ?? '',
-    confidence: Number((result as any)?.data?.confidence ?? 0)
-  }];
-}
-
-async function runEmergencyNightPass(base64Image: string): Promise<OcrPassResult[] | null> {
-  const raw = Buffer.from(base64Image, 'base64');
-  const emergency = await sharp(raw, { failOn: 'none' })
-    .autoOrient()
-    .resize({ width: 1100, withoutEnlargement: true })
-    .grayscale()
-    .gamma(1.55)
-    .linear(1.3, -20)
-    .normalize()
-    .sharpen({ sigma: 1.2 })
-    .toBuffer();
-
-  const worker = await getWorker();
-  const result = await withTimeout(worker.recognize(emergency), 5_000).catch(() => null);
-  if (!result) return null;
-
-  return [{
-    name: 'emergency_night_pass',
-    text: (result as any)?.data?.text ?? '',
-    confidence: Number((result as any)?.data?.confidence ?? 0)
-  }];
-}
-
 function buildFastLocalResult(passes: OcrPassResult[]): BuiltOcrResult {
   const aggregate = {
     initials: emptyCandidate('none'),
@@ -884,127 +400,45 @@ function debugPasses(passes: OcrPassResult[]): OcrDebug['passes'] {
   }));
 }
 
-function buildScanResponse(
-  engine: OcrDebug['engine'],
-  local: BuiltOcrResult,
-  passes: OcrPassResult[],
-  usedPaidFallback: boolean,
-  fallbackReason: string | null
-): ScanResponse {
+function buildScanResponse(local: BuiltOcrResult, passes: OcrPassResult[]): ScanResponse {
   return {
     ...local.data,
     _ocr: {
-      engine,
+      engine: 'ml-kit',
       overallConfidence: Number(local.overall.toFixed(3)),
       fieldConfidence: fieldConfidence(local.scoreMap),
       passes: debugPasses(passes),
-      usedPaidFallback,
-      fallbackReason
+      usedPaidFallback: false,
+      fallbackReason: null
     }
   };
 }
 
-async function runVisionScan(base64Image: string, retryMode: boolean): Promise<ScanAttempt | null> {
-  if (!isGoogleVisionConfigured()) return null;
+router.post('/', requireAuth, async (c) => {
+  const body = await readJson<{ text?: string; retry?: boolean }>(c);
+  const text = typeof body.text === 'string' ? body.text : '';
+  const retryMode = body.retry === true;
 
-  const pass = await withTimeout(runGoogleVisionOcr(base64Image), VISION_TIMEOUT_MS);
-  if (!pass) return null;
+  if (!text.trim()) {
+    return c.json({ error: 'A front-of-licence text scan is required.' }, 400);
+  }
 
-  const passes = [pass];
+  if (text.length > MAX_TEXT_LENGTH) {
+    return c.json({ error: 'Licence scan text is too large.' }, 413);
+  }
+
+  const passes: OcrPassResult[] = [{ name: 'mlkit', text, confidence: ON_DEVICE_PASS_CONFIDENCE }];
   const local = buildFastLocalResult(passes);
-  return {
-    response: buildScanResponse('google-vision', local, passes, false, null),
-    valid: isStrictlyValid(local.data, local.scoreMap, retryMode)
-  };
-}
+  const response = buildScanResponse(local, passes);
 
-async function runTesseractScan(
-  base64Image: string,
-  retryMode: boolean,
-  highlightOnly: boolean,
-  fallbackReason?: string
-): Promise<ScanAttempt | null> {
-  const timeoutMs = retryMode ? 40_000 : 24_000;
-  const variants = highlightOnly ? [] : await makeFastVariants(base64Image, retryMode);
-  const timedPasses = highlightOnly
-    ? null
-    : await withTimeout(runOcrPasses(variants), timeoutMs).catch(() => null);
-  const highlightPasses = timedPasses ? null : await runHighlightedOnlyPass(base64Image);
-  const emergencyPasses = timedPasses || highlightPasses ? null : await runEmergencyNightPass(base64Image);
-  const passes = timedPasses ?? highlightPasses ?? emergencyPasses;
-  if (!passes) return null;
-
-  const local = buildFastLocalResult(passes);
-  const reason = fallbackReason ?? (timedPasses
-    ? (retryMode ? 'Retry mode enabled stronger local preprocessing only.' : null)
-    : (highlightPasses
-      ? 'Tesseract primary OCR timed out; used highlighted-values fallback.'
-      : 'Tesseract primary OCR timed out; used emergency night pass fallback.'));
-
-  return {
-    response: buildScanResponse('tesseract', local, passes, Boolean(fallbackReason), reason),
-    valid: isStrictlyValid(local.data, local.scoreMap, retryMode)
-  };
-}
-
-router.post('/', requireAuth, asyncHandler(async (req, res) => {
-  const base64Image = typeof req.body?.base64Image === 'string' ? req.body.base64Image : '';
-  const retryMode = req.body?.retry === true;
-  const highlightOnly = req.body?.highlightOnly === true;
-  if (!base64Image) {
-    return res.status(400).json({ error: 'A front-of-licence image is required.' });
-  }
-  if (base64Image.length > 8_000_000) {
-    return res.status(413).json({ error: 'Licence image is too large.' });
-  }
-
-  let visionFailure: string | null = null;
-  let visionAttempt: ScanAttempt | null = null;
-
-  // Google Vision is temporarily disabled while the billing account is repaired.
-  // Restore this block when Google Vision is ready to be used again.
-  /*
-  if (!highlightOnly) {
-    try {
-      visionAttempt = await runVisionScan(base64Image, retryMode);
-      if (visionAttempt?.valid) {
-        return res.json(visionAttempt.response);
-      }
-      if (visionAttempt) {
-        visionFailure = 'Google Vision returned low-confidence fields.';
-      }
-    } catch (error) {
-      visionFailure = error instanceof Error ? error.message : 'Google Vision OCR failed.';
-      console.warn('[scan] Google Vision OCR failed; falling back to Tesseract:', visionFailure);
-    }
-  }
-  */
-
-  const tesseractAttempt = await runTesseractScan(
-    base64Image,
-    retryMode,
-    highlightOnly,
-    visionFailure ? `${visionFailure} Used Tesseract fallback.` : undefined
-  );
-
-  if (!tesseractAttempt) {
-    return res.status(422).json({
-      error: 'Scan timed out. Retake in steadier light or use retry mode for darker captures.',
-      hint: 'Night captures are supported, but avoid motion blur and severe glare.'
-    });
-  }
-
-  if (!tesseractAttempt.valid) {
-    const candidateVisionAttempt = visionAttempt as ScanAttempt | null;
-    return res.status(422).json({
+  if (!isStrictlyValid(local.data, local.scoreMap, retryMode)) {
+    return c.json({
       error: 'Low confidence capture. Retake in good light, avoid glare, and fill the frame with the card.',
-      partial: candidateVisionAttempt && candidateVisionAttempt.response._ocr.overallConfidence > tesseractAttempt.response._ocr.overallConfidence
-        ? candidateVisionAttempt.response
-        : tesseractAttempt.response
-    });
+      partial: response
+    }, 422);
   }
 
-  return res.json(tesseractAttempt.response);
-}));
+  return c.json(response);
+});
 
 export default router;

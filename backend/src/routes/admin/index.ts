@@ -1,12 +1,13 @@
-import { Router } from 'express';
+import { Hono } from 'hono';
+import type { AppEnv } from '../../env';
 import usersRoutes from './users';
 import auditRoutes from './audit';
 import settingsRoutes from './settings';
 
-const router = Router();
+const router = new Hono<AppEnv>();
 
-router.use('/users', usersRoutes);
-router.use('/audit-logs', auditRoutes);
-router.use('/settings', settingsRoutes);
+router.route('/users', usersRoutes);
+router.route('/audit-logs', auditRoutes);
+router.route('/settings', settingsRoutes);
 
 export default router;

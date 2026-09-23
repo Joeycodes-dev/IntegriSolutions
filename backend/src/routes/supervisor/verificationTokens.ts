@@ -1,8 +1,10 @@
-import { Router } from 'express';
+import { Hono } from 'hono';
+import type { Context } from 'hono';
+import type { AppEnv } from '../../env';
 import { randomBytes } from 'crypto';
-import { createClient } from '@supabase/supabase-js';
-import { requireSupervisor, type SupervisorRequest } from '../../middleware/requireSupervisor';
-import { asyncHandler } from '../../asyncHandler';
+import { serviceSupabase } from '../../serviceSupabase';
+import { requireSupervisor } from '../../middleware/requireSupervisor';
+import { readJson } from '../../utilities/jsonBody';
 import { hashData } from '../../utilities/hash';
 import { getTestHashValidity } from '../../utilities/testIntegrity';
 import { formatCourtReferenceId } from '../../utilities/courtReference';
@@ -11,18 +13,7 @@ import { resolveRoleByEmail } from '../../utilities/resolveProfile';
 import { ROLE_ADMIN } from '../../constants/roles';
 import { loadRawSettings, buildRuntimeConfig } from '../../config/systemSettings';
 
-const router = Router();
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
+const router = new Hono<AppEnv>();
 
 const MAX_BATCH = 50;
 // A weekly/period report can legitimately span hundreds of tests — this is a
@@ -34,29 +25,28 @@ const MAX_REPORT_SIZE = 500;
 // (intersect with) the date-range query, never the sole source of truth.
 const MAX_REPORT_TEST_IDS = 1000;
 
-router.use(requireSupervisor);
+router.use('*', requireSupervisor);
 
 /**
  * Enforces the administrator-configured PDF export access policy.
  * Court verification tokens are the server-side gate for all PDF exports.
+ * Returns a denial response when access is blocked, or null when allowed.
  */
-async function enforcePdfAccess(req: SupervisorRequest, res: import('express').Response): Promise<boolean> {
+async function enforcePdfAccess(c: Context<AppEnv>): Promise<Response | null> {
   const raw = await loadRawSettings();
   const runtime = buildRuntimeConfig(raw);
   const policy = runtime.export.pdfAccess;
 
   if (policy === 'disabled') {
-    res.status(403).json({ error: 'PDF export is disabled by the administrator.' });
-    return false;
+    return c.json({ error: 'PDF export is disabled by the administrator.' }, 403);
   }
   if (policy === 'admin_only') {
-    const resolved = await resolveRoleByEmail(req.userEmail ?? '');
+    const resolved = await resolveRoleByEmail(c.get('userEmail') ?? '');
     if (!resolved || resolved.roleId !== ROLE_ADMIN) {
-      res.status(403).json({ error: 'PDF export is restricted to administrators.' });
-      return false;
+      return c.json({ error: 'PDF export is restricted to administrators.' }, 403);
     }
   }
-  return true;
+  return null;
 }
 
 interface VerificationTokenRecord {
@@ -127,24 +117,23 @@ async function issueTokensForRows(
  * POST /report instead, which queries by date range server-side rather than
  * trusting an arbitrarily large client-supplied id list.
  */
-router.post('/', asyncHandler(async (req, res) => {
-  const authReq = req as unknown as SupervisorRequest;
-
-  if (!(await enforcePdfAccess(authReq, res))) {
-    return;
+router.post('/', async (c) => {
+  const denied = await enforcePdfAccess(c);
+  if (denied) {
+    return denied;
   }
 
-  const body = req.body as { testIds?: unknown };
+  const body = await readJson<{ testIds?: unknown }>(c);
 
   const testIds = Array.isArray(body.testIds)
     ? body.testIds.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
     : [];
 
   if (testIds.length === 0) {
-    return res.status(400).json({ error: 'testIds must be a non-empty array of test ids' });
+    return c.json({ error: 'testIds must be a non-empty array of test ids' }, 400);
   }
   if (testIds.length > MAX_BATCH) {
-    return res.status(400).json({ error: `testIds may contain at most ${MAX_BATCH} entries` });
+    return c.json({ error: `testIds may contain at most ${MAX_BATCH} entries` }, 400);
   }
 
   const { data: rows, error } = await serviceSupabase
@@ -153,23 +142,23 @@ router.post('/', asyncHandler(async (req, res) => {
     .in('id', testIds);
 
   if (error) {
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
   const rowsById = new Map<string, Record<string, unknown>>((rows ?? []).map((row) => [String(row.id), row as Record<string, unknown>]));
   const missing = testIds.filter((id) => !rowsById.has(id));
   if (missing.length > 0) {
-    return res.status(404).json({ error: `Test record(s) not found: ${missing.slice(0, 5).join(', ')}` });
+    return c.json({ error: `Test record(s) not found: ${missing.slice(0, 5).join(', ')}` }, 404);
   }
 
-  const issuer = authReq.userEmail ?? 'unknown';
+  const issuer = c.get('userEmail') ?? 'unknown';
   const result = await issueTokensForRows(testIds, rowsById, issuer);
   if ('error' in result) {
-    return res.status(500).json({ error: result.error });
+    return c.json({ error: result.error }, 500);
   }
 
-  return res.status(201).json(result.records);
-}));
+  return c.json(result.records, 201);
+});
 
 /**
  * Issues verification tokens for every test in a date range, scoped
@@ -182,14 +171,13 @@ router.post('/', asyncHandler(async (req, res) => {
  * large id list as the sole source of truth. testIds, when given, only ever
  * narrows the date-range query — it cannot widen it beyond the period.
  */
-router.post('/report', asyncHandler(async (req, res) => {
-  const authReq = req as unknown as SupervisorRequest;
-
-  if (!(await enforcePdfAccess(authReq, res))) {
-    return;
+router.post('/report', async (c) => {
+  const denied = await enforcePdfAccess(c);
+  if (denied) {
+    return denied;
   }
 
-  const body = req.body as { from?: unknown; to?: unknown; testIds?: unknown };
+  const body = await readJson<{ from?: unknown; to?: unknown; testIds?: unknown }>(c);
 
   const from = typeof body.from === 'string' ? body.from : '';
   const to = typeof body.to === 'string' ? body.to : '';
@@ -197,10 +185,10 @@ router.post('/report', asyncHandler(async (req, res) => {
   const toMs = Date.parse(to);
 
   if (!from || !to || Number.isNaN(fromMs) || Number.isNaN(toMs)) {
-    return res.status(400).json({ error: 'from and to must be valid ISO date-time strings' });
+    return c.json({ error: 'from and to must be valid ISO date-time strings' }, 400);
   }
   if (fromMs > toMs) {
-    return res.status(400).json({ error: 'from must not be after to' });
+    return c.json({ error: 'from must not be after to' }, 400);
   }
 
   const testIds = Array.isArray(body.testIds)
@@ -208,7 +196,7 @@ router.post('/report', asyncHandler(async (req, res) => {
     : [];
 
   if (testIds.length > MAX_REPORT_TEST_IDS) {
-    return res.status(400).json({ error: `testIds may contain at most ${MAX_REPORT_TEST_IDS} entries` });
+    return c.json({ error: `testIds may contain at most ${MAX_REPORT_TEST_IDS} entries` }, 400);
   }
 
   let query = serviceSupabase.from('tests').select('*').gte('created_at', from).lte('created_at', to);
@@ -218,17 +206,20 @@ router.post('/report', asyncHandler(async (req, res) => {
 
   const { data: rows, error } = await query;
   if (error) {
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
   const resolved = rows ?? [];
   if (resolved.length === 0) {
-    return res.status(200).json([]);
+    return c.json([], 200);
   }
   if (resolved.length > MAX_REPORT_SIZE) {
-    return res.status(413).json({
-      error: `This report contains ${resolved.length} records, which exceeds the ${MAX_REPORT_SIZE}-record export limit. Narrow the date range or filters and try again.`
-    });
+    return c.json(
+      {
+        error: `This report contains ${resolved.length} records, which exceeds the ${MAX_REPORT_SIZE}-record export limit. Narrow the date range or filters and try again.`
+      },
+      413
+    );
   }
 
   // Preserve chronological order (oldest first), matching how the PDF pages
@@ -239,13 +230,13 @@ router.post('/report', asyncHandler(async (req, res) => {
   const orderedIds = orderedRows.map((row) => String(row.id));
   const rowsById = new Map<string, Record<string, unknown>>(orderedRows.map((row) => [String(row.id), row as Record<string, unknown>]));
 
-  const issuer = authReq.userEmail ?? 'unknown';
+  const issuer = c.get('userEmail') ?? 'unknown';
   const result = await issueTokensForRows(orderedIds, rowsById, issuer);
   if ('error' in result) {
-    return res.status(500).json({ error: result.error });
+    return c.json({ error: result.error }, 500);
   }
 
-  return res.status(201).json(result.records);
-}));
+  return c.json(result.records, 201);
+});
 
 export default router;

@@ -1,23 +1,13 @@
-import { Router } from 'express';
-import { createClient } from '@supabase/supabase-js';
-import { requireAuth, type AuthRequest } from '../middleware/auth';
+import { Hono } from 'hono';
+import type { AppEnv } from '../env';
+import { requireAuth } from '../middleware/auth';
 import { resolveProfileByEmail } from '../utilities/resolveProfile';
 import { writeAuditLog } from '../utilities/auditLog';
-import { asyncHandler } from '../asyncHandler';
 import { priorityWeight } from '../utilities/alertPriority';
+import { serviceSupabase } from '../serviceSupabase';
+import { readJson } from '../utilities/jsonBody';
 
-const router = Router();
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
+const router = new Hono<AppEnv>();
 
 /**
  * This is an escalation signal only — it does not confirm that the person or vehicle
@@ -71,7 +61,7 @@ function toOperationalAlert(row: Record<string, unknown>, extra: Record<string, 
 
 type EligibilityResult =
   | { ok: true; alert: Record<string, unknown> }
-  | { ok: false; status: number; error: string };
+  | { ok: false; status: 403 | 404 | 409 | 500; error: string };
 
 /**
  * Same eligibility rules as GET /active, applied to a single alert: it must exist,
@@ -142,13 +132,12 @@ async function checkAlertEligibility(alertId: string, officerId: number): Promis
   return { ok: false, status: 403, error: 'This alert is not targeted to you' };
 }
 
-router.use(requireAuth);
+router.use('*', requireAuth);
 
-router.get('/active', asyncHandler(async (req, res) => {
-  const authReq = req as AuthRequest;
-  const actor = await resolveProfileByEmail(authReq.userEmail ?? '', authReq.userId, serviceSupabase, authReq.preferredRoleId);
+router.get('/active', async (c) => {
+  const actor = await resolveProfileByEmail(c.get('userEmail') ?? '', c.get('userId'), serviceSupabase, c.get('preferredRoleId'));
   if (!actor || actor.source !== 'officer_users' || typeof actor.profile.officerId !== 'number') {
-    return res.status(403).json({ error: 'Only officer accounts can view operational alerts' });
+    return c.json({ error: 'Only officer accounts can view operational alerts' }, 403);
   }
 
   const officerId = actor.profile.officerId;
@@ -159,7 +148,7 @@ router.get('/active', asyncHandler(async (req, res) => {
     .eq('officer_id', officerId)
     .in('assignment_status', ['assigned', 'accepted']);
 
-  if (shiftAssignmentError) return res.status(500).json({ error: shiftAssignmentError.message });
+  if (shiftAssignmentError) return c.json({ error: shiftAssignmentError.message }, 500);
 
   const shiftIds = Array.from(new Set((shiftAssignments ?? []).map((row) => String(row.shift_id)).filter(Boolean)));
 
@@ -170,9 +159,9 @@ router.get('/active', asyncHandler(async (req, res) => {
 
   if (officerTargetError) {
     if (isMissingTable(officerTargetError)) {
-      return res.status(503).json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' });
+      return c.json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' }, 503);
     }
-    return res.status(500).json({ error: officerTargetError.message });
+    return c.json({ error: officerTargetError.message }, 500);
   }
 
   const explicitAlertIds = Array.from(new Set((officerTargets ?? []).map((row) => String(row.alert_id))));
@@ -190,9 +179,9 @@ router.get('/active', asyncHandler(async (req, res) => {
   for (const result of [allOfficersRes, shiftRes, explicitRes]) {
     if (result.error) {
       if (isMissingTable(result.error)) {
-        return res.status(503).json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' });
+        return c.json({ error: 'Operational alert tables are not set up. Run backend/migrations/20260910_operational_alerts.sql.' }, 503);
       }
-      return res.status(500).json({ error: result.error.message });
+      return c.json({ error: result.error.message }, 500);
     }
   }
 
@@ -217,7 +206,7 @@ router.get('/active', asyncHandler(async (req, res) => {
       .in('alert_id', alertIds)
     : { data: [] as Array<{ alert_id: string; acknowledged_at: string; alert_version?: number }>, error: null };
 
-  if (ackError) return res.status(500).json({ error: ackError.message });
+  if (ackError) return c.json({ error: ackError.message }, 500);
 
   // An acknowledgement only counts against the alert's *current* version —
   // a material edit bumps operational_alerts.version, and an officer's
@@ -240,23 +229,22 @@ router.get('/active', asyncHandler(async (req, res) => {
     return String(b.created_at).localeCompare(String(a.created_at));
   });
 
-  return res.json(sorted.map((row) => toOperationalAlert(row, {
+  return c.json(sorted.map((row) => toOperationalAlert(row, {
     acknowledgedAt: ackByAlert.get(String(row.id)) ?? null
   })));
-}));
+});
 
-router.post('/:id/acknowledge', asyncHandler(async (req, res) => {
-  const authReq = req as AuthRequest;
-  const actor = await resolveProfileByEmail(authReq.userEmail ?? '', authReq.userId, serviceSupabase, authReq.preferredRoleId);
+router.post('/:id/acknowledge', async (c) => {
+  const actor = await resolveProfileByEmail(c.get('userEmail') ?? '', c.get('userId'), serviceSupabase, c.get('preferredRoleId'));
   if (!actor || actor.source !== 'officer_users') {
-    return res.status(403).json({ error: 'Only officer accounts can acknowledge operational alerts' });
+    return c.json({ error: 'Only officer accounts can acknowledge operational alerts' }, 403);
   }
 
-  const alertId = String(req.params.id);
+  const alertId = String(c.req.param('id'));
 
   const eligibility = await checkAlertEligibility(alertId, actor.dbId);
   if (!eligibility.ok) {
-    return res.status(eligibility.status).json({ error: eligibility.error });
+    return c.json({ error: eligibility.error }, eligibility.status);
   }
 
   const alertVersion = eligibility.alert.version == null ? 1 : Number(eligibility.alert.version);
@@ -283,38 +271,37 @@ router.post('/:id/acknowledge', asyncHandler(async (req, res) => {
     .select('*')
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) return c.json({ error: error.message }, 500);
 
-  await writeAuditLog(authReq.userEmail ?? 'unknown', `Acknowledged operational alert ${alertId}`, alertId);
+  await writeAuditLog(c.get('userEmail') ?? 'unknown', `Acknowledged operational alert ${alertId}`, alertId);
 
-  return res.json({ alertId, acknowledgedAt: String(data.acknowledged_at), alertVersion });
-}));
+  return c.json({ alertId, acknowledgedAt: String(data.acknowledged_at), alertVersion });
+});
 
-router.post('/:id/matches', asyncHandler(async (req, res) => {
-  const authReq = req as AuthRequest;
-  const actor = await resolveProfileByEmail(authReq.userEmail ?? '', authReq.userId, serviceSupabase, authReq.preferredRoleId);
+router.post('/:id/matches', async (c) => {
+  const actor = await resolveProfileByEmail(c.get('userEmail') ?? '', c.get('userId'), serviceSupabase, c.get('preferredRoleId'));
   if (!actor || actor.source !== 'officer_users') {
-    return res.status(403).json({ error: 'Only officer accounts can report a possible match' });
+    return c.json({ error: 'Only officer accounts can report a possible match' }, 403);
   }
 
-  const alertId = String(req.params.id);
-  const body = (req.body ?? {}) as Record<string, unknown>;
+  const alertId = String(c.req.param('id'));
+  const body = await readJson(c);
   const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
   const location = (body.location ?? {}) as { lat?: unknown; lng?: unknown };
 
   if (!notes) {
-    return res.status(400).json({ error: 'Notes are required to report a possible match' });
+    return c.json({ error: 'Notes are required to report a possible match' }, 400);
   }
   if (location.lat != null && !isValidLatitude(Number(location.lat))) {
-    return res.status(400).json({ error: 'location.lat must be between -90 and 90' });
+    return c.json({ error: 'location.lat must be between -90 and 90' }, 400);
   }
   if (location.lng != null && !isValidLongitude(Number(location.lng))) {
-    return res.status(400).json({ error: 'location.lng must be between -180 and 180' });
+    return c.json({ error: 'location.lng must be between -180 and 180' }, 400);
   }
 
   const eligibility = await checkAlertEligibility(alertId, actor.dbId);
   if (!eligibility.ok) {
-    return res.status(eligibility.status).json({ error: eligibility.error });
+    return c.json({ error: eligibility.error }, eligibility.status);
   }
 
   // Deliberately never touches operational_alerts.status: reporting a possible match
@@ -333,17 +320,17 @@ router.post('/:id/matches', asyncHandler(async (req, res) => {
     .select('*')
     .single();
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) return c.json({ error: error.message }, 500);
 
-  await writeAuditLog(authReq.userEmail ?? 'unknown', `Reported possible match (unconfirmed) for alert ${alertId}`, alertId);
+  await writeAuditLog(c.get('userEmail') ?? 'unknown', `Reported possible match (unconfirmed) for alert ${alertId}`, alertId);
 
-  return res.status(201).json({
+  return c.json({
     id: Number(data.id),
     alertId,
     notes: String(data.notes),
     createdAt: String(data.created_at),
     disclaimer: MATCH_ESCALATION_DISCLAIMER
-  });
-}));
+  }, 201);
+});
 
 export default router;

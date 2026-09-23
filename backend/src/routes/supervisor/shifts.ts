@@ -1,22 +1,12 @@
-import { Router } from 'express';
+import { Hono } from 'hono';
+import type { AppEnv } from '../../env';
 import { randomUUID } from 'crypto';
-import { createClient } from '@supabase/supabase-js';
-import { requireSupervisor, type SupervisorRequest } from '../../middleware/requireSupervisor';
+import { serviceSupabase } from '../../serviceSupabase';
+import { requireSupervisor } from '../../middleware/requireSupervisor';
 import { writeAuditLog } from '../../utilities/auditLog';
-import { asyncHandler } from '../../asyncHandler';
+import { readJson } from '../../utilities/jsonBody';
 
-const router = Router();
-
-const serviceSupabase = createClient(
-  process.env.SUPABASE_URL ?? '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
-  {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false
-    }
-  }
-);
+const router = new Hono<AppEnv>();
 
 const SHIFT_STATUSES = ['scheduled', 'active', 'closed', 'cancelled'] as const;
 type ShiftStatus = typeof SHIFT_STATUSES[number];
@@ -99,9 +89,9 @@ async function loadAssignments(shiftIds: string[]): Promise<Map<string, number[]
   return assignments;
 }
 
-router.use(requireSupervisor);
+router.use('*', requireSupervisor);
 
-router.get('/', asyncHandler(async (_req, res) => {
+router.get('/', async (c) => {
   const { data, error } = await serviceSupabase
     .from('roadblock_shifts')
     .select('*')
@@ -110,19 +100,18 @@ router.get('/', asyncHandler(async (_req, res) => {
 
   if (error) {
     if (isMissingTable(error)) {
-      return res.status(503).json({ error: 'Roadblock shift tables are not set up. Run backend/migrations/20260731_shift_roadblock_operations.sql.' });
+      return c.json({ error: 'Roadblock shift tables are not set up. Run backend/migrations/20260731_shift_roadblock_operations.sql.' }, 503);
     }
-    return res.status(500).json({ error: error.message });
+    return c.json({ error: error.message }, 500);
   }
 
   const rows = data ?? [];
   const assignments = await loadAssignments(rows.map((row) => String(row.id)));
-  return res.json(rows.map((row) => toRoadblockShift(row as Record<string, unknown>, assignments.get(String(row.id)) ?? [])));
-}));
+  return c.json(rows.map((row) => toRoadblockShift(row as Record<string, unknown>, assignments.get(String(row.id)) ?? [])));
+});
 
-router.post('/', asyncHandler(async (req, res) => {
-  const authReq = req as unknown as SupervisorRequest;
-  const body = (req.body ?? {}) as Record<string, unknown>;
+router.post('/', async (c) => {
+  const body = await readJson(c);
   const roadblockName = String(body.roadblockName ?? '').trim();
   const station = String(body.station ?? '').trim();
   const startsAt = parseDate(body.startsAt);
@@ -130,20 +119,20 @@ router.post('/', asyncHandler(async (req, res) => {
   const assignedOfficerIds = sanitizeAssignedOfficerIds(body.assignedOfficerIds);
 
   if (!roadblockName || !station || !startsAt || !endsAt) {
-    return res.status(400).json({ error: 'Roadblock name, station, start time, and end time are required' });
+    return c.json({ error: 'Roadblock name, station, start time, and end time are required' }, 400);
   }
 
   if (endsAt.getTime() <= startsAt.getTime()) {
-    return res.status(400).json({ error: 'Shift end time must be after the start time' });
+    return c.json({ error: 'Shift end time must be after the start time' }, 400);
   }
 
   if (assignedOfficerIds.length === 0) {
-    return res.status(400).json({ error: 'Assign at least one officer to the roadblock shift' });
+    return c.json({ error: 'Assign at least one officer to the roadblock shift' }, 400);
   }
 
   const status = initialStatus(startsAt, endsAt);
   const id = randomUUID();
-  const supervisorEmail = authReq.userEmail ?? 'unknown';
+  const supervisorEmail = c.get('userEmail') ?? 'unknown';
   const insertPayload = {
     id,
     roadblock_name: roadblockName,
@@ -166,9 +155,9 @@ router.post('/', asyncHandler(async (req, res) => {
 
   if (insertError || !inserted?.length) {
     if (isMissingTable(insertError)) {
-      return res.status(503).json({ error: 'Roadblock shift tables are not set up. Run backend/migrations/20260731_shift_roadblock_operations.sql.' });
+      return c.json({ error: 'Roadblock shift tables are not set up. Run backend/migrations/20260731_shift_roadblock_operations.sql.' }, 503);
     }
-    return res.status(500).json({ error: insertError?.message ?? 'Failed to create roadblock shift' });
+    return c.json({ error: insertError?.message ?? 'Failed to create roadblock shift' }, 500);
   }
 
   const assignmentRows = assignedOfficerIds.map((officerId) => ({ shift_id: id, officer_id: officerId }));
@@ -178,7 +167,7 @@ router.post('/', asyncHandler(async (req, res) => {
 
   if (assignmentError) {
     await serviceSupabase.from('roadblock_shifts').delete().eq('id', id);
-    return res.status(500).json({ error: assignmentError.message });
+    return c.json({ error: assignmentError.message }, 500);
   }
 
   await writeAuditLog(
@@ -187,27 +176,26 @@ router.post('/', asyncHandler(async (req, res) => {
     id
   );
 
-  return res.status(201).json(toRoadblockShift(inserted[0] as Record<string, unknown>, assignedOfficerIds));
-}));
+  return c.json(toRoadblockShift(inserted[0] as Record<string, unknown>, assignedOfficerIds), 201);
+});
 
-router.patch('/:shiftId', asyncHandler(async (req, res) => {
-  const authReq = req as unknown as SupervisorRequest;
-  const shiftId = String(req.params.shiftId);
-  const body = (req.body ?? {}) as Record<string, unknown>;
+router.patch('/:shiftId', async (c) => {
+  const shiftId = String(c.req.param('shiftId'));
+  const body = await readJson(c);
   const status = typeof body.status === 'string' ? body.status.trim() : undefined;
   const hasAssignmentPatch = Object.prototype.hasOwnProperty.call(body, 'assignedOfficerIds');
   const assignedOfficerIds = sanitizeAssignedOfficerIds(body.assignedOfficerIds);
 
   if (!status && !hasAssignmentPatch) {
-    return res.status(400).json({ error: 'Provide status and/or assignedOfficerIds to update' });
+    return c.json({ error: 'Provide status and/or assignedOfficerIds to update' }, 400);
   }
 
   if (status && !(SHIFT_STATUSES as readonly string[]).includes(status)) {
-    return res.status(400).json({ error: `Status must be one of: ${SHIFT_STATUSES.join(', ')}` });
+    return c.json({ error: `Status must be one of: ${SHIFT_STATUSES.join(', ')}` }, 400);
   }
 
   if (hasAssignmentPatch && assignedOfficerIds.length === 0) {
-    return res.status(400).json({ error: 'Assign at least one officer to the roadblock shift' });
+    return c.json({ error: 'Assign at least one officer to the roadblock shift' }, 400);
   }
 
   if (status) {
@@ -216,7 +204,7 @@ router.patch('/:shiftId', asyncHandler(async (req, res) => {
       .update({ status })
       .eq('id', shiftId);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return c.json({ error: error.message }, 500);
   }
 
   if (hasAssignmentPatch) {
@@ -225,13 +213,13 @@ router.patch('/:shiftId', asyncHandler(async (req, res) => {
       .delete()
       .eq('shift_id', shiftId);
 
-    if (deleteError) return res.status(500).json({ error: deleteError.message });
+    if (deleteError) return c.json({ error: deleteError.message }, 500);
 
     const { error: insertError } = await serviceSupabase
       .from('roadblock_shift_officers')
       .insert(assignedOfficerIds.map((officerId) => ({ shift_id: shiftId, officer_id: officerId })));
 
-    if (insertError) return res.status(500).json({ error: insertError.message });
+    if (insertError) return c.json({ error: insertError.message }, 500);
   }
 
   const { data: rows, error: fetchError } = await serviceSupabase
@@ -240,19 +228,19 @@ router.patch('/:shiftId', asyncHandler(async (req, res) => {
     .eq('id', shiftId)
     .limit(1);
 
-  if (fetchError) return res.status(500).json({ error: fetchError.message });
+  if (fetchError) return c.json({ error: fetchError.message }, 500);
   const updated = rows?.[0] as Record<string, unknown> | undefined;
-  if (!updated) return res.status(404).json({ error: 'Roadblock shift not found' });
+  if (!updated) return c.json({ error: 'Roadblock shift not found' }, 404);
 
   const assignments = await loadAssignments([shiftId]);
 
   await writeAuditLog(
-    authReq.userEmail ?? 'unknown',
+    c.get('userEmail') ?? 'unknown',
     `Updated roadblock shift ${shiftId}`,
     shiftId
   );
 
-  return res.json(toRoadblockShift(updated, assignments.get(shiftId) ?? []));
-}));
+  return c.json(toRoadblockShift(updated, assignments.get(shiftId) ?? []));
+});
 
 export default router;
