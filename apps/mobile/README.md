@@ -19,8 +19,7 @@ React Native (Expo) mobile app used by traffic officers for roadside DUI testing
 ## Backend & on-device OCR
 
 - The app talks to the backend API. Point it with `EXPO_PUBLIC_API_BASE_URL`:
-  - `cloudflare-version` builds: `https://integri-backend.thabza102.workers.dev/api` (set in the `eas.json` build profile env for both `preview` and `production`)
-  - `main` builds: `https://integriscan-backend-seyjs.ondigitalocean.app/api`
+  - Production: `https://integri-backend.thabza102.workers.dev/api` (set in the `eas.json` build profile env for both `preview` and `production`)
   - Local dev: `http://<your-lan-ip>:8787/api` (the built-in fallback assumes the legacy port `4000`)
 - Licence front-photo OCR runs **on-device** via `expo-ai-kit` (ML Kit Text Recognition v2 on Android, Apple Vision on iOS). It requires a dev client or EAS build — it does **not** work in Expo Go.
 - The recognised text is posted to `POST /api/scan` (`{ text, retry }`), which parses the licence fields; the PDF417 barcode flow is unchanged.

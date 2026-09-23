@@ -42,15 +42,14 @@ IntegriSolutions/
 
 ## Deployments
 
-Deployment targets are **branch-specific**:
+The platform is hosted entirely on Cloudflare and deployed from `main`:
 
-| Branch | Web dashboard | Backend API | Platform |
-|--------|---------------|-------------|----------|
-| `main` | DigitalOcean static site | `https://integriscan-backend-seyjs.ondigitalocean.app` | DigitalOcean (Express API) |
-| `cloudflare-version` | <https://integrisolutions.pages.dev> | <https://integri-backend.thabza102.workers.dev> | Cloudflare (Pages + Workers) |
+| Component | URL | Platform |
+|-----------|-----|----------|
+| Web dashboard | <https://integrisolutions.pages.dev> | Cloudflare Pages |
+| Backend API | <https://integri-backend.thabza102.workers.dev> | Cloudflare Workers |
 
-`main` stays on DigitalOcean; everything on the `cloudflare-version` branch (backend + web) is
-deployed to Cloudflare. Clients built from this branch must point at the Cloudflare API:
+Clients point at the Cloudflare API:
 
 ```env
 # apps/web — build-time (Pages project env vars)
@@ -63,7 +62,12 @@ EXPO_PUBLIC_API_BASE_URL=https://integri-backend.thabza102.workers.dev/api
 
 The Worker's `FRONTEND_URL` secret must exactly equal the deployed web origin
 (`https://integrisolutions.pages.dev` — no trailing slash), otherwise browser requests are
-rejected by CORS. Deployment steps live in [`backend/README.md`](backend/README.md).
+rejected by CORS. Deployment steps live in [`backend/README.md`](backend/README.md) and
+[`apps/web/README.md`](apps/web/README.md).
+
+> The former DigitalOcean deployment has been retired: the Express backend was migrated to
+> Cloudflare Workers (merged from `cloudflare-version` into `main`) and the DigitalOcean app
+> was deleted.
 
 ---
 
@@ -236,9 +240,10 @@ The mobile app stores records locally when offline and syncs to the cloud when c
 
 | Branch | Purpose |
 |--------|---------|
-| `main` | Production-ready code — backend + web on DigitalOcean |
-| `cloudflare-version` | Cloudflare migration — backend on Workers, web on Pages (`main` stays on DigitalOcean until merged) |
+| `main` | Production-ready code — deployed to Cloudflare (Pages + Workers) |
 | `feature/[name]` | Individual feature work (e.g. `feature/auth-login`) |
+
+> `cloudflare-version` has been merged into `main` and is retired.
 
 All changes to `feature/[name]` and `main` go through a **Pull Request**.
 

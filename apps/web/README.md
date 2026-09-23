@@ -2,10 +2,8 @@
 
 React + Vite dashboard for supervisors to review test records and manage the system.
 
-- **Live (`cloudflare-version` branch):** <https://integrisolutions.pages.dev> (Cloudflare Pages)
+- **Live:** <https://integrisolutions.pages.dev> (Cloudflare Pages)
 - **API:** <https://integri-backend.thabza102.workers.dev> (Cloudflare Workers)
-
-> The `main` branch web dashboard stays on DigitalOcean; everything in this branch deploys to Cloudflare.
 
 ## Getting Started
 
