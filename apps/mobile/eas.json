@@ -3,7 +3,7 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://integri-backend.thabza102.workers.dev/api",
+        "EXPO_PUBLIC_API_BASE_URL": "https://integri-backend.smuurt.workers.dev/api",
         "EXPO_PUBLIC_BREATHALYZER_SIMULATION": "1"
       },
       "android": {
@@ -13,7 +13,7 @@
     "production": {
       "distribution": "store",
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://integri-backend.thabza102.workers.dev/api",
+        "EXPO_PUBLIC_API_BASE_URL": "https://integri-backend.smuurt.workers.dev/api",
         "EXPO_PUBLIC_BREATHALYZER_SIMULATION": "1"
       }
     }

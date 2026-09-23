@@ -47,17 +47,17 @@ The platform is hosted entirely on Cloudflare and deployed from `main`:
 | Component | URL | Platform |
 |-----------|-----|----------|
 | Web dashboard | <https://integrisolutions.pages.dev> | Cloudflare Pages |
-| Backend API | <https://integri-backend.thabza102.workers.dev> | Cloudflare Workers |
+| Backend API | <https://integri-backend.smuurt.workers.dev> | Cloudflare Workers |
 
 Clients point at the Cloudflare API:
 
 ```env
 # apps/web — build-time (Pages project env vars)
-VITE_API_BASE_URL=https://integri-backend.thabza102.workers.dev
+VITE_API_BASE_URL=https://integri-backend.smuurt.workers.dev
 VITE_PUBLIC_WEB_URL=https://integrisolutions.pages.dev
 
 # apps/mobile — EAS build env
-EXPO_PUBLIC_API_BASE_URL=https://integri-backend.thabza102.workers.dev/api
+EXPO_PUBLIC_API_BASE_URL=https://integri-backend.smuurt.workers.dev/api
 ```
 
 The Worker's `FRONTEND_URL` secret must exactly equal the deployed web origin

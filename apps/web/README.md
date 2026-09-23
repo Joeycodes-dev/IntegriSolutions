@@ -3,7 +3,7 @@
 React + Vite dashboard for supervisors to review test records and manage the system.
 
 - **Live:** <https://integrisolutions.pages.dev> (Cloudflare Pages)
-- **API:** <https://integri-backend.thabza102.workers.dev> (Cloudflare Workers)
+- **API:** <https://integri-backend.smuurt.workers.dev> (Cloudflare Workers)
 
 ## Getting Started
 
@@ -33,7 +33,7 @@ The dashboard runs on `http://localhost:3000` by default.
 |---------|-------|
 | Build command | `npm run build` |
 | Output directory | `dist` |
-| Production env | `VITE_API_BASE_URL=https://integri-backend.thabza102.workers.dev` |
+| Production env | `VITE_API_BASE_URL=https://integri-backend.smuurt.workers.dev` |
 | Production env | `VITE_PUBLIC_WEB_URL=https://integrisolutions.pages.dev` |
 | Production env | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` |
 

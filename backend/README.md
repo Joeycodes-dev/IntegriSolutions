@@ -2,7 +2,7 @@
 
 Cloudflare Workers (Hono) REST API for the IntegriScan platform. Handles authentication, test records, offline sync, SSE, and profile management via Supabase.
 
-- **Live:** <https://integri-backend.thabza102.workers.dev> (Cloudflare Workers)
+- **Live:** <https://integri-backend.smuurt.workers.dev> (Cloudflare Workers)
 - **Runtime:** Cloudflare Workers — Hono router, `nodejs_compat` (`wrangler.toml`)
 
 ## Account hierarchy
