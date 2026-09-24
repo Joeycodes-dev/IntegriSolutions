@@ -85,7 +85,7 @@ export const styles = StyleSheet.create({
   },
   deviceHero: {
     marginHorizontal: 16,
-    marginTop: -2,
+    marginTop: 12,
     marginBottom: 12,
     borderRadius: 22,
     backgroundColor: colors.instrumentPanel,

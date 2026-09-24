@@ -128,6 +128,8 @@ describe('DeviceSettingsModal', () => {
 
     expect(screen.getByText('Breathalyser console')).toBeTruthy();
     expect(deviceSettingsStyles.sheet.height).toBe('94%');
+    expect(deviceSettingsStyles.overlay.justifyContent).toBe('center');
+    expect(deviceSettingsStyles.deviceHero.marginTop).toBe(12);
     expect(screen.getByLabelText('Device settings tab')).toBeTruthy();
     expect(screen.getByLabelText('Connect settings tab')).toBeTruthy();
     expect(screen.getByLabelText('Calibrate settings tab')).toBeTruthy();
@@ -162,6 +164,48 @@ describe('DeviceSettingsModal', () => {
     expect(screen.getByText('RAW ADC')).toBeTruthy();
     expect(screen.getByText('Local custody history')).toBeTruthy();
     expect(screen.getByText('By device serial')).toBeTruthy();
+
+    await waitFor(() => {
+      expect(storage.loadDevicePreferences).toHaveBeenCalled();
+      expect(repository.getAllTests).toHaveBeenCalled();
+    });
+  });
+
+  it('shows the preview capture result inside the Activity tab', async () => {
+    renderConsole({
+      visible: true,
+      initialTab: 'activity',
+      onClose: jest.fn(),
+      snapshot: makeSnapshot(),
+      runtimeConfig: null,
+      profile: null,
+    });
+
+    fireEvent.press(screen.getByLabelText('Preview a test capture'));
+
+    expect(screen.getByText('Preview capture ready')).toBeTruthy();
+    expect(screen.getByText(/No test record was created\./)).toBeTruthy();
+    expect(screen.getByText(/Raw 620 converts to/)).toBeTruthy();
+
+    await waitFor(() => {
+      expect(storage.loadDevicePreferences).toHaveBeenCalled();
+      expect(repository.getAllTests).toHaveBeenCalled();
+    });
+  });
+
+  it('shows a preview capture error in place when no sample is available', async () => {
+    renderConsole({
+      visible: true,
+      initialTab: 'activity',
+      onClose: jest.fn(),
+      snapshot: makeSnapshot({ sessionPeak: null, avg: null }),
+      runtimeConfig: null,
+      profile: null,
+    });
+
+    fireEvent.press(screen.getByLabelText('Preview a test capture'));
+
+    expect(screen.getByText('No live sample is available for a preview capture.')).toBeTruthy();
 
     await waitFor(() => {
       expect(storage.loadDevicePreferences).toHaveBeenCalled();

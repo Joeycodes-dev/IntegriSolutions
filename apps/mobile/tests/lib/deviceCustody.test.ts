@@ -20,7 +20,9 @@ jest.mock('../../src/services/auth', () => ({
 
 jest.mock('../../src/services/api', () => ({
   syncRecords: jest.fn(),
-  uploadEvidencePhoto: jest.fn()
+  uploadEvidencePhoto: jest.fn(),
+  isNetworkRequestError: jest.fn((err: unknown) => err instanceof Error && /^Network error requesting/.test(err.message)),
+  isRateLimitError: jest.fn((err: unknown) => err instanceof Error && err.name === 'RateLimitError')
 }));
 
 jest.mock('../../src/services/audit', () => ({
@@ -31,9 +33,12 @@ jest.mock('../../src/db/repository', () => ({
   insertTest: jest.fn(),
   insertEvidenceAttachment: jest.fn(),
   getPendingSync: jest.fn(),
-  updateSyncStatus: jest.fn(),
+  getTestById: jest.fn(),
+  markSyncSuccess: jest.fn(),
+  recordSyncAttempt: jest.fn(),
   getPendingAttachments: jest.fn(),
-  updateAttachmentSyncStatus: jest.fn()
+  markAttachmentSyncSuccess: jest.fn(),
+  recordAttachmentSyncAttempt: jest.fn()
 }));
 
 const repositoryMock = repository as jest.Mocked<typeof repository>;
@@ -225,6 +230,26 @@ describe('syncPendingRecords device custody', () => {
       deviceRaw: 623,
       deviceCapturedAt: '2026-09-21T10:15:00.000Z'
     });
+  });
+
+  it('chunks pending records into API-safe batches of 50', async () => {
+    const records = Array.from({ length: 51 }, (_, index) => ({
+      ...pendingBase,
+      id: `test-${index + 1}`
+    }));
+    repositoryMock.getPendingSync.mockResolvedValue(records);
+    apiMock.syncRecords.mockImplementation(async (batch: Array<Record<string, unknown>>) => ({
+      synced: batch.map((record) => String(record.id)),
+      failed: [],
+      duplicates: []
+    }));
+
+    const result = await syncPendingRecords(1);
+
+    expect(apiMock.syncRecords).toHaveBeenCalledTimes(2);
+    expect(apiMock.syncRecords.mock.calls[0][0]).toHaveLength(50);
+    expect(apiMock.syncRecords.mock.calls[1][0]).toHaveLength(1);
+    expect(result.synced).toHaveLength(51);
   });
 
   it('omits device fields for legacy pending records', async () => {

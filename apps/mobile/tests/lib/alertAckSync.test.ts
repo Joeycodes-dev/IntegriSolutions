@@ -47,7 +47,7 @@ describe('syncPendingAlertAcks', () => {
 
     const result = await syncPendingAlertAcks();
 
-    expect(result).toEqual({ synced: [], failed: [] });
+    expect(result).toEqual({ synced: [], failed: [], errors: [] });
     expect(apiMock.acknowledgeAlert).not.toHaveBeenCalled();
   });
 
@@ -75,6 +75,13 @@ describe('syncPendingAlertAcks', () => {
 
     expect(repositoryMock.removeAlertAckFromQueue).not.toHaveBeenCalled();
     expect(repositoryMock.incrementAlertAckRetry).not.toHaveBeenCalled();
+    expect(audit.logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'alert.acknowledged.failed',
+        outcome: 'failure',
+        severity: 'warning',
+      })
+    );
     expect(result.failed).toEqual(['alert-1']);
   });
 

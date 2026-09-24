@@ -388,6 +388,8 @@ export class BreathalyzerSession {
   startNewSubject(): void {
     this.sessionPeak = null;
     this.update({
+      over: false,
+      alarm: false,
       raw: null,
       avg: null,
       devicePeak: null,

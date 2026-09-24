@@ -22,6 +22,8 @@ const SCHEMA = `
     createdAt TEXT NOT NULL,
     syncedAt TEXT,
     retryCount INTEGER NOT NULL DEFAULT 0,
+    lastAttemptAt TEXT,
+    lastError TEXT,
     photoUri TEXT,
     originalTestId TEXT,
     deviceTransport TEXT,
@@ -72,7 +74,9 @@ const SCHEMA = `
     syncStatus TEXT NOT NULL DEFAULT 'pending_sync',
     retryCount INTEGER NOT NULL DEFAULT 0,
     createdAt TEXT NOT NULL,
-    syncedAt TEXT
+    syncedAt TEXT,
+    lastAttemptAt TEXT,
+    lastError TEXT
   );
 
   CREATE INDEX IF NOT EXISTS idx_attachments_test ON evidence_attachments(testId);
@@ -134,7 +138,11 @@ export async function getDB(): Promise<SQLite.SQLiteDatabase> {
       'ALTER TABLE tests ADD COLUMN deviceSessionPeakRaw REAL',
       'ALTER TABLE tests ADD COLUMN deviceAvgRaw REAL',
       'ALTER TABLE tests ADD COLUMN deviceRaw REAL',
-      'ALTER TABLE tests ADD COLUMN deviceCapturedAt TEXT'
+      'ALTER TABLE tests ADD COLUMN deviceCapturedAt TEXT',
+      'ALTER TABLE tests ADD COLUMN lastAttemptAt TEXT',
+      'ALTER TABLE tests ADD COLUMN lastError TEXT',
+      'ALTER TABLE evidence_attachments ADD COLUMN lastAttemptAt TEXT',
+      'ALTER TABLE evidence_attachments ADD COLUMN lastError TEXT'
     ]) {
       try { await db.runAsync(stmt); } catch { /* column already exists */ }
     }

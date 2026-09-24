@@ -95,6 +95,12 @@ type DiagnosticResult = {
   detail: string;
 };
 
+type PreviewCaptureResult = {
+  raw: number;
+  bacGdl: number;
+  createdAt: string;
+};
+
 interface DeviceSettingsModalProps {
   visible: boolean;
   initialTab?: DeviceSettingsTab;
@@ -258,6 +264,7 @@ export function DeviceSettingsModal({
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [isRunningDiagnostic, setIsRunningDiagnostic] = useState(false);
   const [diagnosticResult, setDiagnosticResult] = useState<DiagnosticResult | null>(null);
+  const [previewCaptureResult, setPreviewCaptureResult] = useState<PreviewCaptureResult | null>(null);
   const [inlineMessage, setInlineMessage] = useState<InlineMessage | null>(null);
   const [calibrationDraft, setCalibrationDraft] = useState<CalibrationDraft>(() =>
     toCalibrationDraft(snapshot.calibration),
@@ -669,18 +676,23 @@ export function DeviceSettingsModal({
   const handlePreviewCapture = () => {
     const raw = snapshot.sessionPeak ?? snapshot.avg;
     if (raw === null) {
+      setPreviewCaptureResult(null);
       setMessage('error', 'No live sample is available for a preview capture.');
       return;
     }
     const result = calibrationPreview(raw, snapshot.calibration);
     if (result.bacGdl === null) {
+      setPreviewCaptureResult(null);
       setMessage('error', 'The current calibration cannot convert this sample.');
       return;
     }
-    setMessage(
-      'success',
-      `Preview only: raw ${formatRawValue(raw)} converts to ${formatBacGdl(result.bacGdl)} g/100ml.`,
-    );
+
+    setInlineMessage(null);
+    setPreviewCaptureResult({
+      raw,
+      bacGdl: result.bacGdl,
+      createdAt: new Date().toISOString(),
+    });
   };
 
   const handleConnectSimulator = async () => {
@@ -707,6 +719,7 @@ export function DeviceSettingsModal({
 
     setIsRunningDiagnostic(true);
     setDiagnosticResult(null);
+    setInlineMessage(null);
     const startedAt = Date.now();
     const startingReadings = breathalyzerSession.getSnapshot().readings;
     await new Promise<void>((resolve) => setTimeout(resolve, DIAGNOSTIC_WINDOW_MS));
@@ -736,7 +749,9 @@ export function DeviceSettingsModal({
       badgeNumber: profile?.badgeNumber ?? null,
       metadata: { samples, windowMs: DIAGNOSTIC_WINDOW_MS }
     });
-    setMessage(ok ? 'success' : 'error', result.detail);
+    if (!ok) {
+      setMessage('error', result.detail);
+    }
   };
 
   const handleShareReport = async () => {
@@ -801,6 +816,7 @@ export function DeviceSettingsModal({
     setActiveTab(initialTab);
     setInlineMessage(null);
     setDiagnosticResult(null);
+    setPreviewCaptureResult(null);
     setCalibrationError(null);
     setCalibrationDraft(toCalibrationDraft(snapshot.calibration));
 
@@ -1613,6 +1629,37 @@ export function DeviceSettingsModal({
             <Text style={styles.secondaryButtonText}>Share report</Text>
           </Pressable>
         </View>
+        {inlineMessage ? (
+          <View
+            style={[
+              styles.inlineMessage,
+              inlineMessage.type === 'error'
+                ? styles.inlineMessageError
+                : inlineMessage.type === 'success'
+                ? styles.inlineMessageSuccess
+                : styles.inlineMessageInfo,
+            ]}
+            accessibilityRole={inlineMessage.type === 'error' ? 'alert' : 'text'}
+            accessibilityLiveRegion="polite"
+          >
+            <Text style={styles.inlineMessageText}>{inlineMessage.text}</Text>
+          </View>
+        ) : null}
+        {previewCaptureResult ? (
+          <View
+            style={[styles.diagnosticResult, styles.diagnosticResultOk]}
+            accessibilityLiveRegion="polite"
+          >
+            <Feather name="eye" size={18} color={colors.successText} />
+            <View style={styles.diagnosticResultText}>
+              <Text style={styles.diagnosticResultTitle}>Preview capture ready</Text>
+              <Text style={styles.diagnosticResultDetail}>
+                Raw {formatRawValue(previewCaptureResult.raw)} converts to{' '}
+                {formatBacGdl(previewCaptureResult.bacGdl)} g/100ml. No test record was created.
+              </Text>
+            </View>
+          </View>
+        ) : null}
         {diagnosticResult ? (
           <View style={[styles.diagnosticResult, diagnosticResult.ok ? styles.diagnosticResultOk : styles.diagnosticResultError]}>
             <Feather

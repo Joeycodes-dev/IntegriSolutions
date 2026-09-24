@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { renderHook, waitFor, act } from '@testing-library/react-native';
-import { SyncProvider, useSync } from '../../src/lib/SyncContext';
+import { SyncProvider, useSync, type SyncRunSummary } from '../../src/lib/SyncContext';
 import * as repository from '../../src/db/repository';
 import * as sync from '../../src/services/sync';
 import * as Network from 'expo-network';
-import { AppState } from 'react-native';
 
 const mockAuthState = {
   profile: { officerId: 1, name: 'Test Officer' },
@@ -21,7 +20,11 @@ jest.mock('../../src/db/repository', () => ({
   getSyncedCount: jest.fn(),
   getTestCountBetween: jest.fn(),
   getRecentTests: jest.fn(),
-  resetFailedToPending: jest.fn()
+  getAttachmentStatusCounts: jest.fn(),
+  getQueuedAlertAckCount: jest.fn(),
+  getNewestSyncedAt: jest.fn(),
+  resetFailedToPending: jest.fn(),
+  resetFailedAttachmentsToPending: jest.fn()
 }));
 
 jest.mock('../../src/services/sync', () => ({
@@ -33,6 +36,18 @@ jest.mock('expo-network', () => ({
   getNetworkStateAsync: jest.fn()
 }));
 
+function emptySyncResult() {
+  return {
+    attempted: 0,
+    synced: [],
+    duplicates: [],
+    failed: [],
+    deferred: [],
+    attachmentResults: [],
+    runError: null
+  };
+}
+
 describe('SyncContext', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -40,6 +55,13 @@ describe('SyncContext', () => {
     (repository.getPendingCount as jest.Mock).mockResolvedValue(5);
     (repository.getFailedCount as jest.Mock).mockResolvedValue(2);
     (repository.getSyncedCount as jest.Mock).mockResolvedValue(10);
+    (repository.getAttachmentStatusCounts as jest.Mock).mockResolvedValue({
+      synced: 7,
+      pending: 3,
+      failed: 1
+    });
+    (repository.getQueuedAlertAckCount as jest.Mock).mockResolvedValue(2);
+    (repository.getNewestSyncedAt as jest.Mock).mockResolvedValue(null);
     (repository.getTestCountBetween as jest.Mock).mockImplementation((startIso: string, endIso: string) => {
       const days = (new Date(endIso).getTime() - new Date(startIso).getTime()) / 86400000;
       return Promise.resolve(days > 1 ? 18 : 4);
@@ -66,9 +88,14 @@ describe('SyncContext', () => {
       }
     ]);
     (repository.resetFailedToPending as jest.Mock).mockResolvedValue(undefined);
+    (repository.resetFailedAttachmentsToPending as jest.Mock).mockResolvedValue(undefined);
     (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true });
-    (sync.syncPendingRecords as jest.Mock).mockResolvedValue({ synced: [], failed: [] });
-    (sync.syncPendingAlertAcks as jest.Mock).mockResolvedValue({ synced: [], failed: [] });
+    (sync.syncPendingRecords as jest.Mock).mockResolvedValue(emptySyncResult());
+    (sync.syncPendingAlertAcks as jest.Mock).mockResolvedValue({
+      synced: [],
+      failed: [],
+      errors: []
+    });
     mockAuthState.token = 'token-123';
   });
 
@@ -76,13 +103,17 @@ describe('SyncContext', () => {
     jest.useRealTimers();
   });
 
-  it('provides initial sync counts', async () => {
+  it('provides record, evidence, and alert queue counts', async () => {
     const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
 
     await waitFor(() => {
       expect(result.current.pendingCount).toBe(5);
       expect(result.current.failedCount).toBe(2);
       expect(result.current.syncedCount).toBe(10);
+      expect(result.current.pendingEvidenceCount).toBe(3);
+      expect(result.current.failedEvidenceCount).toBe(1);
+      expect(result.current.syncedEvidenceCount).toBe(7);
+      expect(result.current.queuedAlertCount).toBe(2);
       expect(result.current.todayCount).toBe(4);
       expect(result.current.weekCount).toBe(18);
       expect(result.current.recentTests).toHaveLength(1);
@@ -90,13 +121,13 @@ describe('SyncContext', () => {
     });
   });
 
-  it('exposes isSyncing state', () => {
+  it('exposes idle and last-synced state', async () => {
     const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
     expect(result.current.isSyncing).toBe(false);
-  });
 
-  it('exposes lastSyncedAt as null initially', () => {
-    const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
+    await waitFor(() => {
+      expect(result.current.networkStatus).toBe('online');
+    });
     expect(result.current.lastSyncedAt).toBeNull();
   });
 
@@ -118,20 +149,41 @@ describe('SyncContext', () => {
     });
   });
 
-  it('performs sync when forceSync is called', async () => {
+  it('syncs pending work without resetting failed records', async () => {
+    const acceptedAt = new Date();
+    (repository.getNewestSyncedAt as jest.Mock).mockResolvedValue(acceptedAt);
     (sync.syncPendingRecords as jest.Mock).mockResolvedValue({
-      synced: ['record-1'],
-      failed: []
+      ...emptySyncResult(),
+      attempted: 1,
+      synced: ['record-1']
     });
 
     const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
+    await waitFor(() => expect(result.current.pendingCount).toBe(5));
 
+    let run!: SyncRunSummary;
     await act(async () => {
-      await result.current.forceSync();
+      run = await result.current.forceSync();
     });
 
     expect(sync.syncPendingRecords).toHaveBeenCalledWith(1);
-    expect(result.current.lastSyncedAt).not.toBeNull();
+    expect(repository.resetFailedToPending).not.toHaveBeenCalled();
+    expect(result.current.lastSyncedAt).toEqual(acceptedAt);
+    expect(result.current.lastRun?.status).toBe('success');
+    expect(run.status).toBe('success');
+  });
+
+  it('resets failed items only through the explicit retryFailed action', async () => {
+    const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
+    await waitFor(() => expect(result.current.pendingCount).toBe(5));
+
+    await act(async () => {
+      await result.current.retryFailed();
+    });
+
+    expect(repository.resetFailedToPending).toHaveBeenCalledWith(1);
+    expect(repository.resetFailedAttachmentsToPending).toHaveBeenCalledWith(1);
+    expect(sync.syncPendingRecords).toHaveBeenCalled();
   });
 
   it('does not sync when offline', async () => {
@@ -144,6 +196,7 @@ describe('SyncContext', () => {
     });
 
     expect(sync.syncPendingRecords).not.toHaveBeenCalled();
+    expect(result.current.lastRun?.status).toBe('offline');
   });
 
   it('does not sync without an access token', async () => {
@@ -156,12 +209,13 @@ describe('SyncContext', () => {
     });
 
     expect(sync.syncPendingRecords).not.toHaveBeenCalled();
+    expect(result.current.lastRun?.status).toBe('auth_required');
   });
 
   it('auto-syncs on interval', async () => {
     const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
+    await waitFor(() => expect(result.current.pendingCount).toBe(5));
 
-    // First interval fires after 10s.
     await act(async () => {
       jest.advanceTimersByTime(10000);
     });
@@ -170,7 +224,6 @@ describe('SyncContext', () => {
       expect(sync.syncPendingRecords).toHaveBeenCalledTimes(1);
     });
 
-    // Second interval fires after another 10s
     await act(async () => {
       jest.advanceTimersByTime(10000);
     });
@@ -190,11 +243,12 @@ describe('SyncContext', () => {
     });
 
     expect(result.current.isSyncing).toBe(false);
+    expect(result.current.lastRun?.status).toBe('error');
   });
 
-  it('throws error when useSync is used outside provider', () => {
-    expect(() => {
-      renderHook(() => useSync());
-    }).toThrow('useSync must be used within a SyncProvider');
+  it('throws when useSync is used outside its provider', () => {
+    expect(() => renderHook(() => useSync())).toThrow(
+      'useSync must be used within a SyncProvider'
+    );
   });
 });

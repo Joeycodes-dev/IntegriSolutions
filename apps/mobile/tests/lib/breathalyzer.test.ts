@@ -166,6 +166,30 @@ describe('breathalyzer session', () => {
     await session.disconnect();
   });
 
+  it('clears subject over-alarm state without dropping the device connection', async () => {
+    const session = new BreathalyzerSession();
+    const transport = {
+      kind: 'bluetooth_classic' as const,
+      label: 'HC-06 Classic',
+      async connect() {},
+      async disconnect() {},
+      onLine(listener: (line: string) => void) {
+        listener('{"raw":900,"avg":850,"peak":850,"warm":false,"over":true,"alarm":true}');
+        return () => {};
+      }
+    };
+
+    await session.connect(transport);
+    expect(session.getSnapshot().over).toBe(true);
+    expect(session.getSnapshot().alarm).toBe(true);
+
+    session.startNewSubject();
+
+    expect(session.getSnapshot().connection).toBe('connected');
+    expect(session.getSnapshot().over).toBe(false);
+    expect(session.getSnapshot().alarm).toBe(false);
+  });
+
   it('does not include warm-up readings in the subject peak', async () => {
     const session = new BreathalyzerSession();
     const transport = {

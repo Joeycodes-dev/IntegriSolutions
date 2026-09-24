@@ -177,7 +177,7 @@ async function request<T>(path: string, options: RequestInit = {}, behavior: Req
         if (response.status === 429) {
           throw new RateLimitError(retryMessage, registerRateLimit(response));
         }
-        throw new Error(retryMessage);
+        throw new Error(`HTTP ${response.status}: ${retryMessage}`);
       }
 
       consecutiveRateLimits = 0;
@@ -190,7 +190,7 @@ async function request<T>(path: string, options: RequestInit = {}, behavior: Req
       throw new Error('Session expired. Please sign in again.');
     }
 
-    throw new Error(errorMessage);
+    throw new Error(`HTTP ${response.status}: ${errorMessage}`);
   }
 
   consecutiveRateLimits = 0;
@@ -248,24 +248,34 @@ export async function uploadEvidencePhoto(
     } as any);
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    },
-    body: formData
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: formData
+    });
+  } catch (error) {
+    throw new Error(
+      `Network error requesting ${API_BASE_URL}/evidence/${testId}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     const errorMessage = extractErrorMessage(payload);
+    if (response.status === 429) {
+      throw new RateLimitError(errorMessage, registerRateLimit(response));
+    }
     if (response.status === 401 && EXPIRED_TOKEN_MESSAGE.test(errorMessage)) {
       await clearAccessToken();
       notifyAuthExpired(errorMessage);
       throw new Error('Evidence upload deferred: session expired. Sign in again to upload photos.');
     }
-    throw new Error(errorMessage || 'Photo upload failed');
+    throw new Error(`HTTP ${response.status}: ${errorMessage || 'Photo upload failed'}`);
   }
 
   return payload;

@@ -10,7 +10,6 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -27,11 +26,13 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../lib/AuthContext";
 import { generateId } from "../lib/id";
 import {
-  DRIVER_CATEGORIES,
   buildTestLocation,
-  deriveDriverCategory,
   stationFromProfileRegion,
 } from "../lib/testLocation";
+import {
+  classifyBacReading,
+  resolveDriverPolicy,
+} from "../lib/driverPolicy";
 import { saveLocally, syncPendingRecords } from "../services/sync";
 import { useSync } from "../lib/SyncContext";
 import { getRuntimeConfig, updateDutyStatus } from "../services/api";
@@ -58,6 +59,7 @@ import {
   DeviceSettingsModal,
   type DeviceSettingsTab,
 } from "../components/DeviceSettingsModal";
+import { SyncCentreModal } from "../components/SyncCentreModal";
 import {
   decryptLicensePayload,
   parseDecryptedLicensePayload,
@@ -124,9 +126,6 @@ const DEV_BYPASS_UID_PREFIX = "local-";
 const DEV_LICENSE_PAYLOAD =
   "Developer bypass licence payload - camera scan skipped for local testing.";
 const DEV_BAC_READING = "0.062";
-const DEFAULT_DRIVER_CATEGORY = DRIVER_CATEGORIES[0];
-const DEFAULT_BAC_LIMIT = 0.05;
-const DEFAULT_PROFESSIONAL_BAC_LIMIT = 0.02;
 
 const DEV_DRIVER_LICENSE: DriverLicenseData = {
   name: "Thabo",
@@ -150,17 +149,6 @@ const subscribeBreathalyzer = (listener: () => void) =>
   breathalyzerSession.subscribe(listener);
 
 const getBreathalyzerSnapshot = () => breathalyzerSession.getSnapshot();
-
-function formatSyncTimestamp(value: Date | null): string {
-  if (!value) return "Never";
-  return value.toLocaleString([], {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 async function getDeviceLocation(): Promise<{ lat: number; lng: number }> {
   const permission = await Location.requestForegroundPermissionsAsync();
@@ -201,26 +189,26 @@ function getCaptureQualityIssue(
   return null;
 }
 
-function bacStatus(bac: string, limit = 0.05) {
-  const awaitingState = {
-    label: "AWAITING",
-    bgColor: colors.surfaceHighlight,
-    textColor: colors.accentBlue,
-    borderColor: colors.borderHighlight,
-  };
+function bacStatus(bac: string, limit: number) {
+  const classification = classifyBacReading(bac, limit);
 
-  if (!bac) return awaitingState;
+  if (classification === "AWAITING") {
+    return {
+      label: "AWAITING",
+      bgColor: colors.surfaceHighlight,
+      textColor: colors.accentBlue,
+      borderColor: colors.borderHighlight,
+    };
+  }
 
-  const reading = parseFloat(bac);
-  if (Number.isNaN(reading)) return awaitingState;
-
-  if (reading >= limit)
+  if (classification === "FAIL") {
     return {
       label: "FAIL",
       bgColor: colors.error,
       textColor: colors.background,
       borderColor: colors.error,
     };
+  }
 
   return {
     label: "PASS",
@@ -684,6 +672,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const {
     pendingCount,
     failedCount,
+    pendingEvidenceCount,
+    failedEvidenceCount,
+    queuedAlertCount,
     syncedCount,
     todayCount,
     weekCount,
@@ -839,24 +830,18 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }
   };
 
-  const effectiveCategoryKey = scannedData
-    ? deriveDriverCategory(scannedData.licenseCodes)
-    : "general";
+  const driverPolicy = useMemo(
+    () => resolveDriverPolicy(scannedData?.licenseCodes, runtimeConfig),
+    [runtimeConfig, scannedData?.licenseCodes],
+  );
+  const bacLimit = driverPolicy.limitG100ml;
+  const bacPresentation = bacStatus(bacReading, bacLimit);
 
-  const bacLimit = useMemo(() => {
-    if (!runtimeConfig) {
-      return effectiveCategoryKey === "professional"
-        ? DEFAULT_PROFESSIONAL_BAC_LIMIT
-        : DEFAULT_BAC_LIMIT;
-    }
-    return (
-      runtimeConfig.bacLimits.find((limit) => limit.key === effectiveCategoryKey)
-        ?.limitG100ml ?? DEFAULT_BAC_LIMIT
-    );
-  }, [runtimeConfig, effectiveCategoryKey]);
-
-  const resetSessionState = () => {
-    setHasPermission(null);
+  const resetActiveSubjectState = ({
+    clearRetestContext = true,
+  }: {
+    clearRetestContext?: boolean;
+  } = {}) => {
     setScannedData(null);
     setLicensePayload(null);
     setDecryptedLicenseData(null);
@@ -865,8 +850,20 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     clearReadingForNewSubject();
     setPhotoUri(null);
     setAttachments({});
+    setOfficerNotes("");
     setAutoWorkflow(false);
     setOcrDebug(null);
+
+    if (clearRetestContext) {
+      setLastSavedTestId(null);
+      setLastSavedDriver(null);
+      setIsRetest(false);
+    }
+  };
+
+  const resetSessionState = () => {
+    setHasPermission(null);
+    resetActiveSubjectState();
   };
 
   const startScan = async () => {
@@ -903,18 +900,18 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         "Scan failed",
         "No barcode payload was decoded. Please try again.",
       );
+      resetSessionState();
       setStep("idle");
-      setBarcodeScanned(false);
       return;
     }
 
     let decodedLicense: DecryptedLicenseData | null = null;
+    let decryptErrorMessage: string | null = null;
     try {
       const decryptedBytes = decryptLicensePayload(rawPayload);
       decodedLicense = parseDecryptedLicensePayload(decryptedBytes);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setDecryptError(message);
+      decryptErrorMessage = error instanceof Error ? error.message : String(error);
     }
 
     const data = parsePdf417BarcodeData(rawPayload);
@@ -926,12 +923,12 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       setBarcodeScanned(false);
       return;
     }
+    resetActiveSubjectState();
     setLicensePayload(formatRawPayloadForDisplay(rawPayload));
     setScannedData(data);
     setDecryptedLicenseData(decodedLicense);
+    setDecryptError(decryptErrorMessage);
     setOcrDebug(null);
-    clearReadingForNewSubject();
-    setAutoWorkflow(false);
     setStep("reading");
   };
 
@@ -969,6 +966,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       return;
     }
 
+    resetActiveSubjectState();
     setPhotoUri(image.uri);
     setAttachments((prev) => ({
       ...prev,
@@ -977,7 +975,6 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setBarcodeScanned(true);
     setLicensePayload(null);
     setDecryptError(null);
-    clearReadingForNewSubject();
     setAutoWorkflow(true);
     try {
       if (!image.base64)
@@ -997,21 +994,18 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   };
 
   const retakeFrontOfLicense = async () => {
-    setScannedData(null);
-    clearReadingForNewSubject();
-    setDecryptError(null);
     await captureFrontOfLicense(true);
   };
 
   const cancelScan = () => {
+    resetSessionState();
     setStep("idle");
-    setBarcodeScanned(false);
-    setLicensePayload(null);
-    setDecryptedLicenseData(null);
-    setDecryptError(null);
-    setOcrDebug(null);
-    clearReadingForNewSubject();
-    setAutoWorkflow(false);
+  };
+
+  const returnToScanner = () => {
+    resetActiveSubjectState();
+    setHasPermission(true);
+    setStep("scan");
   };
 
   const captureAttachment = async (category: EvidenceCategory) => {
@@ -1059,13 +1053,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const handleRetest = () => {
     if (!lastSavedTestId || !lastSavedDriver) return;
 
+    resetActiveSubjectState({ clearRetestContext: false });
     setScannedData(lastSavedDriver);
-    clearReadingForNewSubject();
-    setPhotoUri(null);
-    setAttachments({});
     setIsRetest(true);
-    setAutoWorkflow(false);
-    setOcrDebug(null);
     setStep("reading");
   };
 
@@ -1080,9 +1070,12 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const handleFinishSession = () => {
     resetSessionState();
     setStep("idle");
-    setLastSavedTestId(null);
-    setLastSavedDriver(null);
-    setIsRetest(false);
+  };
+
+  const abortSession = () => {
+    if (isSaving) return;
+    resetSessionState();
+    setStep("idle");
   };
 
   useEffect(() => {
@@ -1225,11 +1218,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         : null;
 
       const currentLocation = await getDeviceLocation();
-      const categoryKey = deriveDriverCategory(scannedData.licenseCodes);
-      const limitSetting = runtimeConfig?.bacLimits.find(
-        (limit) => limit.key === categoryKey,
-      );
-      const effectiveLimit = limitSetting?.limitG100ml ?? bacLimit;
+      const effectiveLimit = driverPolicy.limitG100ml;
       const isOver = reading >= effectiveLimit;
       const result = reading === 0 ? "pass" : isOver ? "fail" : "pass";
       const id = generateId();
@@ -1244,12 +1233,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         officerRank: "",
         serviceNumber: profile.badgeNumber,
         officerNotes,
-        driverCategory: limitSetting
-          ? `${limitSetting.label} (limit ${limitSetting.limitG100ml.toFixed(2)}g/100ml)`
-          : DEFAULT_DRIVER_CATEGORY,
-        driverCategoryKey: categoryKey,
-        bacLimitG100ml: limitSetting?.limitG100ml,
-        bacLimitMg1000ml: limitSetting?.limitMg1000ml,
+        driverCategory: `${driverPolicy.label} (limit ${driverPolicy.limitG100ml.toFixed(2)}g/100ml)`,
+        driverCategoryKey: driverPolicy.key,
+        bacLimitG100ml: driverPolicy.limitG100ml,
+        bacLimitMg1000ml: driverPolicy.limitMg1000ml,
       });
 
       await saveLocally({
@@ -1317,13 +1304,15 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setDeviceSettingsVisible(true);
   };
   const closeDeviceSettings = () => setDeviceSettingsVisible(false);
+  const syncFailureCount = failedCount + failedEvidenceCount;
+  const syncPendingCount = pendingCount + pendingEvidenceCount + queuedAlertCount;
   const syncStatusLabel = isSyncing
-    ? "Syncing records"
-    : failedCount > 0
-      ? `${failedCount} record${failedCount === 1 ? "" : "s"} failed to sync`
-      : pendingCount > 0
-        ? `${pendingCount} record${pendingCount === 1 ? "" : "s"} pending sync`
-        : "All records synced";
+    ? "Syncing records and evidence"
+    : syncFailureCount > 0
+      ? `${syncFailureCount} sync item${syncFailureCount === 1 ? "" : "s"} failed`
+      : syncPendingCount > 0
+        ? `${syncPendingCount} item${syncPendingCount === 1 ? "" : "s"} pending sync`
+        : "All records and evidence synced";
 
   return (
     <View style={styles.page}>
@@ -1358,17 +1347,17 @@ export function OfficerDashboardScreen({ navigation }: Props) {
           >
             {isSyncing ? (
               <ActivityIndicator size="small" color={colors.primaryDark} />
-            ) : failedCount > 0 ? (
+            ) : syncFailureCount > 0 ? (
               <>
                 <Feather name="alert-circle" size={16} color={colors.error} />
                 <Text style={[styles.syncBadgeText, styles.syncBadgeTextError]}>
-                  {failedCount}
+                  {syncFailureCount}
                 </Text>
               </>
-            ) : pendingCount > 0 ? (
+            ) : syncPendingCount > 0 ? (
               <>
                 <Feather name="cloud-off" size={16} color={colors.warning} />
-                <Text style={styles.syncBadgeText}>{pendingCount}</Text>
+                <Text style={styles.syncBadgeText}>{syncPendingCount}</Text>
               </>
             ) : (
               <Feather name="check-circle" size={16} color={colors.success} />
@@ -1395,7 +1384,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
           <OfficerHome
             profile={profile}
             pendingCount={pendingCount}
+            pendingEvidenceCount={pendingEvidenceCount}
             failedCount={failedCount}
+            failedEvidenceCount={failedEvidenceCount}
             syncedCount={syncedCount}
             todayCount={todayCount}
             weekCount={weekCount}
@@ -1588,17 +1579,17 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               <View
                 style={[
                   styles.bacInput,
-                  bacStatus(bacReading).label !== "AWAITING" && {
-                    backgroundColor: bacStatus(bacReading).bgColor,
-                    borderColor: bacStatus(bacReading).borderColor,
+                  bacPresentation.label !== "AWAITING" && {
+                    backgroundColor: bacPresentation.bgColor,
+                    borderColor: bacPresentation.borderColor,
                   },
                 ]}
               >
                 <Text
                   style={[
                     styles.bacValueText,
-                    bacStatus(bacReading).label !== "AWAITING" && {
-                      color: bacStatus(bacReading).textColor,
+                    bacPresentation.label !== "AWAITING" && {
+                      color: bacPresentation.textColor,
                     },
                   ]}
                 >
@@ -1781,7 +1772,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                       Retake Front Licence Photo
                     </Text>
                   </Pressable>
-                  <Pressable onPress={() => setStep("scan")}>
+                  <Pressable onPress={returnToScanner}>
                     <Text style={styles.abortText}>Back To Scanner</Text>
                   </Pressable>
                 </View>
@@ -1796,15 +1787,15 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                 style={[
                   styles.statusCardAlt,
                   {
-                    backgroundColor: bacStatus(bacReading, bacLimit).bgColor,
-                    borderColor: bacStatus(bacReading, bacLimit).borderColor,
+                    backgroundColor: bacPresentation.bgColor,
+                    borderColor: bacPresentation.borderColor,
                   },
                 ]}
               >
                 <Text
                   style={[
                     styles.statusLabelAlt,
-                    { color: bacStatus(bacReading, bacLimit).textColor },
+                    { color: bacPresentation.textColor },
                   ]}
                 >
                   Status
@@ -1812,10 +1803,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                 <Text
                   style={[
                     styles.statusValueAlt,
-                    { color: bacStatus(bacReading, bacLimit).textColor },
+                    { color: bacPresentation.textColor },
                   ]}
                 >
-                  {bacStatus(bacReading, bacLimit).label}
+                  {bacPresentation.label}
                 </Text>
               </View>
             </View>
@@ -1883,8 +1874,15 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                   </Text>
                 )}
               </Pressable>
-              <Pressable onPress={() => setStep("idle")}>
-                <Text style={styles.abortText}>Abort Session</Text>
+              <Pressable
+                onPress={abortSession}
+                disabled={isSaving}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: isSaving }}
+              >
+                <Text style={[styles.abortText, isSaving && styles.buttonDisabled]}>
+                  Abort Session
+                </Text>
               </Pressable>
             </View>
 
@@ -1944,80 +1942,22 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
       <OfficerBottomNav active="OfficerDashboard" />
 
-      <Modal
+      <SyncCentreModal
         visible={syncModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setSyncModalVisible(false)}
-      >
-        <Pressable
-          style={styles.modalOverlay}
-          onPress={() => setSyncModalVisible(false)}
-        >
-          <Pressable style={styles.modalCard} onPress={() => {}}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Sync Status</Text>
-              <Pressable onPress={() => setSyncModalVisible(false)}>
-                <Feather name="x" size={20} color="#64748b" />
-              </Pressable>
-            </View>
-
-            <View style={styles.modalBody}>
-              <View style={styles.modalRow}>
-                <View
-                  style={[styles.modalDot, { backgroundColor: "#22c55e" }]}
-                />
-                <Text style={styles.modalLabel}>Synced</Text>
-                <Text style={styles.modalValue}>{syncedCount}</Text>
-              </View>
-
-              <View style={styles.modalRow}>
-                <View
-                  style={[styles.modalDot, { backgroundColor: "#f59e0b" }]}
-                />
-                <Text style={styles.modalLabel}>Pending Sync</Text>
-                <Text style={styles.modalValue}>{pendingCount}</Text>
-              </View>
-
-              <View style={styles.modalRow}>
-                <View
-                  style={[styles.modalDot, { backgroundColor: "#ef4444" }]}
-                />
-                <Text style={styles.modalLabel}>Failed</Text>
-                <Text style={styles.modalValue}>{failedCount}</Text>
-              </View>
-            </View>
-
-            <View style={styles.modalFooter}>
-              <Feather name="clock" size={12} color="#94a3b8" />
-              <Text style={styles.modalFooterText}>
-                Last sync: {formatSyncTimestamp(lastSyncedAt)}
-              </Text>
-            </View>
-
-            <Pressable
-              style={[
-                styles.modalSyncButton,
-                isSyncing && styles.buttonDisabled,
-              ]}
-              onPress={async () => {
-                await forceSync();
-                setSyncModalVisible(false);
-              }}
-              disabled={isSyncing}
-            >
-              {isSyncing ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <Feather name="refresh-cw" size={16} color="#fff" />
-                  <Text style={styles.modalSyncButtonText}>Force Sync</Text>
-                </>
-              )}
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        onClose={() => setSyncModalVisible(false)}
+        onViewAudit={() => {
+          setSyncModalVisible(false);
+          navigation.navigate("Audit");
+        }}
+        onViewReports={() => {
+          setSyncModalVisible(false);
+          navigation.navigate("OfficerReports");
+        }}
+        onSignIn={() => {
+          setSyncModalVisible(false);
+          void handleLogout();
+        }}
+      />
 
       <DeviceSettingsModal
         visible={deviceSettingsVisible}

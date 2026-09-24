@@ -25,9 +25,12 @@ jest.mock('../../src/db/repository', () => ({
   insertTest: jest.fn(),
   insertEvidenceAttachment: jest.fn(),
   getPendingSync: jest.fn(),
-  updateSyncStatus: jest.fn(),
+  getTestById: jest.fn(),
+  markSyncSuccess: jest.fn(),
+  recordSyncAttempt: jest.fn(),
   getPendingAttachments: jest.fn(),
-  updateAttachmentSyncStatus: jest.fn(),
+  markAttachmentSyncSuccess: jest.fn(),
+  recordAttachmentSyncAttempt: jest.fn(),
   getPendingAlertAcks: jest.fn(),
   removeAlertAckFromQueue: jest.fn(),
   incrementAlertAckRetry: jest.fn(),
@@ -84,10 +87,13 @@ describe('rate limited (429) sync deferral', () => {
     jest.clearAllMocks();
     authMock.getAccessToken.mockResolvedValue('token-123');
     repositoryMock.getPendingSync.mockResolvedValue([pendingTest]);
+    repositoryMock.getTestById.mockResolvedValue({ ...pendingTest, syncStatus: 'synced' });
+    repositoryMock.markSyncSuccess.mockResolvedValue(undefined);
+    repositoryMock.recordSyncAttempt.mockResolvedValue(undefined);
     repositoryMock.getPendingAttachments.mockResolvedValue([]);
+    repositoryMock.markAttachmentSyncSuccess.mockResolvedValue(undefined);
+    repositoryMock.recordAttachmentSyncAttempt.mockResolvedValue(undefined);
     repositoryMock.getPendingAlertAcks.mockResolvedValue([]);
-    repositoryMock.updateSyncStatus.mockResolvedValue(undefined);
-    repositoryMock.updateAttachmentSyncStatus.mockResolvedValue(undefined);
     repositoryMock.removeAlertAckFromQueue.mockResolvedValue(undefined);
     repositoryMock.incrementAlertAckRetry.mockResolvedValue(undefined);
     repositoryMock.updateCachedAlertAcknowledgement.mockResolvedValue(undefined);
@@ -99,10 +105,40 @@ describe('rate limited (429) sync deferral', () => {
 
     const result = await syncPendingRecords(1);
 
-    expect(result).toEqual({ synced: [], failed: [], attachmentResults: [] });
-    // The whole point: the record must come back untouched. Burning 4 retries in
-    // ~40s of throttling used to mark real tests 'failed' for good.
-    expect(repositoryMock.updateSyncStatus).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      attempted: 1,
+      synced: [],
+      duplicates: [],
+      failed: [],
+      deferred: [{ id: 'test-1', error: 'Too many requests, please try again shortly' }],
+      attachmentResults: [],
+      runError: 'Too many requests, please try again shortly'
+    });
+    // A temporary limit records the reason but must not consume retry budget.
+    expect(repositoryMock.recordSyncAttempt).toHaveBeenCalledWith(
+      'test-1',
+      'pending_sync',
+      'Too many requests, please try again shortly',
+      expect.any(String),
+      false
+    );
+  });
+
+  it('defers server 5xx failures without spending record retry budget', async () => {
+    apiMock.syncRecords.mockRejectedValue(new Error('HTTP 503: Service unavailable'));
+
+    const result = await syncPendingRecords(1);
+
+    expect(result.deferred).toEqual([
+      { id: 'test-1', error: 'HTTP 503: Service unavailable' },
+    ]);
+    expect(repositoryMock.recordSyncAttempt).toHaveBeenCalledWith(
+      'test-1',
+      'pending_sync',
+      'HTTP 503: Service unavailable',
+      expect.any(String),
+      false
+    );
   });
 
   it('leaves attachments pending and abandons the pass once throttled', async () => {
@@ -122,7 +158,13 @@ describe('rate limited (429) sync deferral', () => {
     // One request each — pressing on would spend budget we've just been told we
     // don't have.
     expect(apiMock.uploadEvidencePhoto).toHaveBeenCalledTimes(1);
-    expect(repositoryMock.updateAttachmentSyncStatus).not.toHaveBeenCalled();
+    expect(repositoryMock.recordAttachmentSyncAttempt).toHaveBeenCalledWith(
+      'att-1',
+      'pending_sync',
+      'Too many requests, please try again shortly',
+      expect.any(String),
+      false
+    );
     expect(result.attachmentResults).toEqual([
       {
         testId: 'test-1',
@@ -142,7 +184,11 @@ describe('rate limited (429) sync deferral', () => {
 
     const result = await syncPendingAlertAcks();
 
-    expect(result).toEqual({ synced: [], failed: ['alert-1'] });
+    expect(result).toEqual({
+      synced: [],
+      failed: ['alert-1'],
+      errors: [{ alertId: 'alert-1', error: 'Too many requests, please try again shortly' }]
+    });
     // 429 is not the server rejecting the acknowledgement, so it must neither
     // cost retry budget nor drop the queued ack.
     expect(repositoryMock.incrementAlertAckRetry).not.toHaveBeenCalled();

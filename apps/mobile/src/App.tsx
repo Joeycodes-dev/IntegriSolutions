@@ -31,7 +31,7 @@ type RootStackParamList = {
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 function AppNavigator() {
-  const { profile, token, isRestoring } = useAuth();
+  const { profile, isRestoring } = useAuth();
 
   if (isRestoring) {
     return (
@@ -43,7 +43,7 @@ function AppNavigator() {
 
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      {profile && token ? (
+      {profile ? (
         <>
           <Stack.Screen
             name="OfficerDashboard"

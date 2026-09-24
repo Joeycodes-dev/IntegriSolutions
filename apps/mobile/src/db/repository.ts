@@ -16,10 +16,12 @@ export type AuditAction =
   | 'test.invalidation.failed'
   | 'sync.batch.completed'
   | 'sync.batch.failed'
+  | 'sync.batch.deferred'
   | 'sync.batch.throttled'
   | 'alert.received'
   | 'alert.acknowledged.queued'
-  | 'alert.acknowledged.synced';
+  | 'alert.acknowledged.synced'
+  | 'alert.acknowledged.failed';
 
 export type AuditOutcome = 'success' | 'failure';
 export type AuditSeverity = 'info' | 'warning' | 'critical';
@@ -55,6 +57,8 @@ export interface LocalTestRecord {
   createdAt: string;
   syncedAt: string | null;
   retryCount: number;
+  lastAttemptAt?: string | null;
+  lastError?: string | null;
   photoUri: string | null;
   originalTestId: string | null;
   deviceTransport?: string | null;
@@ -76,6 +80,13 @@ export interface LocalEvidenceAttachment {
   retryCount: number;
   createdAt: string;
   syncedAt: string | null;
+  lastAttemptAt?: string | null;
+  lastError?: string | null;
+}
+
+export interface SyncEvidenceAttachment extends LocalEvidenceAttachment {
+  parentSyncStatus: SyncStatus;
+  parentCreatedAt: string;
 }
 
 export interface LocalDraft {
@@ -145,6 +156,36 @@ export async function updateSyncStatus(
   }
 }
 
+export async function markSyncSuccess(id: string, syncedAt: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `UPDATE tests SET syncStatus = 'synced', syncedAt = ?, retryCount = 0, lastError = NULL, lastAttemptAt = ? WHERE id = ?`,
+    [syncedAt, syncedAt, id]
+  );
+}
+
+export async function recordSyncAttempt(
+  id: string,
+  syncStatus: Exclude<SyncStatus, 'synced'>,
+  errorMessage: string,
+  attemptedAt = new Date().toISOString(),
+  consumeRetry = true,
+): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `UPDATE tests SET syncStatus = ?, retryCount = retryCount + ?, lastError = ?, lastAttemptAt = ? WHERE id = ?`,
+    [syncStatus, consumeRetry ? 1 : 0, errorMessage, attemptedAt, id]
+  );
+}
+
+export async function retryFailedSyncRecord(id: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `UPDATE tests SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL WHERE id = ? AND syncStatus = 'failed'`,
+    [id]
+  );
+}
+
 export async function incrementRetryCount(id: string): Promise<void> {
   const db = await getDB();
   await db.runAsync(
@@ -191,14 +232,14 @@ export async function resetFailedToPending(officerId?: number | null): Promise<v
   const db = await getDB();
   if (officerId !== undefined && officerId !== null) {
     await db.runAsync(
-      `UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND (officerId = ? OR officerId IS NULL)`,
+      `UPDATE tests SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL WHERE syncStatus = 'failed' AND (officerId = ? OR officerId IS NULL)`,
       [officerId]
     );
     return;
   }
 
   await db.runAsync(
-    `UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND officerId IS NULL`
+    `UPDATE tests SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL WHERE syncStatus = 'failed' AND officerId IS NULL`
   );
 }
 
@@ -245,6 +286,88 @@ export async function getFailedCount(officerId?: number | null): Promise<number>
     `SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'failed' AND officerId IS NULL`
   );
   return row?.count ?? 0;
+}
+
+export async function getAttachmentStatusCounts(officerId?: number | null): Promise<{
+  synced: number;
+  pending: number;
+  failed: number;
+}> {
+  const db = await getDB();
+  const scoped = officerId !== undefined && officerId !== null
+    ? `AND (t.officerId = ? OR t.officerId IS NULL)`
+    : 'AND t.officerId IS NULL';
+  const params = officerId !== undefined && officerId !== null ? [officerId] : [];
+  const row = await db.getFirstAsync<{ synced: number; pending: number; failed: number }>(
+    `SELECT
+       SUM(CASE WHEN a.syncStatus = 'synced' THEN 1 ELSE 0 END) as synced,
+       SUM(CASE WHEN a.syncStatus = 'pending_sync' THEN 1 ELSE 0 END) as pending,
+       SUM(CASE WHEN a.syncStatus = 'failed' THEN 1 ELSE 0 END) as failed
+     FROM evidence_attachments a
+     JOIN tests t ON t.id = a.testId
+     WHERE 1 = 1 ${scoped}`,
+    params
+  );
+  return {
+    synced: row?.synced ?? 0,
+    pending: row?.pending ?? 0,
+    failed: row?.failed ?? 0
+  };
+}
+
+export async function getNewestSyncedAt(officerId?: number | null): Promise<Date | null> {
+  const db = await getDB();
+  const row = officerId !== undefined && officerId !== null
+    ? await db.getFirstAsync<{ syncedAt: string | null }>(
+      `SELECT MAX(syncedAt) as syncedAt FROM (
+         SELECT t.syncedAt AS syncedAt
+         FROM tests t
+         WHERE t.syncStatus = 'synced' AND (t.officerId = ? OR t.officerId IS NULL)
+         UNION ALL
+         SELECT a.syncedAt AS syncedAt
+         FROM evidence_attachments a
+         JOIN tests t ON t.id = a.testId
+         WHERE a.syncStatus = 'synced' AND (t.officerId = ? OR t.officerId IS NULL)
+       )`,
+      [officerId, officerId]
+    )
+    : await db.getFirstAsync<{ syncedAt: string | null }>(
+      `SELECT MAX(syncedAt) as syncedAt FROM (
+         SELECT t.syncedAt AS syncedAt
+         FROM tests t
+         WHERE t.syncStatus = 'synced' AND t.officerId IS NULL
+         UNION ALL
+         SELECT a.syncedAt AS syncedAt
+         FROM evidence_attachments a
+         JOIN tests t ON t.id = a.testId
+         WHERE a.syncStatus = 'synced' AND t.officerId IS NULL
+       )`
+    );
+  return row?.syncedAt ? new Date(row.syncedAt) : null;
+}
+
+export async function getSyncEvidenceAttachments(
+  officerId?: number | null
+): Promise<SyncEvidenceAttachment[]> {
+  const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    return db.getAllAsync<SyncEvidenceAttachment>(
+      `SELECT a.*, t.syncStatus AS parentSyncStatus, t.createdAt AS parentCreatedAt
+       FROM evidence_attachments a
+       JOIN tests t ON t.id = a.testId
+       WHERE a.syncStatus IN ('pending_sync', 'failed')
+         AND (t.officerId = ? OR t.officerId IS NULL)
+       ORDER BY CASE WHEN a.syncStatus = 'failed' THEN 0 ELSE 1 END, a.createdAt ASC`,
+      [officerId]
+    );
+  }
+  return db.getAllAsync<SyncEvidenceAttachment>(
+    `SELECT a.*, t.syncStatus AS parentSyncStatus, t.createdAt AS parentCreatedAt
+     FROM evidence_attachments a
+     JOIN tests t ON t.id = a.testId
+     WHERE a.syncStatus IN ('pending_sync', 'failed') AND t.officerId IS NULL
+     ORDER BY CASE WHEN a.syncStatus = 'failed' THEN 0 ELSE 1 END, a.createdAt ASC`
+  );
 }
 
 export async function getTestCountBetween(
@@ -400,9 +523,30 @@ export async function queueAlertAck(alertId: string, officerId: number | null, r
   );
 }
 
-export async function getPendingAlertAcks(): Promise<PendingAlertAck[]> {
+export async function getPendingAlertAcks(officerId?: number | null): Promise<PendingAlertAck[]> {
   const db = await getDB();
-  return db.getAllAsync<PendingAlertAck>(`SELECT * FROM alert_ack_queue ORDER BY requestedAt ASC`);
+  if (officerId !== undefined && officerId !== null) {
+    return db.getAllAsync<PendingAlertAck>(
+      `SELECT * FROM alert_ack_queue WHERE officerId = ? OR officerId IS NULL ORDER BY requestedAt ASC`,
+      [officerId]
+    );
+  }
+  return db.getAllAsync<PendingAlertAck>(
+    `SELECT * FROM alert_ack_queue WHERE officerId IS NULL ORDER BY requestedAt ASC`
+  );
+}
+
+export async function getQueuedAlertAckCount(officerId?: number | null): Promise<number> {
+  const db = await getDB();
+  const row = officerId !== undefined && officerId !== null
+    ? await db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM alert_ack_queue WHERE officerId = ? OR officerId IS NULL`,
+      [officerId]
+    )
+    : await db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM alert_ack_queue WHERE officerId IS NULL`
+    );
+  return row?.count ?? 0;
 }
 
 export async function removeAlertAckFromQueue(alertId: string): Promise<void> {
@@ -449,10 +593,22 @@ export async function getAttachmentsByTest(testId: string): Promise<LocalEvidenc
   );
 }
 
-export async function getPendingAttachments(): Promise<LocalEvidenceAttachment[]> {
+export async function getPendingAttachments(officerId?: number | null): Promise<LocalEvidenceAttachment[]> {
   const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    return db.getAllAsync<LocalEvidenceAttachment>(
+      `SELECT a.* FROM evidence_attachments a
+       JOIN tests t ON t.id = a.testId
+       WHERE a.syncStatus = 'pending_sync' AND (t.officerId = ? OR t.officerId IS NULL)
+       ORDER BY a.createdAt ASC`,
+      [officerId]
+    );
+  }
   return db.getAllAsync<LocalEvidenceAttachment>(
-    `SELECT * FROM evidence_attachments WHERE syncStatus = 'pending_sync' ORDER BY createdAt ASC`
+    `SELECT a.* FROM evidence_attachments a
+     JOIN tests t ON t.id = a.testId
+     WHERE a.syncStatus = 'pending_sync' AND t.officerId IS NULL
+     ORDER BY a.createdAt ASC`
   );
 }
 
@@ -482,18 +638,64 @@ export async function updateAttachmentSyncStatus(
   }
 }
 
+export async function markAttachmentSyncSuccess(id: string, syncedAt: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `UPDATE evidence_attachments SET syncStatus = 'synced', syncedAt = ?, retryCount = 0, lastError = NULL, lastAttemptAt = ? WHERE id = ?`,
+    [syncedAt, syncedAt, id]
+  );
+}
+
+export async function recordAttachmentSyncAttempt(
+  id: string,
+  syncStatus: Exclude<SyncStatus, 'synced'>,
+  errorMessage: string,
+  attemptedAt = new Date().toISOString(),
+  consumeRetry = true,
+): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `UPDATE evidence_attachments SET syncStatus = ?, retryCount = retryCount + ?, lastError = ?, lastAttemptAt = ? WHERE id = ?`,
+    [syncStatus, consumeRetry ? 1 : 0, errorMessage, attemptedAt, id]
+  );
+}
+
 export async function resetAttachmentToPending(id: string): Promise<void> {
   const db = await getDB();
   await db.runAsync(
-    `UPDATE evidence_attachments SET syncStatus = 'pending_sync', retryCount = 0 WHERE id = ?`,
+    `UPDATE evidence_attachments SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL
+     WHERE id = ? AND syncStatus = 'failed'
+       AND EXISTS (
+         SELECT 1 FROM tests t
+         WHERE t.id = evidence_attachments.testId AND t.syncStatus = 'synced'
+       )`,
     [id]
   );
 }
 
-export async function resetFailedAttachmentsToPending(): Promise<void> {
+export async function resetFailedAttachmentsToPending(officerId?: number | null): Promise<void> {
   const db = await getDB();
+  if (officerId !== undefined && officerId !== null) {
+    await db.runAsync(
+      `UPDATE evidence_attachments SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL
+       WHERE syncStatus = 'failed'
+         AND EXISTS (
+           SELECT 1 FROM tests t
+           WHERE t.id = evidence_attachments.testId
+             AND (t.officerId = ? OR t.officerId IS NULL)
+         )`,
+      [officerId]
+    );
+    return;
+  }
   await db.runAsync(
-    `UPDATE evidence_attachments SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed'`
+    `UPDATE evidence_attachments SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL
+     WHERE syncStatus = 'failed'
+       AND EXISTS (
+         SELECT 1 FROM tests t
+         WHERE t.id = evidence_attachments.testId
+           AND t.officerId IS NULL
+       )`
   );
 }
 

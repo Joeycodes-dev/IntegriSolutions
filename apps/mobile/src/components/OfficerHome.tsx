@@ -17,7 +17,9 @@ import { alertPriorityStyle } from '../lib/alertPriorityStyle';
 interface Props {
   profile: UserProfile;
   pendingCount: number;
+  pendingEvidenceCount: number;
   failedCount: number;
+  failedEvidenceCount: number;
   syncedCount: number;
   todayCount: number;
   weekCount: number;
@@ -101,7 +103,9 @@ function formatAlertExpiry(iso: string): string {
 export function OfficerHome({
   profile,
   pendingCount,
+  pendingEvidenceCount,
   failedCount,
+  failedEvidenceCount,
   syncedCount,
   todayCount,
   weekCount,
@@ -134,6 +138,9 @@ export function OfficerHome({
     }
   };
   const [duty, setDuty] = useState<DutyStatus>(initialDuty);
+
+  const pendingSyncCount = pendingCount + pendingEvidenceCount;
+  const failedSyncCount = failedCount + failedEvidenceCount;
 
   const todayStats = useMemo(() => {
     return {
@@ -200,9 +207,9 @@ export function OfficerHome({
               <ActivityIndicator size="small" color="#4338ca" />
             ) : (
               <Feather
-                name={failedCount > 0 ? 'alert-circle' : pendingCount > 0 ? 'cloud-off' : 'cloud'}
+                name={failedSyncCount > 0 ? 'alert-circle' : pendingSyncCount > 0 ? 'cloud-off' : 'cloud'}
                 size={18}
-                color={failedCount > 0 ? '#dc2626' : pendingCount > 0 ? '#f59e0b' : '#22c55e'}
+                color={failedSyncCount > 0 ? '#dc2626' : pendingSyncCount > 0 ? '#f59e0b' : '#22c55e'}
               />
             )}
           </View>
@@ -210,14 +217,14 @@ export function OfficerHome({
             <Text style={styles.syncTitle}>
               {isSyncing
                 ? 'Syncing to ledger…'
-                : failedCount > 0
-                ? `${failedCount} sync failure${failedCount === 1 ? '' : 's'}`
-                : pendingCount > 0
-                ? `${pendingCount} record${pendingCount === 1 ? '' : 's'} pending`
-                : 'All records synced'}
+                : failedSyncCount > 0
+                ? `${failedSyncCount} sync failure${failedSyncCount === 1 ? '' : 's'}`
+                : pendingSyncCount > 0
+                ? `${pendingSyncCount} item${pendingSyncCount === 1 ? '' : 's'} pending`
+                : 'All records and evidence synced'}
             </Text>
             <Text style={styles.syncSubtitle}>
-              {failedCount > 0
+              {failedSyncCount > 0
                 ? `Needs attention · Last sync ${formatLastSync(lastSyncedAt)}`
                 : `Last sync ${formatLastSync(lastSyncedAt)}`}
             </Text>
@@ -229,7 +236,7 @@ export function OfficerHome({
             onPress={onForceSync}
             disabled={isSyncing}
             accessibilityRole="button"
-            accessibilityLabel="Sync pending records"
+            accessibilityLabel="Sync pending records and evidence"
           >
             <Feather name="refresh-cw" size={14} color="#4338ca" />
             <Text style={styles.syncButtonText}>Sync</Text>

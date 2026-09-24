@@ -16,6 +16,8 @@ type LocalTestRecord = {
   createdAt: string;
   syncedAt: string | null;
   retryCount: number;
+  lastAttemptAt?: string | null;
+  lastError?: string | null;
   photoUri: string | null;
   originalTestId: string | null;
   deviceTransport?: string | null;
@@ -60,6 +62,8 @@ type LocalEvidenceAttachment = {
   retryCount: number;
   createdAt: string;
   syncedAt: string | null;
+  lastAttemptAt?: string | null;
+  lastError?: string | null;
 };
 
 type CachedAlertRecord = {
@@ -204,6 +208,51 @@ const webDb = {
       return;
     }
 
+    if (sql.startsWith("UPDATE tests SET syncStatus = 'synced', syncedAt = ?, retryCount = 0, lastError = NULL, lastAttemptAt = ? WHERE id = ?")) {
+      const [syncedAt, lastAttemptAt, id] = params as [string, string, string];
+      state.tests = state.tests.map((item) =>
+        item.id === id
+          ? { ...item, syncStatus: "synced", syncedAt, retryCount: 0, lastError: null, lastAttemptAt }
+          : item,
+      );
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("UPDATE tests SET syncStatus = ?, retryCount = retryCount + ?, lastError = ?, lastAttemptAt = ? WHERE id = ?")) {
+      const [syncStatus, retryIncrement, lastError, lastAttemptAt, id] = params as [
+        SyncStatus,
+        number,
+        string,
+        string,
+        string,
+      ];
+      state.tests = state.tests.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              syncStatus,
+              retryCount: item.retryCount + retryIncrement,
+              lastError,
+              lastAttemptAt,
+            }
+          : item,
+      );
+      saveState(state);
+      return;
+    }
+
+    if (sql.startsWith("UPDATE tests SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL WHERE id = ? AND syncStatus = 'failed'")) {
+      const [id] = params as [string];
+      state.tests = state.tests.map((item) =>
+        item.id === id && item.syncStatus === "failed"
+          ? { ...item, syncStatus: "pending_sync", retryCount: 0, lastError: null }
+          : item,
+      );
+      saveState(state);
+      return;
+    }
+
     if (sql.startsWith("UPDATE tests SET syncStatus = 'failed' WHERE id = ?")) {
       const [id] = params as [string];
       state.tests = state.tests.map((item) =>
@@ -224,21 +273,21 @@ const webDb = {
       return;
     }
 
-    if (sql.startsWith("UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND (officerId = ? OR officerId IS NULL)")) {
+    if (sql.startsWith("UPDATE tests SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL WHERE syncStatus = 'failed' AND (officerId = ? OR officerId IS NULL)")) {
       const [officerId] = params as [number];
       state.tests = state.tests.map((item) =>
         item.syncStatus === "failed" && (item.officerId === officerId || item.officerId === null)
-          ? { ...item, syncStatus: "pending_sync" }
+          ? { ...item, syncStatus: "pending_sync", retryCount: 0, lastError: null }
           : item,
       );
       saveState(state);
       return;
     }
 
-    if (sql.startsWith("UPDATE tests SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed' AND officerId IS NULL")) {
+    if (sql.startsWith("UPDATE tests SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL WHERE syncStatus = 'failed' AND officerId IS NULL")) {
       state.tests = state.tests.map((item) =>
         item.syncStatus === "failed" && item.officerId === null
-          ? { ...item, syncStatus: "pending_sync" }
+          ? { ...item, syncStatus: "pending_sync", retryCount: 0, lastError: null }
           : item,
       );
       saveState(state);
@@ -340,19 +389,67 @@ const webDb = {
       return;
     }
 
-    if (sql.startsWith("UPDATE evidence_attachments SET syncStatus = 'pending_sync', retryCount = 0 WHERE id = ?")) {
-      const [id] = params as [string];
+    if (sql.startsWith("UPDATE evidence_attachments SET syncStatus = 'synced', syncedAt = ?, retryCount = 0, lastError = NULL, lastAttemptAt = ? WHERE id = ?")) {
+      const [syncedAt, lastAttemptAt, id] = params as [string, string, string];
       state.evidence_attachments = state.evidence_attachments.map((item) =>
-        item.id === id ? { ...item, syncStatus: "pending_sync", retryCount: 0 } : item,
+        item.id === id
+          ? { ...item, syncStatus: "synced", syncedAt, retryCount: 0, lastError: null, lastAttemptAt }
+          : item,
       );
       saveState(state);
       return;
     }
 
-    if (sql.startsWith("UPDATE evidence_attachments SET syncStatus = 'pending_sync' WHERE syncStatus = 'failed'")) {
+    if (sql.startsWith("UPDATE evidence_attachments SET syncStatus = ?, retryCount = retryCount + ?, lastError = ?, lastAttemptAt = ? WHERE id = ?")) {
+      const [syncStatus, retryIncrement, lastError, lastAttemptAt, id] = params as [
+        SyncStatus,
+        number,
+        string,
+        string,
+        string,
+      ];
       state.evidence_attachments = state.evidence_attachments.map((item) =>
-        item.syncStatus === "failed" ? { ...item, syncStatus: "pending_sync" } : item,
+        item.id === id
+          ? {
+              ...item,
+              syncStatus,
+              retryCount: item.retryCount + retryIncrement,
+              lastError,
+              lastAttemptAt,
+            }
+          : item,
       );
+      saveState(state);
+      return;
+    }
+
+    if (
+      sql.includes("UPDATE evidence_attachments SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL") &&
+      sql.includes("WHERE id = ?")
+    ) {
+      const [id] = params as [string];
+      const parent = state.tests.find((test) => test.id === state.evidence_attachments.find((item) => item.id === id)?.testId);
+      state.evidence_attachments = state.evidence_attachments.map((item) =>
+        item.id === id && item.syncStatus === "failed" && parent?.syncStatus === "synced"
+          ? { ...item, syncStatus: "pending_sync", retryCount: 0, lastError: null }
+          : item,
+      );
+      saveState(state);
+      return;
+    }
+
+    if (sql.includes("UPDATE evidence_attachments SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL") && sql.includes("syncStatus = 'failed'")) {
+      const officerId = params[0] as number | undefined;
+      const includeUnscoped = sql.includes("(t.officerId = ? OR t.officerId IS NULL)");
+      const requiresSyncedParent = sql.includes("AND t.syncStatus = 'synced'");
+      state.evidence_attachments = state.evidence_attachments.map((item) => {
+        const parent = state.tests.find((test) => test.id === item.testId);
+        return item.syncStatus === "failed" &&
+          (!requiresSyncedParent || parent?.syncStatus === "synced") &&
+          (parent ? matchesScopedOfficer(parent, officerId, includeUnscoped) : false)
+          ? { ...item, syncStatus: "pending_sync", retryCount: 0, lastError: null }
+          : item;
+      });
       saveState(state);
       return;
     }
@@ -516,20 +613,56 @@ const webDb = {
       ).slice(0, limit) as T[];
     }
 
-    if (sql.includes("FROM audit_events ORDER BY occurredAt DESC LIMIT ?")) {
-      const [limit] = params as [number];
+    if (sql.includes("FROM audit_events ORDER BY occurredAt DESC LIMIT")) {
+      const limit = Number(sql.match(/LIMIT (\d+)/)?.[1] ?? 500);
       return [...state.audit_events]
         .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
         .slice(0, limit) as T[];
     }
 
-    if (sql.includes("FROM audit_events WHERE action LIKE ? ORDER BY occurredAt DESC LIMIT ?")) {
-      const [prefix, limit] = params as [string, number];
+    if (sql.includes("FROM audit_events WHERE action LIKE ? ORDER BY occurredAt DESC LIMIT")) {
+      const [prefix] = params as [string];
+      const limit = Number(sql.match(/LIMIT (\d+)/)?.[1] ?? 500);
       const startsWith = prefix.replace("%", "");
       return [...state.audit_events]
         .filter((item) => item.action.startsWith(startsWith))
         .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
         .slice(0, limit) as T[];
+    }
+
+    if (sql.includes("SELECT a.*, t.syncStatus AS parentSyncStatus")) {
+      const officerId = params[0] as number | undefined;
+      const rows = state.evidence_attachments
+        .filter((item) => {
+          if (item.syncStatus !== "pending_sync" && item.syncStatus !== "failed") return false;
+          const parent = state.tests.find((test) => test.id === item.testId);
+          return parent ? matchesScopedOfficer(parent, officerId, true) : false;
+        })
+        .sort((a, b) => {
+          const statusOrder = Number(a.syncStatus !== "failed") - Number(b.syncStatus !== "failed");
+          return statusOrder || a.createdAt.localeCompare(b.createdAt);
+        })
+        .map((item) => {
+          const parent = state.tests.find((test) => test.id === item.testId);
+          return {
+            ...item,
+            parentSyncStatus: parent?.syncStatus ?? "failed",
+            parentCreatedAt: parent?.createdAt ?? item.createdAt,
+          };
+        });
+      return rows as T[];
+    }
+
+    if (sql.includes("SELECT a.* FROM evidence_attachments a") && sql.includes("a.syncStatus = 'pending_sync'")) {
+      const officerId = params[0] as number | undefined;
+      const rows = sortByCreatedAtAsc(
+        state.evidence_attachments.filter((item) => {
+          if (item.syncStatus !== "pending_sync") return false;
+          const parent = state.tests.find((test) => test.id === item.testId);
+          return parent ? matchesScopedOfficer(parent, officerId, true) : false;
+        }),
+      );
+      return rows as T[];
     }
 
     if (sql.includes("FROM evidence_attachments WHERE testId = ? ORDER BY createdAt ASC")) {
@@ -564,6 +697,19 @@ const webDb = {
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) as T[];
     }
 
+    if (sql.includes("FROM alert_ack_queue WHERE officerId = ? OR officerId IS NULL ORDER BY requestedAt ASC")) {
+      const [officerId] = params as [number];
+      return [...state.alert_ack_queue]
+        .filter((item) => item.officerId === officerId || item.officerId === null)
+        .sort((a, b) => a.requestedAt.localeCompare(b.requestedAt)) as T[];
+    }
+
+    if (sql.includes("FROM alert_ack_queue WHERE officerId IS NULL ORDER BY requestedAt ASC")) {
+      return [...state.alert_ack_queue]
+        .filter((item) => item.officerId === null)
+        .sort((a, b) => a.requestedAt.localeCompare(b.requestedAt)) as T[];
+    }
+
     if (sql.includes("FROM alert_ack_queue ORDER BY requestedAt ASC")) {
       return [...state.alert_ack_queue].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt)) as T[];
     }
@@ -573,6 +719,45 @@ const webDb = {
 
   async getFirstAsync<T>(sql: string, params: unknown[] = []): Promise<T | null> {
     const state = loadState();
+
+    if (sql.includes("FROM evidence_attachments a") && sql.includes("SUM(CASE WHEN a.syncStatus")) {
+      const officerId = params[0] as number | undefined;
+      const scoped = state.evidence_attachments.filter((item) => {
+        const parent = state.tests.find((test) => test.id === item.testId);
+        return parent ? matchesScopedOfficer(parent, officerId, true) : false;
+      });
+      return {
+        synced: scoped.filter((item) => item.syncStatus === "synced").length,
+        pending: scoped.filter((item) => item.syncStatus === "pending_sync").length,
+        failed: scoped.filter((item) => item.syncStatus === "failed").length,
+      } as T;
+    }
+
+    if (sql.includes("SELECT MAX(syncedAt) as syncedAt FROM")) {
+      const officerId = params[0] as number | undefined;
+      const recordValues = state.tests
+        .filter((item) => item.syncStatus === "synced" && matchesScopedOfficer(item, officerId, true))
+        .map((item) => item.syncedAt);
+      const evidenceValues = state.evidence_attachments
+        .filter((item) => item.syncStatus === "synced")
+        .map((item) => {
+          const parent = state.tests.find((test) => test.id === item.testId);
+          return parent && matchesScopedOfficer(parent, officerId, true) ? item.syncedAt : null;
+        });
+      const values = [...recordValues, ...evidenceValues]
+        .filter((value): value is string => Boolean(value))
+        .sort()
+        .reverse();
+      return { syncedAt: values[0] ?? null } as T;
+    }
+
+    if (sql.includes("SELECT COUNT(*) as count FROM alert_ack_queue")) {
+      const officerId = params[0] as number | undefined;
+      const count = state.alert_ack_queue.filter((item) =>
+        matchesScopedOfficer(item, officerId, true),
+      ).length;
+      return { count } as T;
+    }
 
     if (sql.includes("SELECT COUNT(*) as count FROM tests WHERE syncStatus = 'synced'")) {
       const officerId = params[0] as number | undefined;
