@@ -4,6 +4,8 @@ const { spawnSync } = require('child_process');
 
 const appDirectory = path.resolve(__dirname, '..');
 const androidDirectory = path.join(appDirectory, 'android');
+const DEFAULT_API_BASE_URL = 'https://integri-backend.smuurt.workers.dev/api';
+const DEFAULT_BREATHALYZER_SIMULATION = '1';
 
 function javaExecutable(javaHome) {
   return path.join(javaHome, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
@@ -48,6 +50,13 @@ if (!androidSdk || !fs.existsSync(androidSdk)) {
   process.exit(1);
 }
 
+const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL || DEFAULT_API_BASE_URL;
+const breathalyzerSimulation =
+  process.env.EXPO_PUBLIC_BREATHALYZER_SIMULATION || DEFAULT_BREATHALYZER_SIMULATION;
+const supabaseRealtimeEnabled = Boolean(
+  process.env.EXPO_PUBLIC_SUPABASE_URL && process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+);
+
 const gradleWrapper = path.join(
   androidDirectory,
   process.platform === 'win32' ? 'gradlew.bat' : 'gradlew',
@@ -60,6 +69,11 @@ if (!fs.existsSync(gradleWrapper)) {
 
 console.log(`Using JDK: ${javaHome}`);
 console.log(`Using Android SDK: ${androidSdk}`);
+console.log(`Using API base URL: ${apiBaseUrl}`);
+console.log(`Breathalyzer simulation fallback: ${breathalyzerSimulation}`);
+console.log(
+  `Supabase realtime: ${supabaseRealtimeEnabled ? 'enabled' : 'disabled (REST polling fallback)'}`,
+);
 console.log('Building installable Android APK with Gradle...');
 
 const result = (() => {
@@ -71,24 +85,29 @@ const result = (() => {
       env: {
         ...process.env,
         JAVA_HOME: javaHome,
-        ANDROID_HOME: androidSdk
+        ANDROID_HOME: androidSdk,
+        NODE_ENV: process.env.NODE_ENV || 'production',
+        EXPO_PUBLIC_API_BASE_URL: apiBaseUrl,
+        EXPO_PUBLIC_BREATHALYZER_SIMULATION: breathalyzerSimulation
       }
     });
   }
 
-  const command = process.env.ComSpec || 'cmd.exe';
-  const commandLine = [gradleWrapper, ...gradleArgs]
-    .map((argument) => `"${argument.replace(/"/g, '""')}"`)
-    .join(' ');
+  const command = 'powershell.exe';
+  const quotedWrapper = gradleWrapper.replace(/'/g, "''");
+  const quotedArgs = gradleArgs.map((argument) => `'${argument.replace(/'/g, "''")}'`).join(' ');
+  const commandLine = `& '${quotedWrapper}' ${quotedArgs}`;
 
-  return spawnSync(command, ['/d', '/s', '/c', commandLine], {
+  return spawnSync(command, ['-NoProfile', '-NonInteractive', '-Command', commandLine], {
     cwd: androidDirectory,
     stdio: 'inherit',
-    windowsVerbatimArguments: true,
     env: {
       ...process.env,
       JAVA_HOME: javaHome,
-      ANDROID_HOME: androidSdk
+      ANDROID_HOME: androidSdk,
+      NODE_ENV: process.env.NODE_ENV || 'production',
+      EXPO_PUBLIC_API_BASE_URL: apiBaseUrl,
+      EXPO_PUBLIC_BREATHALYZER_SIMULATION: breathalyzerSimulation
     }
   });
 })();

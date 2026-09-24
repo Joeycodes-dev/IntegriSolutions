@@ -2,17 +2,21 @@ import { StyleSheet } from 'react-native';
 import { colors } from '../styles/colors';
 
 export const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1
+  },
   overlay: {
     flex: 1,
     backgroundColor: colors.modalOverlay,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 10
+    paddingHorizontal: 8,
+    paddingVertical: 12
   },
   sheet: {
     width: '100%',
-    maxWidth: 560,
-    maxHeight: '94%',
+    height: '94%',
+    maxWidth: 720,
     backgroundColor: colors.background,
     borderRadius: 28,
     overflow: 'hidden',
@@ -38,9 +42,9 @@ export const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: colors.primaryDark,
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 18,
+    paddingHorizontal: 22,
+    paddingTop: 12,
+    paddingBottom: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between'
@@ -49,7 +53,8 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    flex: 1
+    flex: 1,
+    minWidth: 0
   },
   headerIcon: {
     width: 44,
@@ -85,7 +90,7 @@ export const styles = StyleSheet.create({
     borderRadius: 22,
     backgroundColor: colors.instrumentPanel,
     borderWidth: 1,
-    padding: 16,
+    padding: 18,
     gap: 14
   },
   deviceHeroTop: {
@@ -210,13 +215,13 @@ export const styles = StyleSheet.create({
   },
   tabButton: {
     flex: 1,
-    minHeight: 52,
+    minHeight: 60,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 3,
-    paddingTop: 7,
-    paddingBottom: 8,
-    borderBottomWidth: 2,
+    gap: 4,
+    paddingTop: 8,
+    paddingBottom: 9,
+    borderBottomWidth: 3,
     borderBottomColor: 'transparent'
   },
   tabButtonActive: {
@@ -237,16 +242,16 @@ export const styles = StyleSheet.create({
   },
   bodyContent: {
     padding: 16,
-    gap: 14,
-    paddingBottom: 24
+    gap: 16,
+    paddingBottom: 32
   },
   sectionCard: {
     backgroundColor: colors.background,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.borderLight,
-    padding: 16,
-    gap: 12
+    padding: 18,
+    gap: 14
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -259,14 +264,14 @@ export const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: colors.textPrimary,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '800'
   },
   sectionDescription: {
     color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-    marginTop: 3
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4
   },
   connectionSummary: {
     flexDirection: 'row',
@@ -291,19 +296,20 @@ export const styles = StyleSheet.create({
   },
   connectionTitle: {
     color: colors.textPrimary,
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '800'
   },
   connectionDetail: {
     color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-    marginTop: 2
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 3
   },
   connectionMeta: {
     color: colors.neutralGray,
-    fontSize: 11,
-    marginTop: 3
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 4
   },
   inlineMessage: {
     borderRadius: 14,
@@ -324,29 +330,31 @@ export const styles = StyleSheet.create({
   },
   inlineMessageText: {
     color: colors.textPrimary,
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 13,
+    lineHeight: 19,
     fontWeight: '600'
   },
   actionGrid: {
     gap: 10
   },
   primaryButton: {
-    minHeight: 48,
+    minHeight: 54,
     borderRadius: 15,
     backgroundColor: colors.primaryDark,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8
+    gap: 8,
+    paddingHorizontal: 16
   },
   primaryButtonText: {
     color: colors.background,
-    fontSize: 13,
-    fontWeight: '800'
+    fontSize: 14,
+    fontWeight: '800',
+    textAlign: 'center'
   },
   secondaryButton: {
-    minHeight: 48,
+    minHeight: 52,
     borderRadius: 15,
     borderWidth: 1,
     borderColor: colors.borderHighlight,
@@ -354,12 +362,14 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8
+    gap: 8,
+    paddingHorizontal: 14
   },
   secondaryButtonText: {
     color: colors.primaryDark,
-    fontSize: 13,
-    fontWeight: '700'
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center'
   },
   buttonDisabled: {
     opacity: 0.65
@@ -372,14 +382,23 @@ export const styles = StyleSheet.create({
   },
   loadingText: {
     color: colors.textSecondary,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600'
   },
+  iconActionButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceHighlight
+  },
   deviceRow: {
+    minHeight: 76,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    padding: 10,
+    padding: 12,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.borderLight,
@@ -406,8 +425,9 @@ export const styles = StyleSheet.create({
   },
   deviceName: {
     color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '800'
+    fontSize: 14,
+    fontWeight: '800',
+    flexShrink: 1
   },
   savedBadge: {
     color: colors.successText,
@@ -422,17 +442,19 @@ export const styles = StyleSheet.create({
   },
   deviceAddress: {
     color: colors.textSecondary,
-    fontSize: 11,
-    marginTop: 2
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 3
   },
   deviceMeta: {
     color: colors.neutralGray,
-    fontSize: 10,
-    marginTop: 2
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 3
   },
   rowAction: {
-    minHeight: 44,
-    minWidth: 84,
+    minHeight: 48,
+    minWidth: 88,
     paddingHorizontal: 10,
     borderRadius: 12,
     backgroundColor: colors.surfaceHighlight,
@@ -450,22 +472,24 @@ export const styles = StyleSheet.create({
     fontWeight: '800'
   },
   emptyState: {
-    minHeight: 110,
+    minHeight: 124,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    paddingHorizontal: 14
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10
   },
   emptyStateTitle: {
     color: colors.textPrimary,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
-    marginTop: 3
+    marginTop: 3,
+    textAlign: 'center'
   },
   emptyStateText: {
     color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 13,
+    lineHeight: 19,
     textAlign: 'center'
   },
   toggleRow: {
@@ -479,14 +503,14 @@ export const styles = StyleSheet.create({
   },
   toggleLabel: {
     color: colors.textPrimary,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800'
   },
   toggleDetail: {
     color: colors.textSecondary,
-    fontSize: 11,
-    lineHeight: 16,
-    marginTop: 2
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 3
   },
   noteCard: {
     flexDirection: 'row',
@@ -500,8 +524,45 @@ export const styles = StyleSheet.create({
   noteText: {
     flex: 1,
     color: colors.textSecondary,
-    fontSize: 11,
-    lineHeight: 16
+    fontSize: 12,
+    lineHeight: 18
+  },
+  stepList: {
+    gap: 14
+  },
+  stepRow: {
+    minHeight: 56,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12
+  },
+  stepNumber: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primaryDark
+  },
+  stepNumberText: {
+    color: colors.background,
+    fontSize: 14,
+    fontWeight: '800'
+  },
+  stepText: {
+    flex: 1,
+    paddingTop: 1
+  },
+  stepTitle: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '800'
+  },
+  stepDetail: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 3
   },
   calibrationHero: {
     flexDirection: 'row',
@@ -551,14 +612,14 @@ export const styles = StyleSheet.create({
   },
   readinessLabel: {
     color: colors.textPrimary,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700'
   },
   readinessDetail: {
     color: colors.textSecondary,
-    fontSize: 11,
-    lineHeight: 15,
-    marginTop: 1
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 2
   },
   readinessStatus: {
     fontSize: 10,
@@ -636,20 +697,20 @@ export const styles = StyleSheet.create({
   },
   inputLabel: {
     color: colors.textSecondary,
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.4,
-    marginBottom: 5
+    letterSpacing: 0.3,
+    marginBottom: 6
   },
   input: {
-    minHeight: 44,
+    minHeight: 48,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.borderLight,
     backgroundColor: colors.pageBackground,
     paddingHorizontal: 12,
     color: colors.textPrimary,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600'
   },
   errorText: {
@@ -862,8 +923,8 @@ export const styles = StyleSheet.create({
     lineHeight: 14
   },
   footerButton: {
-    minHeight: 44,
-    paddingHorizontal: 18,
+    minHeight: 48,
+    paddingHorizontal: 20,
     borderRadius: 12,
     backgroundColor: colors.primaryDark,
     alignItems: 'center',

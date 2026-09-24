@@ -303,13 +303,11 @@ export class BreathalyzerSession {
   async connect(transport: BreathalyzerTransport): Promise<void> {
     const previousTransport = this.transport;
     this.disposeTransport();
-    this.update({
+    this.resetLiveState({
       connection: 'connecting',
       error: null,
       transportKind: transport.kind,
-      transportLabel: transport.label,
-      readings: 0,
-      lastReceivedAt: null
+      transportLabel: transport.label
     });
 
     if (previousTransport) {
@@ -325,7 +323,7 @@ export class BreathalyzerSession {
       if (this.transport !== transport) return;
       this.disposeTransport();
       void transport.disconnect().catch(() => undefined);
-      this.update({ connection: 'error', error: message });
+      this.resetLiveState({ connection: 'error', error: message });
     }) ?? null;
 
     // Register the transport before awaiting the native connect. The native
@@ -338,7 +336,7 @@ export class BreathalyzerSession {
     } catch (error) {
       if (this.transport !== transport) return;
       this.disposeTransport();
-      this.update({
+      this.resetLiveState({
         connection: 'error',
         error: error instanceof Error ? error.message : String(error)
       });
@@ -346,13 +344,12 @@ export class BreathalyzerSession {
     }
 
     if (this.transport !== transport) return;
-    this.update({ connection: 'connected', error: null, warm: true });
+    this.update({ connection: 'connected', error: null });
   }
 
   async disconnect(): Promise<void> {
     const transport = this.transport;
     this.disposeTransport();
-    this.sessionPeak = null;
     if (transport) {
       try {
         await transport.disconnect();
@@ -360,22 +357,11 @@ export class BreathalyzerSession {
         // Transport teardown is best-effort; state is reset regardless.
       }
     }
-    this.update({
+    this.resetLiveState({
       connection: 'idle',
       error: null,
-      warm: true,
-      over: false,
-      alarm: false,
-      raw: null,
-      avg: null,
-      devicePeak: null,
-      sessionPeak: null,
-      liveBacGdl: null,
-      peakBacGdl: null,
-      deviceSerial: null,
-      captured: null,
-      readings: 0,
-      lastReceivedAt: null
+      transportKind: null,
+      transportLabel: null
     });
   }
 
@@ -390,26 +376,12 @@ export class BreathalyzerSession {
 
     const transport = this.transport;
     this.disposeTransport();
-    this.sessionPeak = null;
     if (transport) {
       void transport.disconnect().catch(() => undefined);
     }
-    this.update({
+    this.resetLiveState({
       connection: 'error',
-      error: 'HC-06 stopped sending live data. Reconnect the device and try again.',
-      warm: true,
-      over: false,
-      alarm: false,
-      raw: null,
-      avg: null,
-      devicePeak: null,
-      sessionPeak: null,
-      liveBacGdl: null,
-      peakBacGdl: null,
-      deviceSerial: null,
-      captured: null,
-      readings: 0,
-      lastReceivedAt: null
+      error: 'HC-06 stopped sending live data. Reconnect the device and try again.'
     });
   }
 
@@ -449,6 +421,26 @@ export class BreathalyzerSession {
 
     this.update({ captured });
     return captured;
+  }
+
+  private resetLiveState(patch: Partial<BreathalyzerSnapshot> = {}): void {
+    this.sessionPeak = null;
+    this.update({
+      warm: true,
+      over: false,
+      alarm: false,
+      raw: null,
+      avg: null,
+      devicePeak: null,
+      sessionPeak: null,
+      liveBacGdl: null,
+      peakBacGdl: null,
+      deviceSerial: null,
+      captured: null,
+      readings: 0,
+      lastReceivedAt: null,
+      ...patch
+    });
   }
 
   private disposeTransport(): void {

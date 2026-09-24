@@ -21,6 +21,19 @@ React Native (Expo) mobile app used by traffic officers for roadside DUI testing
 - The app talks to the backend API. Point it with `EXPO_PUBLIC_API_BASE_URL`:
   - Production: `https://integri-backend.smuurt.workers.dev/api` (set in the `eas.json` build profile env for both `preview` and `production`)
   - Local dev: `http://<your-lan-ip>:8787/api` (the built-in fallback assumes the legacy port `4000`)
+
+### Mobile build-time environment
+
+Only `EXPO_PUBLIC_*` values are embedded into the app bundle.
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `EXPO_PUBLIC_API_BASE_URL` | Yes | Backend API used by login, sync, alerts, chat, scans, and reports. |
+| `EXPO_PUBLIC_BREATHALYZER_SIMULATION` | No | Set to `1` to keep the simulated MQ-3 fallback available in non-development builds. |
+| `EXPO_PUBLIC_SUPABASE_URL` | No | Enables Supabase realtime chat/unread updates. |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | No | Public anon key paired with `EXPO_PUBLIC_SUPABASE_URL` for realtime only. |
+
+Without the Supabase pair, chat and unread counts still work through REST polling every 12 seconds. The backend `SUPABASE_SERVICE_ROLE_KEY` is a server secret and must never be included in the mobile app. Web-only `VITE_*` values do not affect Android builds.
 - Licence front-photo OCR runs **on-device** via `expo-ai-kit` (ML Kit Text Recognition v2 on Android, Apple Vision on iOS). It requires a dev client or EAS build — it does **not** work in Expo Go.
 - The recognised text is posted to `POST /api/scan` (`{ text, retry }`), which parses the licence fields; the PDF417 barcode flow is unchanged.
 - Front-photo scanning is disabled on the web target (`scanService.web.ts`); only barcode scanning is available there.
@@ -45,7 +58,7 @@ NOTE: Just use: npx eas-cli build --platform android --profile preview --non-int
 Local APK build (requires Android SDK, Java 17+, and the local native toolchain):
 `npm run apk:local`
 
-This produces `android/app/build/outputs/apk/release/app-release.apk`, which can be copied directly to a phone and installed without waiting for the EAS build queue.
+This produces `android/app/build/outputs/apk/release/app-release.apk`, which can be copied directly to a phone and installed without waiting for the EAS build queue. Local APK builds use the Cloudflare backend URL from `eas.json` and enable the simulated MQ-3 fallback. Set `EXPO_PUBLIC_API_BASE_URL` before running the command to target a different backend.
 
 From the repository root, use:
 - `npm run mobile:apk`

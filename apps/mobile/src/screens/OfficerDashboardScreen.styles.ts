@@ -20,23 +20,38 @@ export const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8
+    gap: 6,
+    flexShrink: 0
+  },
+  headerIconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceHighlight
   },
   syncBadge: {
+    minWidth: 44,
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 4,
     backgroundColor: colors.pageBackground,
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4
+    borderRadius: 13,
+    paddingHorizontal: 9
   },
   syncBadgeText: {
     fontSize: 12,
     fontWeight: '700',
     color: colors.warning
   },
+  syncBadgeTextError: {
+    color: colors.errorText
+  },
   headerTitle: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12
@@ -61,7 +76,12 @@ export const styles = StyleSheet.create({
     marginTop: 2
   },
   signOutButton: {
-    padding: 8
+    width: 44,
+    height: 44,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.pageBackground
   },
   contentScroll: {
     flex: 1

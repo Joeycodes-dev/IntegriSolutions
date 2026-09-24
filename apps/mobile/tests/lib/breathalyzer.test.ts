@@ -234,6 +234,53 @@ describe('breathalyzer session', () => {
     expect(session.getSnapshot().transportLabel).toBe('Second HC-06');
   });
 
+  it('clears measurements from the previous device when replacing it', async () => {
+    const session = new BreathalyzerSession();
+    const firstTransport = {
+      kind: 'bluetooth_classic' as const,
+      label: 'First HC-06',
+      async connect() {},
+      async disconnect() {},
+      onLine(listener: (line: string) => void) {
+        listener(
+          '{"raw":700,"avg":650,"peak":700,"sn":"FIRST-01","over":false,"alarm":false,"warm":false}'
+        );
+        return () => {};
+      }
+    };
+    const secondTransport = {
+      kind: 'bluetooth_classic' as const,
+      label: 'Second HC-06',
+      async connect() {},
+      async disconnect() {},
+      onLine() {
+        return () => {};
+      }
+    };
+
+    await session.connect(firstTransport);
+    expect(session.getSnapshot().sessionPeak).toBe(650);
+    expect(session.getSnapshot().deviceSerial).toBe('FIRST-01');
+
+    await session.connect(secondTransport);
+
+    expect(session.getSnapshot()).toMatchObject({
+      connection: 'connected',
+      transportLabel: 'Second HC-06',
+      warm: true,
+      raw: null,
+      avg: null,
+      devicePeak: null,
+      sessionPeak: null,
+      liveBacGdl: null,
+      peakBacGdl: null,
+      deviceSerial: null,
+      captured: null,
+      readings: 0,
+      lastReceivedAt: null
+    });
+  });
+
   it('does not mark a connection successful after an immediate transport error', async () => {
     const session = new BreathalyzerSession();
     const handlers: { error?: (message: string) => void } = {};

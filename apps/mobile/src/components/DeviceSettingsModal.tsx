@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -14,6 +15,7 @@ import {
   View
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type {
   BreathalyzerCalibration,
@@ -78,7 +80,7 @@ const SIMULATION_ENABLED =
 const DIAGNOSTIC_WINDOW_MS = 3_000;
 const CALIBRATION_PREVIEW_TARGETS = [0.02, 0.05, 0.08] as const;
 
-type SettingsTab = 'device' | 'calibration' | 'telemetry' | 'history';
+export type DeviceSettingsTab = 'device' | 'connect' | 'calibration' | 'activity';
 
 type InlineMessage = {
   type: 'success' | 'error' | 'info';
@@ -95,17 +97,23 @@ type DiagnosticResult = {
 
 interface DeviceSettingsModalProps {
   visible: boolean;
+  initialTab?: DeviceSettingsTab;
   onClose: () => void;
   snapshot: BreathalyzerSnapshot;
   runtimeConfig: RuntimeConfig | null;
   profile: UserProfile | null;
+  lockDeviceMutations?: boolean;
 }
 
-const TABS: Array<{ key: SettingsTab; label: string; icon: keyof typeof Feather.glyphMap }> = [
+const TABS: Array<{
+  key: DeviceSettingsTab;
+  label: string;
+  icon: keyof typeof Feather.glyphMap;
+}> = [
   { key: 'device', label: 'Device', icon: 'bluetooth' },
+  { key: 'connect', label: 'Connect', icon: 'radio' },
   { key: 'calibration', label: 'Calibrate', icon: 'sliders' },
-  { key: 'telemetry', label: 'Live', icon: 'activity' },
-  { key: 'history', label: 'History', icon: 'bar-chart-2' }
+  { key: 'activity', label: 'Activity', icon: 'activity' }
 ];
 
 function statusFromSnapshot(snapshot: BreathalyzerSnapshot): {
@@ -232,15 +240,18 @@ function ToggleRow({
 
 export function DeviceSettingsModal({
   visible,
+  initialTab = 'device',
   onClose,
   snapshot,
   runtimeConfig,
-  profile
+  profile,
+  lockDeviceMutations = false
 }: DeviceSettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('device');
+  const [activeTab, setActiveTab] = useState<DeviceSettingsTab>(initialTab);
   const [preferences, setPreferences] = useState<BreathalyzerDevicePreferences>(
     DEFAULT_BREATHALYZER_DEVICE_PREFERENCES,
   );
+  const preferencesRef = useRef(preferences);
   const [pairedDevices, setPairedDevices] = useState<PairedBluetoothDevice[]>([]);
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
   const [busyDeviceAddress, setBusyDeviceAddress] = useState<string | null>(null);
@@ -260,6 +271,8 @@ export function DeviceSettingsModal({
   const [previewRawText, setPreviewRawText] = useState('');
   const [signalSamples, setSignalSamples] = useState<number[]>([]);
   const autoConnectAttemptedRef = useRef(false);
+  const deviceListRequestRef = useRef(0);
+  const initialLoadRequestRef = useRef(0);
 
   const status = useMemo(() => statusFromSnapshot(snapshot), [snapshot]);
   const readiness = useMemo(() => buildCaptureReadiness(snapshot), [snapshot]);
@@ -276,30 +289,25 @@ export function DeviceSettingsModal({
     snapshot.connection === 'connected' || snapshot.connection === 'connecting'
       ? snapshot.transportLabel ?? preferences.preferredDeviceName ?? 'Breathalyzer device'
       : preferences.preferredDeviceName ?? 'No device connected';
+  const deviceConnectionLocked = lockDeviceMutations && snapshot.connection === 'connected';
 
   const setMessage = (type: InlineMessage['type'], text: string) => {
     setInlineMessage({ type, text });
   };
 
-  const refreshHistory = async () => {
-    try {
-      const records =
-        profile?.officerId !== undefined ? await getAllTests(profile.officerId) : await getAllTests();
-      setHistorySummary(summarizeDeviceHistory(records));
-    } catch {
-      setHistorySummary(summarizeDeviceHistory([]));
-    }
-  };
-
   const loadStoredState = async () => {
-    const [storedPreferences, storedCalibrationHistory] = await Promise.all([
+    const [storedPreferences, storedCalibrationHistory, records] = await Promise.all([
       loadDevicePreferences(),
-      loadCalibrationHistory()
+      loadCalibrationHistory(),
+      profile?.officerId !== undefined
+        ? getAllTests(profile.officerId).catch(() => [])
+        : getAllTests().catch(() => [])
     ]);
-    setPreferences(storedPreferences);
-    setCalibrationHistory(storedCalibrationHistory);
-    await refreshHistory();
-    return storedPreferences;
+    return {
+      storedPreferences,
+      storedCalibrationHistory,
+      storedHistorySummary: summarizeDeviceHistory(records)
+    };
   };
 
   const connectDevice = async (
@@ -307,6 +315,13 @@ export function DeviceSettingsModal({
     options: { remember?: boolean; quiet?: boolean } = {},
   ) => {
     if (busyDeviceAddress || isDisconnecting || snapshot.connection === 'connecting') return;
+    if (deviceConnectionLocked) {
+      setMessage(
+        'info',
+        'Finish or cancel the current test before replacing the connected breathalyser.',
+      );
+      return;
+    }
     setBusyDeviceAddress(device.address);
     setInlineMessage(null);
     try {
@@ -344,7 +359,10 @@ export function DeviceSettingsModal({
         }
       });
 
-      if (!options.quiet) setMessage('success', `${device.name} is connected and streaming.`);
+      if (!options.quiet) {
+        setActiveTab('device');
+        setMessage('success', `${device.name} is connected and streaming.`);
+      }
     } catch (error) {
       if (!options.quiet) {
         setMessage('error', error instanceof Error ? error.message : 'Could not connect to the HC-06.');
@@ -358,8 +376,10 @@ export function DeviceSettingsModal({
     preferencesOverride?: BreathalyzerDevicePreferences,
     options: { autoConnect?: boolean } = {},
   ) => {
+    const requestId = ++deviceListRequestRef.current;
     if (Platform.OS !== 'android') {
       setPairedDevices([]);
+      setIsLoadingDevices(false);
       return;
     }
 
@@ -367,14 +387,18 @@ export function DeviceSettingsModal({
     setInlineMessage(null);
     try {
       const devices = await getPairedHc06Devices();
+      if (requestId !== deviceListRequestRef.current) return;
       setPairedDevices(devices);
 
       if (devices.length === 0) {
-        setMessage('info', 'No paired HC-06 was found. Pair the module in Android Bluetooth settings first.');
+        setMessage(
+          'info',
+          'No paired HC-06 was found. Pair the module in Android Bluetooth settings, then scan again.',
+        );
         return;
       }
 
-      const activePreferences = preferencesOverride ?? preferences;
+      const activePreferences = preferencesOverride ?? preferencesRef.current;
       if (
         options.autoConnect &&
         activePreferences.autoConnectPreferredDevice &&
@@ -393,9 +417,15 @@ export function DeviceSettingsModal({
         }
       }
     } catch (error) {
-      setMessage('error', error instanceof Error ? error.message : 'Could not read paired Bluetooth devices.');
+      if (requestId !== deviceListRequestRef.current) return;
+      setMessage(
+        'error',
+        error instanceof Error ? error.message : 'Could not read paired Bluetooth devices.',
+      );
     } finally {
-      setIsLoadingDevices(false);
+      if (requestId === deviceListRequestRef.current) {
+        setIsLoadingDevices(false);
+      }
     }
   };
 
@@ -414,7 +444,42 @@ export function DeviceSettingsModal({
     }
   };
 
+  const handleForgetPreferredDevice = () => {
+    Alert.alert(
+      'Forget saved device?',
+      'This clears the preferred HC-06 address and name on this phone. It does not unpair the module from Android.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Forget device',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              await forgetPreferredDevice();
+              const next = {
+                ...preferencesRef.current,
+                preferredDeviceAddress: null,
+                preferredDeviceName: null
+              };
+              preferencesRef.current = next;
+              setPreferences(next);
+              setMessage('success', 'Saved device cleared. The current connection is unchanged.');
+            })();
+          }
+        }
+      ],
+    );
+  };
+
   const handleDisconnect = () => {
+    if (lockDeviceMutations) {
+      setMessage(
+        'info',
+        'Finish or cancel the current test before disconnecting the breathalyzer.',
+      );
+      return;
+    }
+
     const performDisconnect = async () => {
       setIsDisconnecting(true);
       setInlineMessage(null);
@@ -454,6 +519,10 @@ export function DeviceSettingsModal({
   };
 
   const handleCalibrateFromCleanAir = async () => {
+    if (lockDeviceMutations) {
+      setMessage('info', 'Calibration is locked while a roadside test is active.');
+      return;
+    }
     if (snapshot.connection !== 'connected') {
       setMessage('error', 'Connect the breathalyzer before recording a clean-air baseline.');
       return;
@@ -498,6 +567,10 @@ export function DeviceSettingsModal({
   };
 
   const handleApplyCalibration = async () => {
+    if (lockDeviceMutations) {
+      setMessage('info', 'Calibration is locked while a roadside test is active.');
+      return;
+    }
     const result = createManualCalibration(snapshot.calibration, calibrationDraft);
     if (!result.ok) {
       setCalibrationError(result.error);
@@ -540,6 +613,10 @@ export function DeviceSettingsModal({
   };
 
   const handleResetCalibration = () => {
+    if (lockDeviceMutations) {
+      setMessage('info', 'Calibration is locked while a roadside test is active.');
+      return;
+    }
     Alert.alert(
       'Restore default calibration?',
       'This replaces the active profile with the repository MQ-3 defaults. Existing records keep their original custody values.',
@@ -581,6 +658,10 @@ export function DeviceSettingsModal({
   };
 
   const handleResetSubjectPeak = () => {
+    if (lockDeviceMutations) {
+      setMessage('info', 'The subject peak is locked while a roadside test is active.');
+      return;
+    }
     breathalyzerSession.startNewSubject();
     setMessage('success', 'Subject peak cleared. The next stable sample starts a new measurement.');
   };
@@ -685,7 +766,11 @@ export function DeviceSettingsModal({
   const handleOpenBluetoothSettings = async () => {
     try {
       await openHc06BluetoothSettings();
-      setMessage('info', 'Android Bluetooth settings opened. Pair the HC-06, then return to this screen.');
+      setActiveTab('connect');
+      setMessage(
+        'info',
+        'Pair the HC-06 in Android Bluetooth settings, then return here. This screen will scan again automatically.',
+      );
     } catch (error) {
       setMessage('error', error instanceof Error ? error.message : 'Open Android Bluetooth settings and pair the HC-06.');
     }
@@ -701,17 +786,58 @@ export function DeviceSettingsModal({
   };
 
   useEffect(() => {
-    if (!visible) return;
+    preferencesRef.current = preferences;
+  }, [preferences]);
+
+  useEffect(() => {
+    if (!visible) {
+      initialLoadRequestRef.current += 1;
+      deviceListRequestRef.current += 1;
+      return;
+    }
+
+    const requestId = ++initialLoadRequestRef.current;
     autoConnectAttemptedRef.current = false;
-    setActiveTab('device');
+    setActiveTab(initialTab);
     setInlineMessage(null);
     setDiagnosticResult(null);
     setCalibrationError(null);
     setCalibrationDraft(toCalibrationDraft(snapshot.calibration));
+
     void (async () => {
-      const storedPreferences = await loadStoredState();
-      await refreshPairedDevices(storedPreferences, { autoConnect: true });
+      try {
+        const stored = await loadStoredState();
+        if (requestId !== initialLoadRequestRef.current) return;
+        preferencesRef.current = stored.storedPreferences;
+        setPreferences(stored.storedPreferences);
+        setCalibrationHistory(stored.storedCalibrationHistory);
+        setHistorySummary(stored.storedHistorySummary);
+        await refreshPairedDevices(stored.storedPreferences, { autoConnect: true });
+      } catch (error) {
+        if (requestId !== initialLoadRequestRef.current) return;
+        setMessage(
+          'error',
+          error instanceof Error ? error.message : 'Could not load device settings.',
+        );
+      }
     })();
+
+    return () => {
+      if (requestId === initialLoadRequestRef.current) {
+        initialLoadRequestRef.current += 1;
+      }
+      deviceListRequestRef.current += 1;
+    };
+  }, [visible, initialTab]);
+
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'android') return;
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void refreshPairedDevices(undefined, { autoConnect: true });
+      }
+    });
+    return () => subscription.remove();
   }, [visible]);
 
   useEffect(() => {
@@ -755,18 +881,27 @@ export function DeviceSettingsModal({
             </Text>
           </View>
           <Pressable
-            style={[styles.rowAction, isBusy && styles.rowActionDisabled]}
+            style={[
+              styles.rowAction,
+              (isBusy || deviceConnectionLocked) && styles.rowActionDisabled,
+            ]}
             onPress={() => void connectDevice(device)}
-            disabled={Boolean(busyDeviceAddress) || isDisconnecting}
+            disabled={Boolean(busyDeviceAddress) || isDisconnecting || deviceConnectionLocked}
             accessibilityRole="button"
-            accessibilityLabel={`Connect ${device.name}`}
+            accessibilityLabel={
+              deviceConnectionLocked
+                ? `Device changes locked during the current test`
+                : `Connect ${device.name}`
+            }
           >
             {isBusy ? (
               <ActivityIndicator size="small" color={colors.primaryDark} />
             ) : (
               <>
-                <Feather name="link" size={14} color={colors.primaryDark} />
-                <Text style={styles.rowActionText}>{isPreferred ? 'Reconnect' : 'Connect'}</Text>
+                <Feather name="lock" size={14} color={colors.primaryDark} />
+                <Text style={styles.rowActionText}>
+                  {deviceConnectionLocked ? 'Locked' : isPreferred ? 'Reconnect' : 'Connect'}
+                </Text>
               </>
             )}
           </Pressable>
@@ -786,8 +921,8 @@ export function DeviceSettingsModal({
   const renderDeviceTab = () => (
     <>
       <SectionCard
-        title="Connection"
-        description="Manage the paired HC-06 used for live MQ-3 telemetry."
+        title="Breathalyser"
+        description="Current field device, readiness, and the next useful action."
         action={
           <View style={[styles.statusChip, { backgroundColor: status.background }]}>
             <View style={[styles.statusDot, { backgroundColor: status.color }]} />
@@ -797,13 +932,15 @@ export function DeviceSettingsModal({
       >
         <View style={styles.connectionSummary}>
           <View style={styles.connectionIcon}>
-            <Feather name={snapshot.connection === 'connected' ? 'bluetooth' : 'bluetooth'} size={24} color={colors.background} />
+            <Feather name="bluetooth" size={24} color={colors.background} />
           </View>
           <View style={styles.connectionText}>
             <Text style={styles.connectionTitle}>{deviceIdentity}</Text>
             <Text style={styles.connectionDetail}>{status.detail}</Text>
             <Text style={styles.connectionMeta}>
-              {snapshot.deviceSerial ? `Firmware serial ${snapshot.deviceSerial}` : 'Firmware serial appears after the first sample'}
+              {snapshot.deviceSerial
+                ? `Firmware serial ${snapshot.deviceSerial}`
+                : 'Firmware serial appears after the first sample'}
             </Text>
           </View>
         </View>
@@ -828,47 +965,184 @@ export function DeviceSettingsModal({
         <View style={styles.actionGrid}>
           {snapshot.connection === 'connected' ? (
             <Pressable
-              style={[styles.primaryButton, isDisconnecting && styles.buttonDisabled]}
+              style={styles.primaryButton}
+              onPress={() => setActiveTab('activity')}
+              accessibilityRole="button"
+              accessibilityLabel="View live breathalyser activity"
+            >
+              <Feather name="activity" size={17} color={colors.background} />
+              <Text style={styles.primaryButtonText}>View live activity</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              style={styles.primaryButton}
+              onPress={() => setActiveTab('connect')}
+              accessibilityRole="button"
+              accessibilityLabel="Open the connection tab"
+            >
+              <Feather name="bluetooth" size={17} color={colors.background} />
+              <Text style={styles.primaryButtonText}>Connect a device</Text>
+            </Pressable>
+          )}
+
+          {snapshot.connection === 'connected' ? (
+            <Pressable
+              style={[
+                styles.secondaryButton,
+                (isDisconnecting || lockDeviceMutations) && styles.buttonDisabled,
+              ]}
               onPress={handleDisconnect}
-              disabled={isDisconnecting}
+              disabled={isDisconnecting || lockDeviceMutations}
               accessibilityRole="button"
               accessibilityLabel="Disconnect breathalyzer"
             >
               {isDisconnecting ? (
-                <ActivityIndicator size="small" color={colors.background} />
+                <ActivityIndicator size="small" color={colors.primaryDark} />
               ) : (
-                <Feather name="power" size={16} color={colors.background} />
+                <Feather name="power" size={16} color={colors.primaryDark} />
               )}
-              <Text style={styles.primaryButtonText}>Disconnect</Text>
+              <Text style={styles.secondaryButtonText}>
+                {lockDeviceMutations ? 'Locked during test' : 'Disconnect'}
+              </Text>
             </Pressable>
           ) : (
             <Pressable
-              style={[styles.primaryButton, Boolean(busyDeviceAddress) && styles.buttonDisabled]}
-              onPress={() => void refreshPairedDevices(undefined, { autoConnect: true })}
-              disabled={Boolean(busyDeviceAddress)}
+              style={styles.secondaryButton}
+              onPress={() => void handleOpenBluetoothSettings()}
               accessibilityRole="button"
-              accessibilityLabel="Find paired HC-06 devices"
+              accessibilityLabel="Pair a new HC-06 in Android Bluetooth settings"
             >
-              {isLoadingDevices ? (
-                <ActivityIndicator size="small" color={colors.background} />
-              ) : (
-                <Feather name="search" size={16} color={colors.background} />
-              )}
-              <Text style={styles.primaryButtonText}>
-                {isLoadingDevices ? 'Checking devices…' : 'Find HC-06'}
-              </Text>
+              <Feather name="plus" size={16} color={colors.primaryDark} />
+              <Text style={styles.secondaryButtonText}>Pair a new HC-06</Text>
             </Pressable>
           )}
+        </View>
+      </SectionCard>
 
+      <SectionCard title="Before a roadside test" description="Open Activity for the complete readiness check.">
+        <View style={styles.readinessList}>
+          {readiness.slice(0, 3).map((check) => (
+            <View key={check.key} style={styles.readinessRow}>
+              <Feather
+                name={check.ok ? 'check-circle' : 'alert-circle'}
+                size={17}
+                color={check.ok ? colors.success : check.tone === 'error' ? colors.error : colors.warning}
+              />
+              <View style={styles.readinessText}>
+                <Text style={styles.readinessLabel}>{check.label}</Text>
+                <Text style={styles.readinessDetail}>{check.detail}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+        <Pressable
+          style={styles.secondaryButton}
+          onPress={() => setActiveTab('activity')}
+          accessibilityRole="button"
+          accessibilityLabel="Open complete live activity"
+        >
+          <Feather name="bar-chart-2" size={16} color={colors.primaryDark} />
+          <Text style={styles.secondaryButtonText}>Open live activity</Text>
+        </Pressable>
+      </SectionCard>
+
+      <SectionCard title="Device tools" description="Maintenance and calibration stay separate from connection.">
+        <View style={styles.actionGrid}>
           <Pressable
             style={styles.secondaryButton}
-            onPress={() => void refreshPairedDevices()}
+            onPress={() => setActiveTab('calibration')}
+            accessibilityRole="button"
+            accessibilityLabel="Open calibration settings"
+          >
+            <Feather name="sliders" size={16} color={colors.primaryDark} />
+            <Text style={styles.secondaryButtonText}>Calibration settings</Text>
+          </Pressable>
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => void handleShareReport()}
+            accessibilityRole="button"
+            accessibilityLabel="Share a breathalyser diagnostic report"
+          >
+            <Feather name="share" size={16} color={colors.primaryDark} />
+            <Text style={styles.secondaryButtonText}>Share diagnostic report</Text>
+          </Pressable>
+        </View>
+      </SectionCard>
+
+      <View style={styles.noteCard}>
+        <Feather name="shield" size={16} color={colors.accentBlue} />
+        <Text style={styles.noteText}>
+          Connection, calibration, and test activity use the same live device session. Closing this console does not disconnect the breathalyser.
+        </Text>
+      </View>
+    </>
+  );
+
+  const renderConnectTab = () => (
+    <>
+      <SectionCard
+        title="Connect an HC-06"
+        description="Pair or reconnect directly here. No driver licence or active test is required."
+      >
+        {inlineMessage ? (
+          <View
+            style={[
+              styles.inlineMessage,
+              inlineMessage.type === 'error'
+                ? styles.inlineMessageError
+                : inlineMessage.type === 'success'
+                ? styles.inlineMessageSuccess
+                : styles.inlineMessageInfo
+            ]}
+            accessibilityRole={inlineMessage.type === 'error' ? 'alert' : 'text'}
+            accessibilityLiveRegion="polite"
+          >
+            <Text style={styles.inlineMessageText}>{inlineMessage.text}</Text>
+          </View>
+        ) : null}
+        {deviceConnectionLocked ? (
+          <View style={[styles.inlineMessage, styles.inlineMessageInfo]}>
+            <Text style={styles.inlineMessageText}>
+              Device replacement is locked until the current roadside test is saved or cancelled.
+            </Text>
+          </View>
+        ) : null}
+
+        <View style={styles.actionGrid}>
+          <Pressable
+            style={[styles.primaryButton, isLoadingDevices && styles.buttonDisabled]}
+            onPress={() => void refreshPairedDevices(undefined, { autoConnect: true })}
             disabled={isLoadingDevices}
             accessibilityRole="button"
-            accessibilityLabel="Refresh paired devices"
+            accessibilityLabel="Scan for paired HC-06 devices"
+            accessibilityState={{ busy: isLoadingDevices }}
           >
-            <Feather name="refresh-cw" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>Refresh</Text>
+            {isLoadingDevices ? (
+              <ActivityIndicator size="small" color={colors.background} />
+            ) : (
+              <Feather name="radio" size={17} color={colors.background} />
+            )}
+            <Text style={styles.primaryButtonText}>
+              {isLoadingDevices ? 'Scanning paired devices…' : 'Scan paired devices'}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => void handleOpenBluetoothSettings()}
+            accessibilityRole="button"
+            accessibilityLabel="Pair a new HC-06 in Android Bluetooth settings"
+          >
+            <Feather name="plus" size={16} color={colors.primaryDark} />
+            <Text style={styles.secondaryButtonText}>Pair a new HC-06</Text>
+          </Pressable>
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => void handleOpenAppSettings()}
+            accessibilityRole="button"
+            accessibilityLabel="Open Android Bluetooth permissions"
+          >
+            <Feather name="lock" size={16} color={colors.primaryDark} />
+            <Text style={styles.secondaryButtonText}>Check app permissions</Text>
           </Pressable>
         </View>
 
@@ -888,15 +1162,16 @@ export function DeviceSettingsModal({
 
       <SectionCard
         title="Paired devices"
-        description="Already-paired HC-06 modules visible to Android."
+        description="HC-06 modules already paired with this Android phone."
         action={
           <Pressable
+            style={styles.iconActionButton}
             onPress={() => void refreshPairedDevices()}
+            disabled={isLoadingDevices}
             accessibilityRole="button"
-            accessibilityLabel="Refresh paired devices"
-            hitSlop={10}
+            accessibilityLabel="Refresh paired HC-06 devices"
           >
-            <Feather name="rotate-cw" size={18} color={colors.accentBlue} />
+            <Feather name="rotate-cw" size={18} color={colors.primaryDark} />
           </Pressable>
         }
       >
@@ -913,7 +1188,7 @@ export function DeviceSettingsModal({
       <SectionCard title="Connection preferences" description="Saved locally on this phone.">
         <ToggleRow
           label="Remember and auto-connect"
-          detail="Connect the saved HC-06 automatically when the officer dashboard opens."
+          detail="Reconnect the saved HC-06 when this console opens."
           value={preferences.autoConnectPreferredDevice}
           onValueChange={(value) => void handleToggleAutoConnect(value)}
         />
@@ -925,24 +1200,38 @@ export function DeviceSettingsModal({
             void persistPreferences({ ...preferences, confirmBeforeDisconnect: value })
           }
         />
-        <View style={styles.actionGrid}>
-          <Pressable style={styles.secondaryButton} onPress={() => void handleOpenBluetoothSettings()} accessibilityRole="button" accessibilityLabel="Open Android Bluetooth settings">
-            <Feather name="settings" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>Bluetooth settings</Text>
-          </Pressable>
-          <Pressable style={styles.secondaryButton} onPress={() => void handleOpenAppSettings()} accessibilityRole="button" accessibilityLabel="Open Android app permissions">
-            <Feather name="lock" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>App permissions</Text>
-          </Pressable>
-        </View>
+        <Pressable
+          style={styles.textButton}
+          onPress={handleForgetPreferredDevice}
+          disabled={!preferences.preferredDeviceAddress}
+          accessibilityRole="button"
+          accessibilityLabel="Forget saved breathalyzer"
+          accessibilityState={{ disabled: !preferences.preferredDeviceAddress }}
+        >
+          <Feather name="trash-2" size={15} color={colors.errorText} />
+          <Text style={styles.textButtonDanger}>Forget saved device</Text>
+        </Pressable>
       </SectionCard>
 
-      <View style={styles.noteCard}>
-        <Feather name="info" size={16} color={colors.accentBlue} />
-        <Text style={styles.noteText}>
-          The HC-06 stream is one-way telemetry. Firmware alarm threshold, warm-up timing, buzzer behaviour, and serial identity are configured on the Arduino and cannot be changed from the app.
-        </Text>
-      </View>
+      <SectionCard title="Pairing steps" description="Use these once for each HC-06.">
+        <View style={styles.stepList}>
+          {[
+            ['Power the HC-06', 'The module LED should blink continuously.'],
+            ['Open Android Bluetooth settings', `Pair the module using PIN 1234 or 0000.`],
+            ['Return to IntegriScan', 'This console scans paired devices again automatically.']
+          ].map(([title, detail], index) => (
+            <View key={title} style={styles.stepRow}>
+              <View style={styles.stepNumber}>
+                <Text style={styles.stepNumberText}>{index + 1}</Text>
+              </View>
+              <View style={styles.stepText}>
+                <Text style={styles.stepTitle}>{title}</Text>
+                <Text style={styles.stepDetail}>{detail}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      </SectionCard>
     </>
   );
 
@@ -979,17 +1268,24 @@ export function DeviceSettingsModal({
         </View>
 
         <Pressable
-          style={[styles.primaryButton, snapshot.connection !== 'connected' && styles.buttonDisabled]}
+          style={[
+            styles.primaryButton,
+            (snapshot.connection !== 'connected' || lockDeviceMutations) && styles.buttonDisabled,
+          ]}
           onPress={() => void handleCalibrateFromCleanAir()}
-          disabled={snapshot.connection !== 'connected'}
+          disabled={snapshot.connection !== 'connected' || lockDeviceMutations}
           accessibilityRole="button"
           accessibilityLabel="Set clean-air calibration baseline"
         >
           <Feather name="target" size={16} color={colors.background} />
-          <Text style={styles.primaryButtonText}>Set clean-air baseline</Text>
+          <Text style={styles.primaryButtonText}>
+            {lockDeviceMutations ? 'Locked during test' : 'Set clean-air baseline'}
+          </Text>
         </Pressable>
         <Text style={styles.helperText}>
-          Use clean air only. Do not calibrate from human breath or an alcohol sample unless you are using an approved calibrated reference system.
+          {lockDeviceMutations
+            ? 'Finish or cancel the current roadside test before changing calibration.'
+            : 'Use clean air only. Do not calibrate from human breath or an alcohol sample unless you are using an approved calibrated reference system.'}
         </Text>
       </SectionCard>
 
@@ -1047,8 +1343,9 @@ export function DeviceSettingsModal({
             ) : null}
             <View style={styles.actionGrid}>
               <Pressable
-                style={styles.primaryButton}
+                style={[styles.primaryButton, lockDeviceMutations && styles.buttonDisabled]}
                 onPress={() => void handleApplyCalibration()}
+                disabled={lockDeviceMutations}
                 accessibilityRole="button"
                 accessibilityLabel="Apply measurement profile"
               >
@@ -1056,8 +1353,9 @@ export function DeviceSettingsModal({
                 <Text style={styles.primaryButtonText}>Apply profile</Text>
               </Pressable>
               <Pressable
-                style={styles.secondaryButton}
+                style={[styles.secondaryButton, lockDeviceMutations && styles.buttonDisabled]}
                 onPress={handleResetCalibration}
+                disabled={lockDeviceMutations}
                 accessibilityRole="button"
                 accessibilityLabel="Restore default calibration"
               >
@@ -1178,7 +1476,7 @@ export function DeviceSettingsModal({
     </>
   );
 
-  const renderTelemetryTab = () => (
+  const renderActivityTab = () => (
     <>
       <SectionCard title="Capture readiness" description="All checks must pass before an evidential reading is captured.">
         <View style={styles.readinessList}>
@@ -1285,13 +1583,16 @@ export function DeviceSettingsModal({
             </Text>
           </Pressable>
           <Pressable
-            style={styles.secondaryButton}
+            style={[styles.secondaryButton, lockDeviceMutations && styles.buttonDisabled]}
             onPress={handleResetSubjectPeak}
+            disabled={lockDeviceMutations}
             accessibilityRole="button"
             accessibilityLabel="Reset subject peak"
           >
             <Feather name="refresh-ccw" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>Reset subject peak</Text>
+            <Text style={styles.secondaryButtonText}>
+              {lockDeviceMutations ? 'Peak locked during test' : 'Reset subject peak'}
+            </Text>
           </Pressable>
           <Pressable
             style={styles.secondaryButton}
@@ -1328,6 +1629,8 @@ export function DeviceSettingsModal({
           </View>
         ) : null}
       </SectionCard>
+
+      {renderHistoryTab()}
     </>
   );
 
@@ -1408,55 +1711,21 @@ export function DeviceSettingsModal({
         )}
       </SectionCard>
 
-      <SectionCard title="App and policy" description="Local app controls and role-safe limits used for pass/fail.">
-        <ToggleRow
-          label="Remember and auto-connect"
-          detail="Saved device reconnects when the dashboard opens."
-          value={preferences.autoConnectPreferredDevice}
-          onValueChange={(value) => void handleToggleAutoConnect(value)}
-        />
-        <ToggleRow
-          label="Confirm before disconnect"
-          detail="Ask before ending a live measurement stream."
-          value={preferences.confirmBeforeDisconnect}
-          onValueChange={(value) =>
-            void persistPreferences({ ...preferences, confirmBeforeDisconnect: value })
-          }
-        />
-        {runtimeConfig?.bacLimits.map((limit) => (
-          <View key={limit.key} style={styles.policyRow}>
-            <Text style={styles.policyLabel}>{limit.label}</Text>
-            <Text style={styles.policyValue}>{limit.limitG100ml.toFixed(3)} g/100ml</Text>
+      <SectionCard title="Policy limits" description="Role-safe limits used for pass/fail classification.">
+        {runtimeConfig ? (
+          runtimeConfig.bacLimits.map((limit) => (
+            <View key={limit.key} style={styles.policyRow}>
+              <Text style={styles.policyLabel}>{limit.label}</Text>
+              <Text style={styles.policyValue}>{limit.limitG100ml.toFixed(3)} g/100ml</Text>
+            </View>
+          ))
+        ) : (
+          <View style={styles.emptyState}>
+            <Feather name="cloud-off" size={22} color={colors.neutralGray} />
+            <Text style={styles.emptyStateTitle}>Policy limits unavailable offline</Text>
+            <Text style={styles.emptyStateText}>The last loaded policy remains active. Reconnect to refresh it.</Text>
           </View>
-        ))}
-        <Pressable
-          style={styles.textButton}
-          onPress={() => {
-            Alert.alert('Forget saved device?', 'This clears the preferred HC-06 address and name on this phone.', [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Forget device',
-                style: 'destructive',
-                onPress: () => {
-                  void (async () => {
-                    await forgetPreferredDevice();
-                    setPreferences((current) => ({
-                      ...current,
-                      preferredDeviceAddress: null,
-                      preferredDeviceName: null
-                    }));
-                    setMessage('success', 'Saved device cleared.');
-                  })();
-                }
-              }
-            ]);
-          }}
-          accessibilityRole="button"
-          accessibilityLabel="Forget saved breathalyzer"
-        >
-          <Feather name="trash-2" size={14} color={colors.errorText} />
-          <Text style={styles.textButtonDanger}>Forget saved device</Text>
-        </Pressable>
+        )}
       </SectionCard>
 
       <View style={styles.noteCard}>
@@ -1470,30 +1739,27 @@ export function DeviceSettingsModal({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View style={styles.sheet}>
-          <View style={styles.handleZone}>
-            <View style={styles.handle} />
-          </View>
-
+      <SafeAreaView style={styles.safeArea}>
+        <KeyboardAvoidingView
+          style={styles.overlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.sheet}>
           <View style={styles.header}>
             <View style={styles.headerLeading}>
               <View style={styles.headerIcon}>
                 <Feather name="bluetooth" size={22} color={colors.background} />
               </View>
               <View>
-                <Text style={styles.headerEyebrow}>APP SETTINGS</Text>
-                <Text style={styles.headerTitle}>Breathalyzer console</Text>
+                <Text style={styles.headerEyebrow}>FIELD DEVICE</Text>
+                <Text style={styles.headerTitle}>Breathalyser console</Text>
               </View>
             </View>
             <Pressable
               style={styles.closeButton}
               onPress={onClose}
               accessibilityRole="button"
-              accessibilityLabel="Close app settings"
+              accessibilityLabel="Close breathalyser console"
               hitSlop={10}
             >
               <Feather name="x" size={22} color={colors.background} />
@@ -1506,12 +1772,8 @@ export function DeviceSettingsModal({
                 <Feather name="bluetooth" size={22} color={status.color} />
               </View>
               <View style={styles.deviceHeroText}>
-                <Text style={styles.deviceHeroTitle} numberOfLines={1}>
-                  {deviceIdentity}
-                </Text>
-                <Text style={styles.deviceHeroDetail} numberOfLines={2}>
-                  {status.detail}
-                </Text>
+                <Text style={styles.deviceHeroTitle}>{deviceIdentity}</Text>
+                <Text style={styles.deviceHeroDetail}>{status.detail}</Text>
               </View>
               <View style={[styles.deviceHeroBadge, { backgroundColor: status.background }]}>
                 <View style={[styles.statusDot, { backgroundColor: status.color }]} />
@@ -1580,21 +1842,14 @@ export function DeviceSettingsModal({
             showsVerticalScrollIndicator={false}
           >
             {activeTab === 'device' ? renderDeviceTab() : null}
+            {activeTab === 'connect' ? renderConnectTab() : null}
             {activeTab === 'calibration' ? renderCalibrationTab() : null}
-            {activeTab === 'telemetry' ? renderTelemetryTab() : null}
-            {activeTab === 'history' ? renderHistoryTab() : null}
+            {activeTab === 'activity' ? renderActivityTab() : null}
           </ScrollView>
 
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>
-              Settings are local to this phone. Firmware changes require a USB reflash.
-            </Text>
-            <Pressable style={styles.footerButton} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close app settings">
-              <Text style={styles.footerButtonText}>Done</Text>
-            </Pressable>
-          </View>
         </View>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }

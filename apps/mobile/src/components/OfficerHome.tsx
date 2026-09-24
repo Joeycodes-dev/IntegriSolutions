@@ -29,7 +29,6 @@ interface Props {
   onStartSession: () => void;
   onOpenRoadOffence: () => void;
   onForceSync: () => void;
-  onOpenDeviceSettings?: () => void;
   onOpenReports: () => void;
   onOpenAudit: () => void;
   /** Single most urgent alert to feature prominently, or null when nothing
@@ -70,13 +69,7 @@ function greeting(): string {
 }
 
 function formatLastSync(d: Date | null): string {
-  if (!d) return new Date().toLocaleString([], {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
+  if (!d) return 'Not synced yet';
 
   return d.toLocaleString([], {
     year: 'numeric',
@@ -120,7 +113,6 @@ export function OfficerHome({
   onStartSession,
   onOpenRoadOffence,
   onForceSync,
-  onOpenDeviceSettings,
   onOpenReports,
   onOpenAudit,
   featuredAlert = null,
@@ -208,9 +200,9 @@ export function OfficerHome({
               <ActivityIndicator size="small" color="#4338ca" />
             ) : (
               <Feather
-                name={pendingCount > 0 ? 'cloud-off' : 'cloud'}
+                name={failedCount > 0 ? 'alert-circle' : pendingCount > 0 ? 'cloud-off' : 'cloud'}
                 size={18}
-                color={pendingCount > 0 ? '#f59e0b' : '#22c55e'}
+                color={failedCount > 0 ? '#dc2626' : pendingCount > 0 ? '#f59e0b' : '#22c55e'}
               />
             )}
           </View>
@@ -218,29 +210,20 @@ export function OfficerHome({
             <Text style={styles.syncTitle}>
               {isSyncing
                 ? 'Syncing to ledger…'
+                : failedCount > 0
+                ? `${failedCount} sync failure${failedCount === 1 ? '' : 's'}`
                 : pendingCount > 0
                 ? `${pendingCount} record${pendingCount === 1 ? '' : 's'} pending`
                 : 'All records synced'}
             </Text>
             <Text style={styles.syncSubtitle}>
               {failedCount > 0
-                ? `${failedCount} failed · ${formatLastSync(lastSyncedAt)}`
+                ? `Needs attention · Last sync ${formatLastSync(lastSyncedAt)}`
                 : `Last sync ${formatLastSync(lastSyncedAt)}`}
             </Text>
           </View>
         </View>
         <View style={styles.syncActions}>
-          {onOpenDeviceSettings ? (
-            <Pressable
-              style={styles.settingsButton}
-              onPress={onOpenDeviceSettings}
-              accessibilityRole="button"
-              accessibilityLabel="Open breathalyzer and app settings"
-              hitSlop={8}
-            >
-              <Feather name="settings" size={16} color="#475569" />
-            </Pressable>
-          ) : null}
           <Pressable
             style={[styles.syncButton, isSyncing && styles.syncButtonDisabled]}
             onPress={onForceSync}
