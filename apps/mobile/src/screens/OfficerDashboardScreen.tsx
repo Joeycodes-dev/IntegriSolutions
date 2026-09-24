@@ -61,6 +61,8 @@ import {
   loadCalibration,
   saveCalibration,
 } from "../services/breathalyzerStorage";
+import { rememberPreferredDevice, loadDevicePreferences } from "../services/breathalyzerDeviceStorage";
+import { DeviceSettingsModal } from "../components/DeviceSettingsModal";
 import {
   decryptLicensePayload,
   parseDecryptedLicensePayload,
@@ -726,6 +728,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       )
     : false;
   const [syncModalVisible, setSyncModalVisible] = useState(false);
+  const [deviceSettingsVisible, setDeviceSettingsVisible] = useState(false);
   const [step, setStep] = useState<OfficerStep>("idle");
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scannedData, setScannedData] = useState<DriverLicenseData | null>(
@@ -1099,6 +1102,45 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   }, []);
 
   useEffect(() => {
+    if (Platform.OS !== "android") return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const preferences = await loadDevicePreferences();
+        if (
+          cancelled ||
+          !preferences.autoConnectPreferredDevice ||
+          !preferences.preferredDeviceAddress
+        ) {
+          return;
+        }
+        if (breathalyzerSession.getSnapshot().connection !== "idle") return;
+
+        const devices = await getPairedHc06Devices();
+        const preferred =
+          devices.find(
+            (device) => device.address === preferences.preferredDeviceAddress,
+          ) ??
+          devices.find(
+            (device) => device.name === preferences.preferredDeviceName,
+          );
+        if (!preferred || cancelled) return;
+        await breathalyzerSession.connect(
+          createHc06BluetoothTransport(preferred),
+        );
+      } catch {
+        // Auto-connect is a convenience only. Manual connection from Device
+        // settings surfaces the actionable error.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     const interval = setInterval(() => {
       breathalyzerSession.expireIfStale();
     }, 1_000);
@@ -1144,7 +1186,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         "HC-06 connection failed",
         snapshot.error ?? "Reconnect the paired HC-06 and try again.",
       );
+      return;
     }
+    void rememberPreferredDevice(device);
   };
 
   const handleConnectSimulator = async () => {
@@ -1436,6 +1480,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             onStartSession={startScan}
             onOpenRoadOffence={() => navigation.navigate("RoadOffence")}
             onForceSync={forceSync}
+            onOpenDeviceSettings={() => setDeviceSettingsVisible(true)}
             onOpenReports={() => navigation.navigate("OfficerReports")}
             onOpenAudit={() => navigation.navigate("Audit")}
             featuredAlert={alertsSummary.featuredAlert}
@@ -2187,6 +2232,14 @@ export function OfficerDashboardScreen({ navigation }: Props) {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <DeviceSettingsModal
+        visible={deviceSettingsVisible}
+        onClose={() => setDeviceSettingsVisible(false)}
+        snapshot={breathalyzer}
+        runtimeConfig={runtimeConfig}
+        profile={profile}
+      />
     </View>
   );
 }

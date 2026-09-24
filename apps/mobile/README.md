@@ -42,12 +42,15 @@ You can build an Android APK that installs directly on devices and does not requ
 
 NOTE: Just use: npx eas-cli build --platform android --profile preview --non-interactive --no-wait
 
-Optional local APK build (requires Android SDK, Java, and local native toolchain):
+Local APK build (requires Android SDK, Java 17+, and the local native toolchain):
 `npm run apk:local`
+
+This produces `android/app/build/outputs/apk/release/app-release.apk`, which can be copied directly to a phone and installed without waiting for the EAS build queue.
 
 From the repository root, use:
 - `npm run mobile:apk`
 - `npm run mobile:apk:list`
+- `npm run mobile:apk:local`
 
 ## Breathalyzer (MQ-3) integration
 

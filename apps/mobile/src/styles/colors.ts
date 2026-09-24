@@ -7,6 +7,8 @@ export const colors = {
   textPrimary: '#0D253F',       // blue
   textSecondary: '#334E68',     // blue
 
+  instrumentPanel: '#102A43',   // deep blue device-console surface
+
   pageBackground: '#F8FAFC',    // white 
   surfaceHighlight: '#F0F4F8',  // light blue
   black: '#000000',             // black

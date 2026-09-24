@@ -70,6 +70,18 @@ name = "IP_RATE_LIMITER"
 namespace_id = "1006"
 simple = { limit = 600, period = 60 }
 
+# Workers observability. Persist invocation logs at 100%; traces remain disabled.
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+
+[observability.traces]
+enabled = false
+head_sampling_rate = 1
+persist = true
+
 # Non-secret vars. Secrets (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FRONTEND_URL)
 # should be set with `wrangler secret put <NAME>` or a local `.dev.vars`.
 [vars]

@@ -143,6 +143,19 @@ export const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 2
   },
+  syncActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  settingsButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceHighlight
+  },
   syncButton: {
     flexDirection: 'row',
     alignItems: 'center',

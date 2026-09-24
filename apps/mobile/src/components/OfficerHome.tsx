@@ -29,6 +29,7 @@ interface Props {
   onStartSession: () => void;
   onOpenRoadOffence: () => void;
   onForceSync: () => void;
+  onOpenDeviceSettings?: () => void;
   onOpenReports: () => void;
   onOpenAudit: () => void;
   /** Single most urgent alert to feature prominently, or null when nothing
@@ -119,6 +120,7 @@ export function OfficerHome({
   onStartSession,
   onOpenRoadOffence,
   onForceSync,
+  onOpenDeviceSettings,
   onOpenReports,
   onOpenAudit,
   featuredAlert = null,
@@ -227,14 +229,29 @@ export function OfficerHome({
             </Text>
           </View>
         </View>
-        <Pressable
-          style={[styles.syncButton, isSyncing && styles.syncButtonDisabled]}
-          onPress={onForceSync}
-          disabled={isSyncing}
-        >
-          <Feather name="refresh-cw" size={14} color="#4338ca" />
-          <Text style={styles.syncButtonText}>Sync</Text>
-        </Pressable>
+        <View style={styles.syncActions}>
+          {onOpenDeviceSettings ? (
+            <Pressable
+              style={styles.settingsButton}
+              onPress={onOpenDeviceSettings}
+              accessibilityRole="button"
+              accessibilityLabel="Open breathalyzer and app settings"
+              hitSlop={8}
+            >
+              <Feather name="settings" size={16} color="#475569" />
+            </Pressable>
+          ) : null}
+          <Pressable
+            style={[styles.syncButton, isSyncing && styles.syncButtonDisabled]}
+            onPress={onForceSync}
+            disabled={isSyncing}
+            accessibilityRole="button"
+            accessibilityLabel="Sync pending records"
+          >
+            <Feather name="refresh-cw" size={14} color="#4338ca" />
+            <Text style={styles.syncButtonText}>Sync</Text>
+          </Pressable>
+        </View>
       </View>
 
       {featuredAlert && (() => {

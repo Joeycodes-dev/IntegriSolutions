@@ -53,6 +53,11 @@ function actionVisual(action: string): ActionVisual {
   if (action.startsWith('auth.login')) return { icon: 'log-in', color: '#16a34a', label: 'Login' };
   if (action === 'auth.logout') return { icon: 'log-out', color: '#64748b', label: 'Logout' };
   if (action === 'test.saved') return { icon: 'save', color: '#4338ca', label: 'Test saved' };
+  if (action === 'test.device.captured') return { icon: 'activity', color: '#0ea5e9', label: 'Device capture' };
+  if (action === 'test.device.connected') return { icon: 'bluetooth', color: '#0ea5e9', label: 'Device connected' };
+  if (action === 'test.device.disconnected') return { icon: 'bluetooth', color: '#64748b', label: 'Device disconnected' };
+  if (action === 'test.device.calibrated') return { icon: 'sliders', color: '#4338ca', label: 'Calibration changed' };
+  if (action === 'test.device.diagnostic') return { icon: 'check-circle', color: '#16a34a', label: 'Device diagnostic' };
   if (action === 'test.invalidated') return { icon: 'alert-triangle', color: '#dc2626', label: 'Test invalidated' };
   if (action === 'test.invalidation.failed') return { icon: 'alert-circle', color: '#dc2626', label: 'Invalidation failed' };
   if (action === 'sync.batch.completed') return { icon: 'cloud-upload', color: '#0ea5e9', label: 'Sync batch' };
