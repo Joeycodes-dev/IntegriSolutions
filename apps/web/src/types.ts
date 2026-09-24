@@ -375,7 +375,7 @@ export interface TestEvidenceFields {
 
 /** Breathalyzer device metadata bound into the record's integrity hash. */
 export interface TestDeviceCustody {
-  transport: 'ble' | 'simulated' | string;
+  transport: 'ble' | 'bluetooth_classic' | 'simulated' | string;
   serial: string | null;
   calibrationVersion: string;
   calibrationR0: number;

@@ -117,6 +117,7 @@ function formatUtcDate(iso: string): string {
 
 function deviceTransportLabel(device: TestDeviceCustody): string {
   if (device.transport === 'ble') return 'Bluetooth LE';
+  if (device.transport === 'bluetooth_classic') return 'Bluetooth Classic (SPP)';
   if (device.transport === 'simulated') return 'Simulated breathalyzer';
   return device.transport || 'Unknown';
 }

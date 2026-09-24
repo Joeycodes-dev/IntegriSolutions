@@ -29,7 +29,13 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0b1f34"
       },
-      "package": "com.thabza102.integrisolutionsmobile"
+      "package": "com.thabza102.integrisolutionsmobile",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN"
+      ]
     },
     "plugins": [
       "expo-sqlite",

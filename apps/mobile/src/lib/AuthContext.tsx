@@ -12,6 +12,7 @@ import { API_BASE_URL } from '../services/constants';
 import { logAuditEvent } from '../services/audit';
 import { canAccessMobileApp } from './roles';
 import { onAuthExpired } from '../services/api';
+import { breathalyzerSession } from '../services/breathalyzer';
 
 const MOBILE_ACCESS_ERROR = 'This mobile app is for officer accounts. Supervisors and administrators must use the web portal.';
 
@@ -80,6 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const unsubscribe = onAuthExpired(() => {
+      void breathalyzerSession.disconnect();
       setProfile(null);
       setToken(null);
       void clearAccessToken();
@@ -90,6 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = useCallback(async (profileData: UserProfile, tokenValue: string | null) => {
+    await breathalyzerSession.disconnect();
     assertMobileAccess(profileData);
     if (tokenValue) {
       await setAccessToken(tokenValue);
@@ -111,6 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signInLocal = useCallback(async (profileData: UserProfile) => {
+    await breathalyzerSession.disconnect();
     assertMobileAccess(profileData);
     await clearAccessToken();
     await saveProfile(profileData as any);
@@ -128,6 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    await breathalyzerSession.disconnect();
     const current = profile;
     // Clear in-memory auth state first so login screen does not auto-redirect back during logout.
     setProfile(null);

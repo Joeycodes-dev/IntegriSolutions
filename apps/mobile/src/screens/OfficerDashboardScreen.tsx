@@ -44,12 +44,19 @@ import { logAuditEvent } from "../services/audit";
 import {
   breathalyzerSession,
   formatBacGdl,
+  isBreathalyzerReadingFresh,
   toDeviceEvidence,
   type BreathalyzerSnapshot,
-  type BreathalyzerTransport,
   type DeviceEvidencePayload,
 } from "../services/breathalyzer";
 import { createSimulatedTransport } from "../services/breathalyzerSimulator";
+import {
+  createHc06BluetoothTransport,
+  getPairedHc06Devices,
+  openHc06AppSettings,
+  openHc06BluetoothSettings,
+  type PairedBluetoothDevice,
+} from "../services/breathalyzerBluetooth";
 import {
   loadCalibration,
   saveCalibration,
@@ -146,16 +153,6 @@ const subscribeBreathalyzer = (listener: () => void) =>
   breathalyzerSession.subscribe(listener);
 
 const getBreathalyzerSnapshot = () => breathalyzerSession.getSnapshot();
-
-function createBreathalyzerTransport(): BreathalyzerTransport | null {
-  if (BREATHALYZER_SIMULATION_ENABLED) {
-    return createSimulatedTransport({
-      calibration: breathalyzerSession.getCalibration(),
-      targetBacGdl: 0.075,
-    });
-  }
-  return null;
-}
 
 function formatSyncTimestamp(value: Date | null): string {
   const target = value ?? new Date();
@@ -256,9 +253,7 @@ function deviceStatusVisual(snapshot: BreathalyzerSnapshot): {
     };
   }
   return {
-    label: BREATHALYZER_SIMULATION_ENABLED
-      ? "No breathalyzer connected"
-      : "No breathalyzer connected — Bluetooth disabled in this build",
+    label: "No breathalyzer connected",
     color: colors.neutralGray,
   };
 }
@@ -749,6 +744,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     subscribeBreathalyzer,
     getBreathalyzerSnapshot,
   );
+  const [bluetoothPickerVisible, setBluetoothPickerVisible] = useState(false);
+  const [pairedHc06Devices, setPairedHc06Devices] = useState<PairedBluetoothDevice[]>([]);
+  const [isPreparingBluetooth, setIsPreparingBluetooth] = useState(false);
+  const [bluetoothPickerError, setBluetoothPickerError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<AttachmentMap>({});
@@ -884,7 +883,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       setLicensePayload(DEV_LICENSE_PAYLOAD);
       setStep("reading");
       setAutoCaptureBac(DEV_BAC_READING);
-      void handleConnectBreathalyzer();
+      void handleConnectSimulator();
       return;
     }
 
@@ -1099,6 +1098,13 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       });
   }, []);
 
+  useEffect(() => {
+    const interval = setInterval(() => {
+      breathalyzerSession.expireIfStale();
+    }, 1_000);
+    return () => clearInterval(interval);
+  }, []);
+
   const clearReadingForNewSubject = () => {
     setBacReading("");
     setCapturedDeviceEvidence(null);
@@ -1106,22 +1112,74 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     breathalyzerSession.startNewSubject();
   };
 
-  const handleConnectBreathalyzer = async () => {
+  const handlePrepareHc06Connection = async () => {
+    setBluetoothPickerVisible(true);
+    setBluetoothPickerError(null);
+    setIsPreparingBluetooth(true);
+    try {
+      const devices = await getPairedHc06Devices();
+      setPairedHc06Devices(devices);
+      if (devices.length === 0) {
+        setBluetoothPickerError(
+          "No paired breathalyzer was found. Pair the HC-06 in Android settings, then try again.",
+        );
+      }
+    } catch (error) {
+      setBluetoothPickerError(
+        error instanceof Error ? error.message : "Could not prepare Bluetooth.",
+      );
+    } finally {
+      setIsPreparingBluetooth(false);
+    }
+  };
+
+  const handleConnectHc06 = async (device: PairedBluetoothDevice) => {
+    setBluetoothPickerVisible(false);
+    setBluetoothPickerError(null);
+    const transport = createHc06BluetoothTransport(device);
+    await breathalyzerSession.connect(transport);
+    const snapshot = breathalyzerSession.getSnapshot();
+    if (snapshot.connection === "error") {
+      Alert.alert(
+        "HC-06 connection failed",
+        snapshot.error ?? "Reconnect the paired HC-06 and try again.",
+      );
+    }
+  };
+
+  const handleConnectSimulator = async () => {
     const current = breathalyzerSession.getSnapshot();
     if (current.connection === "connected" || current.connection === "connecting") {
       return;
     }
 
-    const transport = createBreathalyzerTransport();
-    if (!transport) {
-      Alert.alert(
-        "Breathalyzer unavailable",
-        "This build has no breathalyzer transport enabled yet. Bluetooth support ships with the device BLE module.",
-      );
-      return;
-    }
-
+    const transport = createSimulatedTransport({
+      calibration: breathalyzerSession.getCalibration(),
+      targetBacGdl: 0.075,
+    });
     await breathalyzerSession.connect(transport);
+  };
+
+  const handleOpenBluetoothSettings = async () => {
+    try {
+      await openHc06BluetoothSettings();
+    } catch (error) {
+      Alert.alert(
+        "Bluetooth settings unavailable",
+        error instanceof Error ? error.message : "Open Android Bluetooth settings and pair the HC-06.",
+      );
+    }
+  };
+
+  const handleOpenAppSettings = async () => {
+    try {
+      await openHc06AppSettings();
+    } catch (error) {
+      Alert.alert(
+        "App settings unavailable",
+        error instanceof Error ? error.message : "Open Android app settings and allow Bluetooth access.",
+      );
+    }
   };
 
   const handleCaptureReading = useCallback(() => {
@@ -1137,6 +1195,13 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       Alert.alert(
         "Sensor warming up",
         "Wait for the breathalyzer to finish warming up before capturing a reading.",
+      );
+      return;
+    }
+    if (!isBreathalyzerReadingFresh(snapshot.lastReceivedAt)) {
+      Alert.alert(
+        "Reading is stale",
+        "The breathalyzer has stopped sending live data. Reconnect it and take a fresh sample.",
       );
       return;
     }
@@ -1645,33 +1710,65 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                       onPress={() => {
                         void breathalyzerSession.disconnect();
                       }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Disconnect breathalyzer"
                     >
                       <Text style={styles.abortText}>Disconnect device</Text>
                     </Pressable>
                   </>
                 ) : (
-                  <Pressable
-                    style={[
-                      styles.devicePrimaryButton,
-                      breathalyzer.connection === "connecting" &&
-                        styles.buttonDisabled,
-                    ]}
-                    onPress={() => {
-                      void handleConnectBreathalyzer();
-                    }}
-                    disabled={breathalyzer.connection === "connecting"}
-                  >
-                    <Feather
-                      name="bluetooth"
-                      size={16}
-                      color="#fff"
-                    />
-                    <Text style={styles.devicePrimaryButtonText}>
-                      {BREATHALYZER_SIMULATION_ENABLED
-                        ? "CONNECT / SIMULATE BREATHALYZER"
-                        : "CONNECT BREATHALYZER"}
-                    </Text>
-                  </Pressable>
+                  <>
+                    {Platform.OS === "android" ? (
+                      <Pressable
+                        style={[
+                          styles.devicePrimaryButton,
+                          (breathalyzer.connection === "connecting" ||
+                            isPreparingBluetooth) &&
+                            styles.buttonDisabled,
+                        ]}
+                        onPress={() => {
+                          void handlePrepareHc06Connection();
+                        }}
+                        disabled={
+                          breathalyzer.connection === "connecting" ||
+                          isPreparingBluetooth
+                        }
+                        accessibilityRole="button"
+                        accessibilityLabel="Connect a paired HC-06 breathalyzer"
+                        accessibilityState={{ busy: isPreparingBluetooth }}
+                      >
+                        {isPreparingBluetooth ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Feather name="bluetooth" size={16} color="#fff" />
+                        )}
+                        <Text style={styles.devicePrimaryButtonText}>
+                          {isPreparingBluetooth
+                            ? "CHECKING HC-06…"
+                            : "CONNECT HC-06"}
+                        </Text>
+                      </Pressable>
+                    ) : (
+                      <Text style={styles.androidOnlyHint}>
+                        HC-06 connectivity is available in Android builds only.
+                      </Text>
+                    )}
+                    {BREATHALYZER_SIMULATION_ENABLED ? (
+                      <Pressable
+                        style={styles.deviceSecondaryButton}
+                        onPress={() => {
+                          void handleConnectSimulator();
+                        }}
+                        disabled={breathalyzer.connection === "connecting"}
+                        accessibilityRole="button"
+                        accessibilityLabel="Connect the simulated MQ-3 breathalyzer"
+                      >
+                        <Text style={styles.deviceSecondaryButtonText}>
+                          SIMULATE MQ-3 DEVICE
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </>
                 )}
               </View>
 
@@ -1881,6 +1978,140 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       </ScrollView>
 
       <OfficerBottomNav active="OfficerDashboard" />
+
+      <Modal
+        visible={bluetoothPickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBluetoothPickerVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Connect HC-06</Text>
+              <Pressable
+                onPress={() => setBluetoothPickerVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close HC-06 picker"
+                style={styles.modalCloseButton}
+              >
+                <Feather name="x" size={20} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <Text style={styles.bluetoothHelpText}>
+              Pair the module in Android Bluetooth settings first. Common pairing
+              PINs are 1234 or 0000, then return here to connect.
+            </Text>
+
+            {isPreparingBluetooth ? (
+              <View style={styles.bluetoothLoading}>
+                <ActivityIndicator size="small" color={colors.primaryDark} />
+                <Text style={styles.bluetoothLoadingText}>
+                  Checking paired devices…
+                </Text>
+              </View>
+            ) : null}
+
+            {bluetoothPickerError ? (
+              <Text
+                style={styles.bluetoothErrorText}
+                accessibilityRole="alert"
+                accessibilityLiveRegion="polite"
+              >
+                {bluetoothPickerError}
+              </Text>
+            ) : null}
+
+            {pairedHc06Devices.length > 0 ? (
+              <ScrollView
+                style={styles.bluetoothDeviceList}
+                contentContainerStyle={styles.bluetoothDeviceListContent}
+              >
+                {pairedHc06Devices.map((device) => (
+                  <Pressable
+                    key={device.address}
+                    style={styles.bluetoothDeviceOption}
+                    onPress={() => {
+                      void handleConnectHc06(device);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Connect ${device.name}, Bluetooth address ${device.address}`}
+                  >
+                    <View style={styles.bluetoothDeviceIcon}>
+                      <Feather
+                        name="bluetooth"
+                        size={18}
+                        color={colors.primaryDark}
+                      />
+                    </View>
+                    <View style={styles.bluetoothDeviceText}>
+                      <Text style={styles.bluetoothDeviceName}>
+                        {device.name}
+                      </Text>
+                      <Text style={styles.bluetoothDeviceAddress}>
+                        {device.address}
+                      </Text>
+                    </View>
+                    <Feather
+                      name="chevron-right"
+                      size={20}
+                      color={colors.textSecondary}
+                    />
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : null}
+
+            <View style={styles.bluetoothModalActions}>
+              <Pressable
+                style={styles.bluetoothModalPrimaryButton}
+                onPress={() => {
+                  void handlePrepareHc06Connection();
+                }}
+                disabled={isPreparingBluetooth}
+                accessibilityRole="button"
+              >
+                <Feather name="refresh-cw" size={16} color={colors.background} />
+                <Text style={styles.bluetoothModalPrimaryText}>
+                  {pairedHc06Devices.length > 0 ? "Refresh paired devices" : "Try again"}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={styles.bluetoothModalSecondaryButton}
+                onPress={() => {
+                  void handleOpenBluetoothSettings();
+                }}
+                accessibilityRole="button"
+              >
+                <Feather name="settings" size={16} color={colors.primaryDark} />
+                <Text style={styles.bluetoothModalSecondaryText}>
+                  Open Bluetooth settings
+                </Text>
+              </Pressable>
+              <Pressable
+                style={styles.bluetoothModalSecondaryButton}
+                onPress={() => {
+                  void handleOpenAppSettings();
+                }}
+                accessibilityRole="button"
+              >
+                <Feather name="lock" size={16} color={colors.primaryDark} />
+                <Text style={styles.bluetoothModalSecondaryText}>
+                  Open app permissions
+                </Text>
+              </Pressable>
+              <Pressable
+                style={styles.deviceDisconnect}
+                onPress={() => setBluetoothPickerVisible(false)}
+                accessibilityRole="button"
+              >
+                <Text style={styles.abortText}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={syncModalVisible}

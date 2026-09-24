@@ -9,6 +9,7 @@ interface DeviceCustodyPanelProps {
 
 function transportLabel(transport: string): string {
   if (transport === 'ble') return 'Bluetooth LE';
+  if (transport === 'bluetooth_classic') return 'Bluetooth Classic (SPP)';
   if (transport === 'simulated') return 'Simulated device';
   return transport;
 }

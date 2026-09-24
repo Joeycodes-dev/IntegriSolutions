@@ -19,6 +19,7 @@ export const DEFAULT_BREATHALYZER_CALIBRATION: BreathalyzerCalibration = {
 export const MQ3_ADC_MAX = 1023;
 export const MQ3_VCC = 5;
 export const BREATH_TO_BLOOD_FACTOR = 0.21;
+export const MAX_BREATHALYZER_READING_AGE_MS = 3_000;
 
 export interface BreathalyzerReading {
   raw: number;
@@ -32,7 +33,7 @@ export interface BreathalyzerReading {
   receivedAt: string;
 }
 
-export type BreathalyzerTransportKind = 'ble' | 'simulated';
+export type BreathalyzerTransportKind = 'ble' | 'bluetooth_classic' | 'simulated';
 
 export interface BreathalyzerTransport {
   readonly kind: BreathalyzerTransportKind;
@@ -40,6 +41,7 @@ export interface BreathalyzerTransport {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   onLine(listener: (line: string) => void): () => void;
+  onError?(listener: (message: string) => void): () => void;
 }
 
 export type BreathalyzerConnection = 'idle' | 'connecting' | 'connected' | 'error';
@@ -206,6 +208,17 @@ export function formatBacGdl(bacGdl: number | null): string {
   return bacGdl.toFixed(3);
 }
 
+export function isBreathalyzerReadingFresh(
+  lastReceivedAt: string | null,
+  now = Date.now(),
+): boolean {
+  if (!lastReceivedAt) return false;
+  const receivedAt = Date.parse(lastReceivedAt);
+  if (!Number.isFinite(receivedAt)) return false;
+  const age = now - receivedAt;
+  return age >= 0 && age <= MAX_BREATHALYZER_READING_AGE_MS;
+}
+
 export function toDeviceEvidence(
   captured: CapturedBreathalyzerReading
 ): DeviceEvidencePayload | null {
@@ -229,6 +242,7 @@ export class BreathalyzerSession {
   private listeners = new Set<() => void>();
   private transport: BreathalyzerTransport | null = null;
   private unsubscribeLine: (() => void) | null = null;
+  private unsubscribeError: (() => void) | null = null;
   private sessionPeak: number | null = null;
 
   constructor(calibration: BreathalyzerCalibration = DEFAULT_BREATHALYZER_CALIBRATION) {
@@ -287,6 +301,7 @@ export class BreathalyzerSession {
   }
 
   async connect(transport: BreathalyzerTransport): Promise<void> {
+    const previousTransport = this.transport;
     this.disposeTransport();
     this.update({
       connection: 'connecting',
@@ -297,13 +312,32 @@ export class BreathalyzerSession {
       lastReceivedAt: null
     });
 
+    if (previousTransport) {
+      try {
+        await previousTransport.disconnect();
+      } catch {
+        // A failed replacement teardown must not prevent trying the new device.
+      }
+    }
+
     this.unsubscribeLine = transport.onLine((line) => this.handleLine(line));
+    this.unsubscribeError = transport.onError?.((message) => {
+      if (this.transport !== transport) return;
+      this.disposeTransport();
+      void transport.disconnect().catch(() => undefined);
+      this.update({ connection: 'error', error: message });
+    }) ?? null;
+
+    // Register the transport before awaiting the native connect. The native
+    // reader can emit an immediate disconnect/error before its promise
+    // resolves; that event must not be mistaken for a stale callback.
+    this.transport = transport;
 
     try {
       await transport.connect();
     } catch (error) {
-      this.unsubscribeLine?.();
-      this.unsubscribeLine = null;
+      if (this.transport !== transport) return;
+      this.disposeTransport();
       this.update({
         connection: 'error',
         error: error instanceof Error ? error.message : String(error)
@@ -311,13 +345,14 @@ export class BreathalyzerSession {
       return;
     }
 
-    this.transport = transport;
+    if (this.transport !== transport) return;
     this.update({ connection: 'connected', error: null, warm: true });
   }
 
   async disconnect(): Promise<void> {
     const transport = this.transport;
     this.disposeTransport();
+    this.sessionPeak = null;
     if (transport) {
       try {
         await transport.disconnect();
@@ -334,22 +369,69 @@ export class BreathalyzerSession {
       raw: null,
       avg: null,
       devicePeak: null,
+      sessionPeak: null,
       liveBacGdl: null,
-      deviceSerial: null
+      peakBacGdl: null,
+      deviceSerial: null,
+      captured: null,
+      readings: 0,
+      lastReceivedAt: null
+    });
+  }
+
+  expireIfStale(now = Date.now()): void {
+    if (
+      this.snapshot.connection !== 'connected' ||
+      this.snapshot.lastReceivedAt === null ||
+      isBreathalyzerReadingFresh(this.snapshot.lastReceivedAt, now)
+    ) {
+      return;
+    }
+
+    const transport = this.transport;
+    this.disposeTransport();
+    this.sessionPeak = null;
+    if (transport) {
+      void transport.disconnect().catch(() => undefined);
+    }
+    this.update({
+      connection: 'error',
+      error: 'HC-06 stopped sending live data. Reconnect the device and try again.',
+      warm: true,
+      over: false,
+      alarm: false,
+      raw: null,
+      avg: null,
+      devicePeak: null,
+      sessionPeak: null,
+      liveBacGdl: null,
+      peakBacGdl: null,
+      deviceSerial: null,
+      captured: null,
+      readings: 0,
+      lastReceivedAt: null
     });
   }
 
   startNewSubject(): void {
     this.sessionPeak = null;
     this.update({
+      raw: null,
+      avg: null,
+      devicePeak: null,
       sessionPeak: null,
+      liveBacGdl: null,
       peakBacGdl: null,
-      captured: null
+      captured: null,
+      readings: 0,
+      lastReceivedAt: null
     });
   }
 
-  capture(): CapturedBreathalyzerReading | null {
+  capture(at = Date.now()): CapturedBreathalyzerReading | null {
+    if (this.snapshot.connection !== 'connected') return null;
     if (this.sessionPeak === null) return null;
+    if (!isBreathalyzerReadingFresh(this.snapshot.lastReceivedAt, at)) return null;
     const bacGdl = rawToBacGdl(this.sessionPeak, this.snapshot.calibration);
     if (bacGdl === null) return null;
 
@@ -359,7 +441,7 @@ export class BreathalyzerSession {
       rawAtCapture: this.snapshot.raw,
       avgAtCapture: this.snapshot.avg,
       liveBacGdlAtCapture: this.snapshot.liveBacGdl,
-      capturedAt: new Date().toISOString(),
+      capturedAt: new Date(at).toISOString(),
       transport: this.snapshot.transportKind,
       deviceSerial: this.snapshot.deviceSerial,
       calibration: this.snapshot.calibration
@@ -371,7 +453,9 @@ export class BreathalyzerSession {
 
   private disposeTransport(): void {
     this.unsubscribeLine?.();
+    this.unsubscribeError?.();
     this.unsubscribeLine = null;
+    this.unsubscribeError = null;
     this.transport = null;
   }
 
@@ -379,8 +463,12 @@ export class BreathalyzerSession {
     const reading = parseBreathalyzerLine(line);
     if (!reading) return;
 
-    this.sessionPeak =
-      this.sessionPeak === null ? reading.avg : Math.max(this.sessionPeak, reading.avg);
+    const nextSessionPeak = reading.warm
+      ? this.sessionPeak
+      : this.sessionPeak === null
+        ? reading.avg
+        : Math.max(this.sessionPeak, reading.avg);
+    this.sessionPeak = nextSessionPeak;
 
     this.update({
       warm: reading.warm,
@@ -389,9 +477,12 @@ export class BreathalyzerSession {
       raw: reading.raw,
       avg: reading.avg,
       devicePeak: reading.peak,
-      sessionPeak: this.sessionPeak,
+      sessionPeak: nextSessionPeak,
       liveBacGdl: rawToBacGdl(reading.avg, this.snapshot.calibration),
-      peakBacGdl: rawToBacGdl(this.sessionPeak, this.snapshot.calibration),
+      peakBacGdl:
+        nextSessionPeak === null
+          ? null
+          : rawToBacGdl(nextSessionPeak, this.snapshot.calibration),
       deviceSerial: reading.serial ?? this.snapshot.deviceSerial,
       readings: this.snapshot.readings + 1,
       lastReceivedAt: reading.receivedAt

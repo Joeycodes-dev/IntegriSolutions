@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-09-24T00:00:00.000Z" agent="OpenCode" version="26.0.0" type="device" compressed="false">
+  <diagram id="hc06-wiring" name="HC-06 wiring">
+    <mxGraphModel dx="1400" dy="1050" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1050" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="HC-06 to Arduino Uno/Nano wiring — official project pin mapping" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=28;fontStyle=1;fontColor=#1f2937;" vertex="1" parent="1">
+          <mxGeometry x="50" y="20" width="850" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="HC-06 TXD → Arduino D3 RX • Arduino D4 TX → divider → HC-06 RXD • native USB remains on D0/D1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=15;fontColor=#4b5563;" vertex="1" parent="1">
+          <mxGeometry x="50" y="65" width="900" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="warning" value="&lt;b&gt;LEVEL SHIFT REQUIRED&lt;/b&gt;&lt;br&gt;Never connect D4 directly to RXD" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;strokeWidth=2;fontFamily=Helvetica;fontSize=14;fontColor=#8b1e1e;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="20" width="290" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="arduino-board" value="Arduino Uno / Nano" style="swimlane;startSize=50;horizontal=1;rounded=1;arcSize=8;whiteSpace=wrap;html=1;container=1;collapsible=0;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;fontFamily=Helvetica;fontSize=14;fontStyle=1;fontColor=#1f3a5f;align=center;verticalAlign=middle;spacing=4;" vertex="1" parent="1">
+          <mxGeometry x="50" y="160" width="340" height="660" as="geometry" />
+        </mxCell>
+        <mxCell id="arduino-note" value="Check the exact Nano board header" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=11;fontColor=#4b5563;" vertex="1" parent="arduino-board">
+          <mxGeometry x="20" y="60" width="300" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="ard-5v" value="5 V&lt;br&gt;power" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;strokeWidth=2;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#7a4d00;align=center;verticalAlign=middle;" vertex="1" parent="arduino-board">
+          <mxGeometry x="190" y="100" width="130" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ard-d3" value="D3&lt;br&gt;SoftwareSerial RX" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf2f8;strokeColor=#6c8ebf;strokeWidth=2;fontFamily=Helvetica;fontSize=12;fontColor=#1f3a5f;align=center;verticalAlign=middle;" vertex="1" parent="arduino-board">
+          <mxGeometry x="190" y="180" width="130" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ard-d4" value="D4&lt;br&gt;SoftwareSerial TX" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf2f8;strokeColor=#6c8ebf;strokeWidth=2;fontFamily=Helvetica;fontSize=12;fontColor=#1f3a5f;align=center;verticalAlign=middle;" vertex="1" parent="arduino-board">
+          <mxGeometry x="190" y="360" width="130" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ard-gnd" value="GND" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;strokeWidth=2;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#333333;align=center;verticalAlign=middle;" vertex="1" parent="arduino-board">
+          <mxGeometry x="190" y="460" width="130" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="arduino-usb-note" value="Native USB stays on D0 / D1&#xa;for flashing and serial logs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;dashed=1;fontFamily=Helvetica;fontSize=11;fontColor=#1f3a5f;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="arduino-board">
+          <mxGeometry x="20" y="530" width="220" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="hc06-board" value="HC-06 / ZS-040 / FC-114" style="swimlane;startSize=50;horizontal=1;rounded=1;arcSize=8;whiteSpace=wrap;html=1;container=1;collapsible=0;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontFamily=Helvetica;fontSize=14;fontStyle=1;fontColor=#315b25;align=center;verticalAlign=middle;spacing=4;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="160" width="330" height="660" as="geometry" />
+        </mxCell>
+        <mxCell id="hc06-note" value="Carrier layouts vary — use the board labels" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=11;fontColor=#4b5563;" vertex="1" parent="hc06-board">
+          <mxGeometry x="20" y="60" width="290" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="hc-vcc" value="VCC&lt;br&gt;5 V carrier" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;strokeWidth=2;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#7a4d00;align=center;verticalAlign=middle;" vertex="1" parent="hc06-board">
+          <mxGeometry x="20" y="100" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="hc-txd" value="TXD&lt;br&gt;module UART TX" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf2f8;strokeColor=#6c8ebf;strokeWidth=2;fontFamily=Helvetica;fontSize=12;fontColor=#1f3a5f;align=center;verticalAlign=middle;" vertex="1" parent="hc06-board">
+          <mxGeometry x="20" y="180" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="hc-rxd" value="RXD&lt;br&gt;3.3 V UART input" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf2f8;strokeColor=#6c8ebf;strokeWidth=2;fontFamily=Helvetica;fontSize=12;fontColor=#1f3a5f;align=center;verticalAlign=middle;" vertex="1" parent="hc06-board">
+          <mxGeometry x="20" y="360" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="hc-gnd" value="GND" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;strokeWidth=2;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#333333;align=center;verticalAlign=middle;" vertex="1" parent="hc06-board">
+          <mxGeometry x="20" y="460" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="hc-en" value="EN&lt;br&gt;leave open initially" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontFamily=Helvetica;fontSize=11;fontColor=#555555;align=center;verticalAlign=middle;" vertex="1" parent="hc06-board">
+          <mxGeometry x="150" y="550" width="160" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="hc-state" value="STATE&lt;br&gt;unused by firmware" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontFamily=Helvetica;fontSize=11;fontColor=#555555;align=center;verticalAlign=middle;" vertex="1" parent="hc06-board">
+          <mxGeometry x="150" y="600" width="160" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="divider-frame" value="3.3 V level divider" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;container=1;pointerEvents=0;fillColor=#fff8e1;strokeColor=#d6b656;strokeWidth=2;fontFamily=Helvetica;fontSize=14;fontStyle=1;fontColor=#7a4d00;align=center;verticalAlign=top;spacingTop=10;" vertex="1" parent="1">
+          <mxGeometry x="440" y="450" width="550" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="resistor-1k" value="1 k&#937;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#4b5563;strokeWidth=2;fontFamily=Helvetica;fontSize=13;fontStyle=1;fontColor=#1f2937;align=center;verticalAlign=middle;" vertex="1" parent="divider-frame">
+          <mxGeometry x="80" y="70" width="100" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="divider-junction" value="" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#2f6fab;strokeColor=#1f3a5f;strokeWidth=1;" vertex="1" parent="divider-frame">
+          <mxGeometry x="272" y="82" width="16" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="resistor-2k" value="2 k&#937;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#4b5563;strokeWidth=2;fontFamily=Helvetica;fontSize=13;fontStyle=1;fontColor=#1f2937;align=center;verticalAlign=middle;" vertex="1" parent="divider-frame">
+          <mxGeometry x="250" y="110" width="60" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="ground-bus" value="" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#4b5563;strokeColor=#4b5563;" vertex="1" parent="1">
+          <mxGeometry x="250" y="840" width="900" height="6" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend" value="Wire key" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;strokeWidth=1;fontFamily=Helvetica;fontSize=13;fontStyle=1;fontColor=#1f2937;verticalAlign=top;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="50" y="880" width="300" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-power" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d79b00;strokeColor=#d79b00;" vertex="1" parent="legend">
+          <mxGeometry x="15" y="40" width="32" height="7" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-power-label" value="5 V power" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=12;fontColor=#333333;" vertex="1" parent="legend">
+          <mxGeometry x="55" y="31" width="220" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-uart" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2f6fab;strokeColor=#2f6fab;" vertex="1" parent="legend">
+          <mxGeometry x="15" y="70" width="32" height="7" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-uart-label" value="UART signal" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=12;fontColor=#333333;" vertex="1" parent="legend">
+          <mxGeometry x="55" y="61" width="220" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-ground" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4b5563;strokeColor=#4b5563;" vertex="1" parent="legend">
+          <mxGeometry x="15" y="100" width="32" height="7" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-ground-label" value="Shared ground" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontFamily=Helvetica;fontSize=12;fontColor=#333333;" vertex="1" parent="legend">
+          <mxGeometry x="55" y="91" width="220" height="25" as="geometry" />
+        </mxCell>
+
+        <mxCell id="divider-note" value="&lt;b&gt;Why the divider works&lt;/b&gt;&lt;br&gt;5 V &#215; 2 k&#937; / (1 k&#937; + 2 k&#937;) &#8776; 3.3 V&lt;br&gt;&lt;font color=&quot;#8b1e1e&quot;&gt;Connect D4 only through the 1 k&#937; / 2 k&#937; divider.&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#82b366;strokeWidth=2;fontFamily=Helvetica;fontSize=13;fontColor=#315b25;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="390" y="880" width="580" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="capacitor-note" value="&lt;b&gt;Optional local decoupling&lt;/b&gt;&lt;br&gt;100 nF ceramic + 10&#8211;100 &#181;F electrolytic&lt;br&gt;across HC-06 VCC and GND" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontFamily=Helvetica;fontSize=12;fontColor=#7a4d00;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="880" width="350" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="wire-5v" value="5 V power" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontFamily=Helvetica;fontSize=12;fontColor=#7a4d00;labelBackgroundColor=#ffffff;strokeColor=#d79b00;strokeWidth=3;endArrow=none;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="ard-5v" target="hc-vcc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wire-txd" value="UART: HC-06 TXD &#8594; Arduino D3 RX" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontFamily=Helvetica;fontSize=12;fontColor=#1f3a5f;labelBackgroundColor=#ffffff;strokeColor=#2f6fab;strokeWidth=2;endArrow=block;endFill=1;endSize=8;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="hc-txd" target="ard-d3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wire-d4-r1" value="D4 TX" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontFamily=Helvetica;fontSize=12;fontColor=#1f3a5f;labelBackgroundColor=#ffffff;strokeColor=#2f6fab;strokeWidth=2;endArrow=none;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="ard-d4" target="resistor-1k">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wire-r1-rxd" value="3.3 V UART RX" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontFamily=Helvetica;fontSize=12;fontColor=#1f3a5f;labelBackgroundColor=#ffffff;strokeColor=#2f6fab;strokeWidth=2;endArrow=block;endFill=1;endSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="resistor-1k" target="hc-rxd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wire-node-r2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4b5563;strokeWidth=2;endArrow=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="divider-junction" target="resistor-2k">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wire-r2-gnd" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4b5563;strokeWidth=3;endArrow=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5222;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="resistor-2k" target="ground-bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wire-ard-gnd" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4b5563;strokeWidth=3;endArrow=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.0611;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ard-gnd" target="ground-bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="wire-hc-gnd" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4b5563;strokeWidth=3;endArrow=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.9889;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="hc-gnd" target="ground-bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

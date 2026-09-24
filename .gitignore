@@ -7,6 +7,7 @@ build/
 dist/
 Project Plan/
 backend/sql
+.playwright-mcp/
 
 
 # dotenv environment variable files

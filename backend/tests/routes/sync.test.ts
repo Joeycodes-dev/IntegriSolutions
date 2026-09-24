@@ -334,39 +334,52 @@ describe('Sync Routes', () => {
       expect(response.body.failed[0].error).toBe('Database error');
     });
 
-    it('should sync device-captured records with custody columns', async () => {
-      const insert = jest.fn().mockResolvedValue({ error: null });
-      mockServiceSupabase.from
-        .mockReturnValueOnce({
-          select: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
-              single: jest.fn().mockResolvedValue({ data: null, error: null }),
+    it.each(['ble', 'bluetooth_classic'])(
+      'should sync device-captured records over %s with custody columns',
+      async (transport) => {
+        const record = makeSyncRecord({
+          deviceTransport: transport,
+          deviceSerial: 'MQ3-0042',
+          deviceCalibrationVersion: 'mq3-default-v1+clean-air',
+          deviceCalibrationR0: 7524.99,
+          deviceSessionPeakRaw: 812,
+          deviceAvgRaw: 640,
+          deviceRaw: 623,
+          deviceCapturedAt: '2026-09-21T10:15:00.000Z',
+        });
+        const insert = jest.fn().mockResolvedValue({ error: null });
+        mockServiceSupabase.from
+          .mockReturnValueOnce({
+            select: jest.fn().mockReturnValue({
+              eq: jest.fn().mockReturnValue({
+                single: jest.fn().mockResolvedValue({ data: null, error: null }),
+              }),
             }),
+          })
+          .mockReturnValueOnce({ insert });
+
+        const response = await request(app)
+          .post('/api/sync')
+          .set('Authorization', 'Bearer token-123')
+          .send({ records: [record] });
+
+        expect(response.status).toBe(200);
+        expect(response.body.synced).toContain('test-123');
+        expect(response.body.failed).toHaveLength(0);
+        expect(insert).toHaveBeenCalledWith([
+          expect.objectContaining({
+            device_transport: transport,
+            device_serial: 'MQ3-0042',
+            device_calibration_version: 'mq3-default-v1+clean-air',
+            device_calibration_r0: 7524.99,
+            device_session_peak_raw: 812,
+            device_avg_raw: 640,
+            device_raw: 623,
+            device_captured_at: '2026-09-21T10:15:00.000Z',
           }),
-        })
-        .mockReturnValueOnce({ insert });
-
-      const response = await request(app)
-        .post('/api/sync')
-        .set('Authorization', 'Bearer token-123')
-        .send({ records: [deviceRecord] });
-
-      expect(response.status).toBe(200);
-      expect(response.body.synced).toContain('test-123');
-      expect(response.body.failed).toHaveLength(0);
-      expect(insert).toHaveBeenCalledWith([
-        expect.objectContaining({
-          device_transport: 'ble',
-          device_serial: 'MQ3-0042',
-          device_calibration_version: 'mq3-default-v1+clean-air',
-          device_calibration_r0: 7524.99,
-          device_session_peak_raw: 812,
-          device_avg_raw: 640,
-          device_raw: 623,
-          device_captured_at: '2026-09-21T10:15:00.000Z',
-        }),
-      ]);
-    });
+        ]);
+      }
+    );
 
     it('should omit device columns for legacy records without custody data', async () => {
       const insert = jest.fn().mockResolvedValue({ error: null });

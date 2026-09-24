@@ -197,6 +197,26 @@ describe('PDF layout (real jsPDF engine)', () => {
     expect(Math.max(...doc.yPositions)).toBeLessThanOrEqual(297);
   });
 
+  it('labels Bluetooth Classic SPP custody accurately in the PDF', async () => {
+    await generateEvidencePdf(
+      makeTest({
+        device: {
+          transport: 'bluetooth_classic',
+          serial: 'MQ3-0042',
+          calibrationVersion: 'mq3-default-v1',
+          calibrationR0: 7524.99,
+          sessionPeakRaw: 812,
+          avgRaw: 640,
+          raw: 623,
+          capturedAt: '2026-05-30T09:58:00Z'
+        }
+      })
+    );
+
+    const doc = wrappedJsPDFBox.value.instances[0];
+    expect(doc.textCalls).toContain('Bluetooth Classic (SPP)');
+  });
+
   it('marks simulated readings in the PDF custody block', async () => {
     await generateEvidencePdf(
       makeTest({

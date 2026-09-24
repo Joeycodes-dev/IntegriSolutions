@@ -12,6 +12,7 @@ export type AuditAction =
   | 'test.invalidation.failed'
   | 'sync.batch.completed'
   | 'sync.batch.failed'
+  | 'sync.batch.throttled'
   | 'alert.received'
   | 'alert.acknowledged.queued'
   | 'alert.acknowledged.synced';

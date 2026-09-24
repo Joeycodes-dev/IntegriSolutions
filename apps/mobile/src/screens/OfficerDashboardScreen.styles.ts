@@ -848,7 +848,135 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.6
   },
+  modalCloseButton: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -12,
+    marginRight: -12
+  },
+  bluetoothHelpText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 16
+  },
+  bluetoothLoading: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    marginBottom: 12
+  },
+  bluetoothLoadingText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600'
+  },
+  bluetoothErrorText: {
+    color: colors.error,
+    fontSize: 13,
+    lineHeight: 19,
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.error,
+    backgroundColor: colors.surfaceHighlight,
+    marginBottom: 12
+  },
+  bluetoothDeviceList: {
+    maxHeight: 220,
+    marginBottom: 8
+  },
+  bluetoothDeviceListContent: {
+    gap: 10
+  },
+  bluetoothDeviceOption: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.borderHighlight,
+    backgroundColor: colors.pageBackground
+  },
+  bluetoothDeviceIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceHighlight
+  },
+  bluetoothDeviceText: {
+    flex: 1
+  },
+  bluetoothDeviceName: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  bluetoothDeviceAddress: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 3
+  },
+  bluetoothModalActions: {
+    gap: 10,
+    marginTop: 8
+  },
+  bluetoothModalPrimaryButton: {
+    minHeight: 48,
+    borderRadius: 14,
+    backgroundColor: colors.primaryDark,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8
+  },
+  bluetoothModalPrimaryText: {
+    color: colors.background,
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  bluetoothModalSecondaryButton: {
+    minHeight: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.borderHighlight,
+    backgroundColor: colors.background,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8
+  },
+  bluetoothModalSecondaryText: {
+    color: colors.primaryDark,
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  androidOnlyHint: {
+    minHeight: 52,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.borderHighlight,
+    backgroundColor: colors.pageBackground,
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12
+  },
   deviceDisconnect: {
-    marginTop: 12
+    marginTop: 12,
+    minHeight: 48,
+    justifyContent: 'center'
   },
 });

@@ -71,7 +71,7 @@ interface DeviceCustody {
   deviceCapturedAt: string;
 }
 
-const DEVICE_TRANSPORTS = new Set(['ble', 'simulated']);
+const DEVICE_TRANSPORTS = new Set(['ble', 'bluetooth_classic', 'simulated']);
 
 function extractDeviceCustody(record: SyncRecord): DeviceCustody | null | 'invalid' {
   const hasDeviceFields =

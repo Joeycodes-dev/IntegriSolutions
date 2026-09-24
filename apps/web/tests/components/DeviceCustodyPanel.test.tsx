@@ -44,6 +44,16 @@ describe('DeviceCustodyPanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('identifies Bluetooth Classic SPP devices accurately', () => {
+    render(
+      <DeviceCustodyPanel
+        test={{ ...baseTest, device: { ...device, transport: 'bluetooth_classic' } }}
+      />
+    );
+
+    expect(screen.getByText('Bluetooth Classic (SPP)')).toBeInTheDocument();
+  });
+
   it('flags simulated devices and unknown serials', () => {
     render(
       <DeviceCustodyPanel

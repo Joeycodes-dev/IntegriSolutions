@@ -6,6 +6,7 @@ import {
   calibrationFromCleanAir,
   cleanAirRaw,
   formatBacGdl,
+  isBreathalyzerReadingFresh,
   parseBreathalyzerLine,
   rawToBacGdl,
   rawToRs,
@@ -163,6 +164,150 @@ describe('breathalyzer session', () => {
     expect(session.getSnapshot().connection).toBe('connected');
 
     await session.disconnect();
+  });
+
+  it('does not include warm-up readings in the subject peak', async () => {
+    const session = new BreathalyzerSession();
+    const transport = {
+      kind: 'bluetooth_classic' as const,
+      label: 'HC-06 Classic',
+      async connect() {},
+      async disconnect() {},
+      onLine(listener: (line: string) => void) {
+        listener('{"raw":900,"avg":850,"peak":850,"warm":true}');
+        listener('{"raw":300,"avg":280,"peak":280,"warm":false}');
+        return () => {};
+      }
+    };
+
+    await session.connect(transport);
+
+    expect(session.getSnapshot().sessionPeak).toBe(280);
+    expect(session.getSnapshot().peakBacGdl).not.toBeNull();
+  });
+
+  it('rejects captures when the latest device reading is stale', async () => {
+    const session = new BreathalyzerSession();
+    const transport = {
+      kind: 'bluetooth_classic' as const,
+      label: 'HC-06 Classic',
+      async connect() {},
+      async disconnect() {},
+      onLine(listener: (line: string) => void) {
+        listener('{"raw":300,"avg":280,"peak":280,"warm":false}');
+        return () => {};
+      }
+    };
+
+    await session.connect(transport);
+    const receivedAt = session.getSnapshot().lastReceivedAt;
+    expect(isBreathalyzerReadingFresh(receivedAt)).toBe(true);
+    expect(session.capture(Date.parse((receivedAt as string) ?? '') + 3_001)).toBeNull();
+  });
+
+  it('disconnects the previous transport before replacing it', async () => {
+    const session = new BreathalyzerSession();
+    const firstDisconnect = jest.fn().mockResolvedValue(undefined);
+    const firstTransport = {
+      kind: 'bluetooth_classic' as const,
+      label: 'First HC-06',
+      async connect() {},
+      disconnect: firstDisconnect,
+      onLine() {
+        return () => {};
+      }
+    };
+    const secondTransport = {
+      kind: 'bluetooth_classic' as const,
+      label: 'Second HC-06',
+      async connect() {},
+      async disconnect() {},
+      onLine() {
+        return () => {};
+      }
+    };
+
+    await session.connect(firstTransport);
+    await session.connect(secondTransport);
+
+    expect(firstDisconnect).toHaveBeenCalledTimes(1);
+    expect(session.getSnapshot().transportLabel).toBe('Second HC-06');
+  });
+
+  it('does not mark a connection successful after an immediate transport error', async () => {
+    const session = new BreathalyzerSession();
+    const handlers: { error?: (message: string) => void } = {};
+    const transport = {
+      kind: 'bluetooth_classic' as const,
+      label: 'Unstable HC-06',
+      async connect() {
+        handlers.error?.('HC-06 disconnected immediately.');
+      },
+      async disconnect() {},
+      onLine() {
+        return () => {};
+      },
+      onError(listener: (message: string) => void) {
+        handlers.error = listener;
+        return () => {
+          handlers.error = undefined;
+        };
+      }
+    };
+
+    await session.connect(transport);
+
+    expect(session.getSnapshot().connection).toBe('error');
+    expect(session.getSnapshot().error).toBe('HC-06 disconnected immediately.');
+  });
+
+  it('expires a connected session when telemetry becomes stale', async () => {
+    const session = new BreathalyzerSession();
+    const disconnect = jest.fn().mockResolvedValue(undefined);
+    const transport = {
+      kind: 'bluetooth_classic' as const,
+      label: 'HC-06',
+      async connect() {},
+      disconnect,
+      onLine(listener: (line: string) => void) {
+        listener('{"raw":300,"avg":280,"peak":280,"warm":false}');
+        return () => {};
+      }
+    };
+
+    await session.connect(transport);
+    const receivedAt = session.getSnapshot().lastReceivedAt as string;
+    session.expireIfStale(Date.parse(receivedAt) + 3_001);
+
+    expect(disconnect).toHaveBeenCalledTimes(1);
+    expect(session.getSnapshot().connection).toBe('error');
+    expect(session.getSnapshot().sessionPeak).toBeNull();
+  });
+
+  it('surfaces asynchronous transport disconnects as connection errors', async () => {
+    const session = new BreathalyzerSession();
+    const handlers: { error?: (message: string) => void } = {};
+    const transport = {
+      kind: 'bluetooth_classic' as const,
+      label: 'HC-06 Classic',
+      async connect() {},
+      async disconnect() {},
+      onLine() {
+        return () => {};
+      },
+      onError(listener: (message: string) => void) {
+        handlers.error = listener;
+        return () => {
+          handlers.error = undefined;
+        };
+      }
+    };
+
+    await session.connect(transport);
+    handlers.error?.('HC-06 disconnected.');
+
+    expect(session.getSnapshot().connection).toBe('error');
+    expect(session.getSnapshot().error).toBe('HC-06 disconnected.');
   });
 
   it('ignores malformed lines without breaking the stream', async () => {

@@ -53,9 +53,9 @@ From the repository root, use:
 
 The officer testing flow reads BAC from the breathalyzer device instead of generating it in-app.
 
-- Device firmware (Arduino + MQ-3 on A0, buzzer on D8) prints one JSON line per sample at 9600 baud:
+- Device firmware (Arduino + MQ-3 on A0, buzzer on D8) prints one JSON line per sample at 9600 baud to USB serial and an HC-06 Bluetooth Classic SPP link:
   `{"raw":512,"avg":498,"peak":640,"sn":"MQ3-0001","vout":2.503,"rs":998,"over":true,"alarm":true,"warm":false}`
-  (source: `firmware/breathalyzer/breathalyzer.ino`)
+  (source: `firmware/breathalyzer/breathalyzer.ino`; wiring and flashing: `firmware/breathalyzer/README.md`)
 - `src/services/breathalyzer.ts` parses those lines, converts raw counts to BAC and holds the session state
   (live BAC, session peak, captured reading, calibration).
 - `src/services/breathalyzerSimulator.ts` emits the same payload shape for development without hardware.
@@ -93,26 +93,26 @@ Calibration lives in `DEFAULT_BREATHALYZER_CALIBRATION`. The **Set clean-air bas
 the current clean-air reading and persists it; `A` and `B` are fitted against a reference measurement. Until
 that is done the reading is a screening estimate, not evidential-grade.
 
-### Enabling the real device (Bluetooth)
+### HC-06 Android connectivity
 
-The app currently ships with the simulated transport only; the device still talks over USB serial. To go wireless:
+The Android app now includes a native RFCOMM/SPP transport for the HC-06. It uses Android's standard Serial Port Profile UUID and does not depend on a BLE library. Because it is native code, the app must be rebuilt; Expo Go cannot load it.
 
-1. Add a BLE serial module to the Arduino (HM-10/AT-09/JDY-08) or move the sketch to an ESP32.
-2. `npm install react-native-ble-plx` and rebuild the dev client (`npm run android` / `npm run ios`).
-3. Add a `BreathalyzerTransport` implementation that scans for the Nordic UART service
-   (`6E400001-B5A3-F393-E0A9-E50E24DCCA9E`), subscribes to TX notifications, and forwards each line to the
-   session. Bluetooth Classic (HC-05) is not an option on iOS.
-4. Grant Android 12+ runtime permissions `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT` and iOS
-   `NSBluetoothAlwaysUsageDescription`.
+1. Build/run the Android development app with `npm run android` or an EAS development build.
+2. Pair the HC-06 from Android Bluetooth settings. Common default names are `HC-06`, `HC-06S`, or `ZS-040`; common PINs are `1234` and `0000`.
+3. In the officer workflow, tap **Connect HC-06**.
+4. Select the paired device from the picker. If it was paired after the picker opened, use **Refresh paired devices** or **Open Bluetooth settings**.
+5. The app opens the SPP socket at the firmware's `9600` baud stream rate, splits fragmented CRLF records, and forwards complete lines to `BreathalyzerSession`.
 
-Set `EXPO_PUBLIC_BREATHALYZER_SIMULATION=1` to keep the simulation available in non-dev builds (demo builds).
-Simulation is always available in development.
+Physical HC-06 captures use the explicit custody transport `bluetooth_classic`; they are never mislabeled as BLE. The backend accepts that value, and supervisor/PDF evidence labels it **Bluetooth Classic (SPP)**. The current custody schema still relies on the firmware `sn`; the selected Bluetooth MAC is not a cryptographic identity, so assign a unique serial to every physical unit and add device attestation before enforcement deployment.
+
+Android declares `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT`; the paired-device flow requests `BLUETOOTH_CONNECT` at runtime (Android 12+) and uses legacy Bluetooth permissions on older versions. The module must be paired through system settings before the app can connect.
+
+Set `EXPO_PUBLIC_BREATHALYZER_SIMULATION=1` to keep the **Simulate MQ-3 device** fallback available in non-dev builds. Simulation is always available in development and is marked distinctly in custody evidence.
 
 > **Beta builds:** the `preview` and `production` EAS profiles in `eas.json` currently set
-> `EXPO_PUBLIC_BREATHALYZER_SIMULATION=1` so testers can complete the officer workflow while the BLE
-> module is still in development. Remove it from those profiles once the real transport ships (and before
-> any public store submission). Simulated sessions are visibly marked ("CONNECT / SIMULATE BREATHALYZER",
-> "Simulated MQ-3 device") and synced records carry `transport: "simulated"`.
+> `EXPO_PUBLIC_BREATHALYZER_SIMULATION=1` so testers can fall back to simulation when the HC-06 is unavailable.
+> Keep this explicit until hardware rollout is complete, and before any public store submission. Simulated
+> sessions are visibly marked and synced records carry `transport: "simulated"`.
 >
 > Simulator behaviour (30 s breath cycle): after connecting, capture within the clean-air window
 > (~3–10 s, after the 3 s warm-up) for a low/PASS reading, or wait for the rise (~15–20 s in) to capture the
