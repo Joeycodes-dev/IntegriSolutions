@@ -25,8 +25,15 @@ export async function hashEvidenceFile(file: File | Blob): Promise<string> {
 
   // File.arrayBuffer() returns the underlying bytes. In particular, do not
   // read the file as text or hash a serialized FormData representation.
-  const bytes = await file.arrayBuffer();
-  const digest = await subtle.digest('SHA-256', bytes);
+  // Copy into a typed array created in this realm: jsdom/CI can return an
+  // ArrayBuffer from a different realm, which Node's WebCrypto rejects even
+  // though it has the correct bytes.
+  const rawBytes = await file.arrayBuffer();
+  const bytes = new Uint8Array(rawBytes.byteLength);
+  bytes.set(new Uint8Array(rawBytes));
+  const nodeBuffer = (globalThis as { Buffer?: { from(value: Uint8Array): Uint8Array } }).Buffer;
+  const digestInput = nodeBuffer ? nodeBuffer.from(bytes) : bytes;
+  const digest = await subtle.digest('SHA-256', digestInput);
   return bytesToHex(new Uint8Array(digest)).toLowerCase();
 }
 
