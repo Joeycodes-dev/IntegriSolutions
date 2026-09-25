@@ -280,6 +280,90 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.accentBlue
   },
+  recoveryCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: colors.alertHighBackground,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 14,
+    gap: 12
+  },
+  recoveryIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  recoveryBody: {
+    flex: 1
+  },
+  recoveryEyebrow: {
+    color: colors.alertHighAccent,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1
+  },
+  recoveryTitle: {
+    color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 3
+  },
+  recoveryDescription: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 4
+  },
+  recoveryMeta: {
+    color: colors.alertHighAccent,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 4
+  },
+  recoveryActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 11
+  },
+  recoveryPrimaryButton: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 11,
+    backgroundColor: colors.primaryDark,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 10
+  },
+  recoveryPrimaryText: {
+    color: colors.background,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.3
+  },
+  recoverySecondaryButton: {
+    minHeight: 38,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: colors.borderHighlight,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 13
+  },
+  recoverySecondaryText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700'
+  },
   statsRow: {
     flexDirection: 'row',
     gap: 10,

@@ -56,6 +56,28 @@ export function isRateLimitError(err: unknown): boolean {
   return err instanceof RateLimitError;
 }
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly retryable: boolean;
+
+  constructor(message: string, status: number, code = 'API_ERROR') {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.retryable = status === 408 || status === 425 || status >= 500;
+  }
+}
+
+export function isPermanentApiError(err: unknown): boolean {
+  return err instanceof ApiError && !err.retryable;
+}
+
+export function isRetryableApiError(err: unknown): boolean {
+  return err instanceof ApiError && err.retryable;
+}
+
 /**
  * Shared back-off window for the whole app. It has to be shared rather than
  * per-feature: if only the caller that hit the 429 slowed down, chat polling
@@ -104,8 +126,14 @@ async function waitForRateLimitWindow(): Promise<void> {
 }
 
 function extractErrorMessage(payload: unknown): string {
-  const candidate = (payload as { error?: unknown })?.error;
+  const candidate = (payload as { error?: unknown; message?: unknown })?.error
+    ?? (payload as { message?: unknown })?.message;
   return typeof candidate === 'string' && candidate.trim() ? candidate : 'API request failed';
+}
+
+function extractErrorCode(payload: unknown): string {
+  const candidate = (payload as { code?: unknown })?.code;
+  return typeof candidate === 'string' && candidate.trim() ? candidate : 'API_ERROR';
 }
 
 async function request<T>(path: string, options: RequestInit = {}, behavior: RequestBehavior = {}) {
@@ -177,7 +205,7 @@ async function request<T>(path: string, options: RequestInit = {}, behavior: Req
         if (response.status === 429) {
           throw new RateLimitError(retryMessage, registerRateLimit(response));
         }
-        throw new Error(`HTTP ${response.status}: ${retryMessage}`);
+        throw new ApiError(`HTTP ${response.status}: ${retryMessage}`, response.status, extractErrorCode(payload));
       }
 
       consecutiveRateLimits = 0;
@@ -187,10 +215,10 @@ async function request<T>(path: string, options: RequestInit = {}, behavior: Req
     if (response.status === 401 && EXPIRED_TOKEN_MESSAGE.test(errorMessage)) {
       await clearAccessToken();
       notifyAuthExpired(errorMessage);
-      throw new Error('Session expired. Please sign in again.');
+      throw new ApiError('Session expired. Please sign in again.', 401, 'AUTH_EXPIRED');
     }
 
-    throw new Error(`HTTP ${response.status}: ${errorMessage}`);
+    throw new ApiError(`HTTP ${response.status}: ${errorMessage}`, response.status, extractErrorCode(payload));
   }
 
   consecutiveRateLimits = 0;
@@ -216,7 +244,13 @@ export async function getRuntimeConfig() {
 }
 
 export async function syncRecords(records: Record<string, unknown>[]) {
-  return request<{ synced: string[]; failed: { id: string; error: string }[]; duplicates: string[] }>('/sync', {
+  return request<{
+    synced: string[];
+    failed: { id: string; error: string; code?: string; retryable?: boolean }[];
+    duplicates: string[];
+    duplicateReceipts?: Record<string, string | null>;
+    receipts?: Record<string, string | null>;
+  }>('/sync', {
     method: 'POST',
     body: JSON.stringify({ records })
   });
@@ -225,60 +259,39 @@ export async function syncRecords(records: Record<string, unknown>[]) {
 export async function uploadEvidencePhoto(
   testId: string,
   photoUri: string,
-  category?: string
+  category: string | undefined,
+  integrity: { idempotencyKey: string; contentHash: string }
 ) {
-  const token = await getAccessToken();
-  const url = `${API_BASE_URL}/evidence/${testId}`;
+  if (!integrity || !/^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/.test(integrity.idempotencyKey) || !/^[a-f0-9]{64}$/i.test(integrity.contentHash)) {
+    throw new Error('Evidence upload requires a valid idempotency key and SHA-256 content hash.');
+  }
 
   const formData = new FormData();
 
-  if (category) {
-    formData.append('category', category);
-  }
+  if (category) formData.append('category', category);
+  formData.append('idempotencyKey', integrity.idempotencyKey);
+  formData.append('contentHash', integrity.contentHash);
 
   if (Platform.OS === 'web') {
     const imageResponse = await fetch(photoUri);
     const blob = await imageResponse.blob();
-    formData.append('photo', blob, `${testId}-${Date.now()}.jpg`);
+    formData.append('photo', blob, `${testId}-${integrity.idempotencyKey}.jpg`);
   } else {
     formData.append('photo', {
       uri: photoUri,
       type: 'image/jpeg',
-      name: `${testId}-${Date.now()}.jpg`
+      name: `${testId}-${integrity.idempotencyKey}.jpg`
     } as any);
   }
 
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      },
-      body: formData
-    });
-  } catch (error) {
-    throw new Error(
-      `Network error requesting ${API_BASE_URL}/evidence/${testId}: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-
-  const payload = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    const errorMessage = extractErrorMessage(payload);
-    if (response.status === 429) {
-      throw new RateLimitError(errorMessage, registerRateLimit(response));
-    }
-    if (response.status === 401 && EXPIRED_TOKEN_MESSAGE.test(errorMessage)) {
-      await clearAccessToken();
-      notifyAuthExpired(errorMessage);
-      throw new Error('Evidence upload deferred: session expired. Sign in again to upload photos.');
-    }
-    throw new Error(`HTTP ${response.status}: ${errorMessage || 'Photo upload failed'}`);
-  }
-
-  return payload;
+  return request<Record<string, unknown>>(`/evidence/${testId}`, {
+    method: 'POST',
+    headers: {
+      'Idempotency-Key': integrity.idempotencyKey,
+      'X-Content-SHA256': integrity.contentHash
+    },
+    body: formData
+  });
 }
 
 export async function invalidateTest(testId: string, reason: string, actor?: AuditActor) {

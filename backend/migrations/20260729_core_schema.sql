@@ -82,6 +82,15 @@ CREATE TABLE IF NOT EXISTS tests (
   result TEXT NOT NULL CHECK (result IN ('pass', 'fail')),
   location TEXT NOT NULL,
   hash TEXT NOT NULL,
+  receipt_number TEXT,
+  device_transport TEXT,
+  device_serial TEXT,
+  device_calibration_version TEXT,
+  device_calibration_r0 DOUBLE PRECISION,
+  device_session_peak_raw DOUBLE PRECISION,
+  device_avg_raw DOUBLE PRECISION,
+  device_raw DOUBLE PRECISION,
+  device_captured_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL,
   original_test_id TEXT
 );
@@ -89,6 +98,9 @@ CREATE TABLE IF NOT EXISTS tests (
 CREATE INDEX IF NOT EXISTS idx_tests_created_at ON tests (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tests_officer_id ON tests (officer_id);
 CREATE INDEX IF NOT EXISTS idx_tests_result ON tests (result);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tests_receipt_number
+  ON tests (receipt_number)
+  WHERE receipt_number IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION prevent_tests_mutation()
 RETURNS trigger

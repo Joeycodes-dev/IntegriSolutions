@@ -12,9 +12,16 @@ import {
   getNewestSyncedAt,
   resetFailedToPending,
   resetFailedAttachmentsToPending,
+  retryFailedSyncRecord,
+  resetAttachmentToPending,
   type LocalTestRecord
 } from '../db/repository';
-import { syncPendingRecords, syncPendingAlertAcks } from '../services/sync';
+import {
+  syncPendingRecordsInternal,
+  syncPendingAlertAcksInternal,
+  type SyncScope,
+} from '../services/sync';
+import { syncCoordinator } from './SyncCoordinator';
 import { getRateLimitCooldownMs } from '../services/api';
 import { useAuth } from '../lib/AuthContext';
 
@@ -63,6 +70,8 @@ type SyncContextType = {
   databaseError: string | null;
   syncNow: () => Promise<SyncRunSummary>;
   retryFailed: () => Promise<SyncRunSummary>;
+  retryRecord: (recordId: string) => Promise<SyncRunSummary>;
+  retryEvidence: (attachmentId: string) => Promise<SyncRunSummary>;
   forceSync: () => Promise<SyncRunSummary>;
   refreshCounts: () => Promise<void>;
 };
@@ -143,7 +152,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const [lastAttemptAt, setLastAttemptAt] = useState<Date | null>(null);
   const [lastRun, setLastRun] = useState<SyncRunSummary | null>(null);
   const [databaseError, setDatabaseError] = useState<string | null>(null);
-  const isSyncingRef = useRef(false);
+  const autoSyncQueuedRef = useRef(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refreshNetworkStatus = useCallback(async (): Promise<SyncNetworkStatus> => {
@@ -204,14 +213,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     }
   }, [profile?.officerId]);
 
-  const executeSync = useCallback(async (): Promise<SyncRunSummary> => {
+  const runSyncScope = useCallback(async (scope: SyncScope): Promise<SyncRunSummary> => {
     const startedAt = new Date().toISOString();
-    if (isSyncingRef.current) {
-      return summary('deferred', 'A sync is already running.', startedAt, {
-        deferred: 1,
-      });
-    }
-
     const status = await refreshNetworkStatus();
     if (status === 'offline') {
       const result = summary(
@@ -248,20 +251,20 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       return result;
     }
 
-    isSyncingRef.current = true;
     setIsSyncing(true);
     setLastAttemptAt(new Date(startedAt));
 
     try {
       const officerId = profile?.officerId ?? null;
-      const result = await syncPendingRecords(officerId);
+      const result = await syncPendingRecordsInternal(officerId, scope);
       const hasAuthFailure =
         isAuthErrorMessage(result.runError) ||
         result.failed.some((failure) => isAuthErrorMessage(failure.error)) ||
         result.attachmentResults.some((item) => isAuthErrorMessage(item.error));
-      const alertResult = hasAuthFailure
-        ? { synced: [], failed: [], errors: [] }
-        : await syncPendingAlertAcks(officerId);
+      const shouldSyncAlerts = scope.kind === 'all' && !hasAuthFailure && getRateLimitCooldownMs() === 0;
+      const alertResult = shouldSyncAlerts
+        ? await syncPendingAlertAcksInternal(officerId)
+        : { synced: [], failed: [], errors: [] };
 
       const evidenceUploaded = result.attachmentResults.filter((item) => item.status === 'synced').length;
       const evidencePending = result.attachmentResults.filter((item) => item.status === 'pending').length;
@@ -271,8 +274,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       ).length;
       const alertFailed = Math.max(0, alertResult.failed.length - alertDeferred);
       const failed = result.failed.length + evidenceFailed + alertFailed;
-      const deferred =
-        result.deferred.length + evidencePending + alertDeferred;
+      const deferred = result.deferred.length + evidencePending + alertDeferred;
       const runStatus: SyncRunStatus = hasAuthFailure
         ? 'auth_required'
         : failed > 0
@@ -286,9 +288,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           ? `${result.failed.length} record${result.failed.length === 1 ? '' : 's'}, ${evidenceFailed} evidence item${evidenceFailed === 1 ? '' : 's'}, and ${alertFailed} alert action${alertFailed === 1 ? '' : 's'} need attention.`
           : deferred > 0
             ? 'Some work is waiting for the network or server rate limit.'
-            : result.attempted === 0 && evidenceUploaded === 0 && alertResult.synced.length === 0
-              ? 'Everything on this device is up to date.'
-              : `${result.synced.length} record${result.synced.length === 1 ? '' : 's'} and ${evidenceUploaded} evidence item${evidenceUploaded === 1 ? '' : 's'} uploaded.`;
+            : scope.kind === 'selected'
+              ? 'Selected sync item completed.'
+              : result.attempted === 0 && evidenceUploaded === 0 && alertResult.synced.length === 0
+                ? 'Everything on this device is up to date.'
+                : `${result.synced.length} record${result.synced.length === 1 ? '' : 's'} and ${evidenceUploaded} evidence item${evidenceUploaded === 1 ? '' : 's'} uploaded.`;
 
       const run = summary(runStatus, runMessage, startedAt, {
         attempted: result.attempted,
@@ -313,23 +317,47 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       setLastRun(run);
       return run;
     } finally {
-      isSyncingRef.current = false;
       setIsSyncing(false);
       await refreshCounts();
     }
   }, [profile?.officerId, refreshCounts, refreshNetworkStatus, token]);
 
+  const executeSync = useCallback(
+    (scope: SyncScope = { kind: 'all' }) => syncCoordinator.run(() => runSyncScope(scope)),
+    [runSyncScope],
+  );
+
+  const requestAutomaticSync = useCallback(() => {
+    if (autoSyncQueuedRef.current) return;
+    autoSyncQueuedRef.current = true;
+    void executeSync().finally(() => {
+      autoSyncQueuedRef.current = false;
+    });
+  }, [executeSync]);
+
   const syncNow = useCallback(() => executeSync(), [executeSync]);
 
-  const retryFailed = useCallback(async () => {
+  const retryFailed = useCallback(() => syncCoordinator.run(async () => {
     const officerId = profile?.officerId ?? null;
     await Promise.all([
       resetFailedToPending(officerId),
       resetFailedAttachmentsToPending(officerId),
     ]);
     await refreshCounts();
-    return executeSync();
-  }, [executeSync, profile?.officerId, refreshCounts]);
+    return runSyncScope({ kind: 'all' });
+  }), [profile?.officerId, refreshCounts, runSyncScope]);
+
+  const retryRecord = useCallback((recordId: string) => syncCoordinator.run(async () => {
+    await retryFailedSyncRecord(recordId, profile?.officerId ?? null);
+    await refreshCounts();
+    return runSyncScope({ kind: 'selected', recordIds: [recordId] });
+  }), [profile?.officerId, refreshCounts, runSyncScope]);
+
+  const retryEvidence = useCallback((attachmentId: string) => syncCoordinator.run(async () => {
+    await resetAttachmentToPending(attachmentId, profile?.officerId ?? null);
+    await refreshCounts();
+    return runSyncScope({ kind: 'selected', attachmentIds: [attachmentId] });
+  }), [profile?.officerId, refreshCounts, runSyncScope]);
 
   const forceSync = useCallback(() => syncNow(), [syncNow]);
 
@@ -340,23 +368,23 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     intervalRef.current = setInterval(() => {
-      void executeSync();
+      void requestAutomaticSync();
     }, SYNC_INTERVAL_MS);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [executeSync]);
+  }, [requestAutomaticSync]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
         void refreshCounts();
-        void executeSync();
+        void requestAutomaticSync();
       }
     });
     return () => subscription.remove();
-  }, [executeSync, refreshCounts]);
+  }, [refreshCounts, requestAutomaticSync]);
 
   return (
     <SyncContext.Provider
@@ -379,6 +407,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         databaseError,
         syncNow,
         retryFailed,
+        retryRecord,
+        retryEvidence,
         forceSync,
         refreshCounts
       }}

@@ -64,6 +64,8 @@ const pendingAttachment = {
   testId: 'test-1',
   category: 'licence_front',
   uri: 'file:///licence.jpg',
+  idempotencyKey: 'evidence-att-1',
+  contentHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   syncStatus: 'pending_sync' as const,
   retryCount: 0,
   createdAt: '2026-08-01T10:00:01Z',
@@ -98,7 +100,11 @@ describe('syncPendingRecords attachment handling', () => {
     expect(apiMock.uploadEvidencePhoto).toHaveBeenCalledWith(
       'test-1',
       'file:///licence.jpg',
-      'licence_front'
+      'licence_front',
+      {
+        idempotencyKey: 'evidence-att-1',
+        contentHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      }
     );
     expect(repositoryMock.markAttachmentSyncSuccess).toHaveBeenCalledWith(
       'att-1',
@@ -112,6 +118,41 @@ describe('syncPendingRecords attachment handling', () => {
         status: 'synced',
       }),
     ]);
+  });
+
+  it('uploads only the selected record and its dependent evidence', async () => {
+    const otherTest = { ...pendingTest, id: 'test-2' };
+    const otherAttachment = {
+      ...pendingAttachment,
+      id: 'att-2',
+      testId: 'test-2',
+      idempotencyKey: 'evidence-att-2',
+    };
+    repositoryMock.getPendingSync.mockResolvedValue([pendingTest, otherTest]);
+    repositoryMock.getPendingAttachments.mockResolvedValue([pendingAttachment, otherAttachment]);
+    repositoryMock.getTestById.mockResolvedValue({ ...pendingTest, syncStatus: 'synced' });
+    apiMock.syncRecords.mockResolvedValue({
+      synced: ['test-1'],
+      failed: [],
+      duplicates: [],
+    });
+
+    const result = await syncPendingRecords(1, {
+      kind: 'selected',
+      recordIds: ['test-1'],
+    });
+
+    expect(apiMock.syncRecords).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'test-1' }),
+    ]);
+    expect(apiMock.uploadEvidencePhoto).toHaveBeenCalledTimes(1);
+    expect(apiMock.uploadEvidencePhoto).toHaveBeenCalledWith(
+      'test-1',
+      'file:///licence.jpg',
+      'licence_front',
+      expect.objectContaining({ idempotencyKey: 'evidence-att-1' }),
+    );
+    expect(result.attempted).toBe(1);
   });
 
   it('keeps a transient upload pending without consuming retry budget', async () => {
@@ -185,7 +226,11 @@ describe('syncPendingRecords attachment handling', () => {
     expect(apiMock.uploadEvidencePhoto).toHaveBeenCalledWith(
       'test-1',
       'file:///licence.jpg',
-      'licence_front'
+      'licence_front',
+      {
+        idempotencyKey: 'evidence-att-1',
+        contentHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      }
     );
     expect(result.attachmentResults).toHaveLength(1);
     expect(result.attachmentResults[0].status).toBe('synced');
@@ -205,12 +250,20 @@ describe('syncPendingRecords attachment handling', () => {
     expect(apiMock.uploadEvidencePhoto).toHaveBeenCalledWith(
       'test-1',
       'file:///licence.jpg',
-      'licence_front'
+      'licence_front',
+      {
+        idempotencyKey: 'evidence-att-1',
+        contentHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      }
     );
     expect(apiMock.uploadEvidencePhoto).toHaveBeenCalledWith(
       'already-synced',
       'file:///licence.jpg',
-      'licence_front'
+      'licence_front',
+      {
+        idempotencyKey: 'evidence-att-1',
+        contentHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      }
     );
     expect(result.attachmentResults).toHaveLength(2);
   });

@@ -40,8 +40,8 @@ Admins are stored in `admin_users`. Supervisors are stored in `supervisor_users`
      (creates `audit_logs`, `annotations`, `evidence`, and the `evidence` storage bucket)
     - `migrations/20260731_shift_roadblock_operations.sql`  
        (creates supervisor roadblock shifts and officer assignments)
-   - `sql/migration_add_device_custody_columns.sql`  
-     (adds breathalyzer custody columns to `tests` — required before officer apps can sync device-captured readings)
+   - `migrations/20260925_sync_evidence_integrity.sql`
+     (adds the tracked device-custody columns, local receipt metadata, and evidence idempotency/content-hash fields; run after the base schema)
 
 Note: **Test records cannot be updated or deleted** (WORM triggers). Account status is updated via:
 - `PATCH /api/admin/users/:id` (activate/deactivate supervisors & admins)

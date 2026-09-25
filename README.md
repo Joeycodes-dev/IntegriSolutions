@@ -142,6 +142,7 @@ In your Supabase project, open the **SQL Editor** and run these files **in order
 8. `backend/migrations/20260802_evidence_categories.sql` — evidence photo categories
 9. `backend/migrations/20260802_court_verification.sql` — court verification tokens for PDF QR codes
 10. `backend/migrations/20260803_admin_configuration.sql` — editable admin configuration registry (session timeout, export governance, alert thresholds, BAC limits)
+11. `backend/migrations/20260925_sync_evidence_integrity.sql` — additive receipt, device-custody, evidence idempotency, and content-hash metadata
 
 **Important:** DUI test records cannot be edited or deleted (WORM). Status updates use account APIs instead (`PATCH` portal users / field officers).
 
@@ -172,7 +173,8 @@ All endpoints except `/api/auth/login`, `/api/auth/register`, and invite accepta
 | `POST` | `/api/auth/officer-invite` | Accept officer invite + set password | Public |
 | `POST` | `/api/auth/supervisor-invite` | Accept supervisor invite + set password | Public |
 | `GET` | `/api/tests` | List enforcement test records | Authenticated |
-| `POST` | `/api/sync` | Sync offline officer captures | Officer |
+| `POST` | `/api/sync` | Sync offline officer captures (record ID + stored hash duplicate check) | Officer |
+| `POST` | `/api/evidence/:testId` | Upload evidence with `Idempotency-Key` and `X-Content-SHA256` | Authenticated |
 | `POST` | `/api/scan` | Parse on-device OCR text from a photographed licence (body: `{ "text": "...", "retry": false }`) | Officer |
 | `GET` | `/api/shifts/active` | List active roadblock shifts assigned to the signed-in officer | Officer |
 | `GET` | `/api/supervisor/shifts` | List roadblock shift assignments | Supervisor |

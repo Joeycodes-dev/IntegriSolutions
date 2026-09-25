@@ -13,6 +13,7 @@ import { styles } from './OfficerHome.styles';
 import { colors } from '../styles/colors';
 import { formatApproxDistance } from '../lib/geoDistance';
 import { alertPriorityStyle } from '../lib/alertPriorityStyle';
+import type { ActiveTestDraftPayload } from '../lib/activeTestDraft';
 
 interface Props {
   profile: UserProfile;
@@ -46,6 +47,10 @@ interface Props {
   featuredAlertDistanceMeters?: number | null;
   onAcknowledgeAlert?: (alertId: string) => Promise<void> | void;
   onViewAlerts?: () => void;
+  recoverableDraft?: ActiveTestDraftPayload | null;
+  draftRecoveryIssue?: { message: string; updatedAt: string } | null;
+  onResumeDraft?: () => void;
+  onDiscardDraft?: () => void;
 }
 
 type DutyStatus = 'on' | 'off' | 'break';
@@ -77,6 +82,17 @@ function formatLastSync(d: Date | null): string {
     year: 'numeric',
     month: 'short',
     day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+function formatDraftUpdatedAt(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'Recently';
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
   });
@@ -124,7 +140,11 @@ export function OfficerHome({
   featuredAlertIsNearby = false,
   featuredAlertDistanceMeters = null,
   onAcknowledgeAlert,
-  onViewAlerts
+  onViewAlerts,
+  recoverableDraft = null,
+  draftRecoveryIssue = null,
+  onResumeDraft,
+  onDiscardDraft
 }: Props) {
   const [acknowledging, setAcknowledging] = useState(false);
 
@@ -199,6 +219,59 @@ export function OfficerHome({
           </View>
         </View>
       </View>
+
+      {(recoverableDraft || draftRecoveryIssue) && (
+        <View style={styles.recoveryCard}>
+          <View style={styles.recoveryIconWrap}>
+            <Feather
+              name={draftRecoveryIssue ? 'alert-triangle' : 'rotate-ccw'}
+              size={19}
+              color={draftRecoveryIssue ? colors.error : colors.primaryDark}
+            />
+          </View>
+          <View style={styles.recoveryBody}>
+            <Text style={styles.recoveryEyebrow}>UNFINISHED TEST</Text>
+            <Text style={styles.recoveryTitle}>
+              {draftRecoveryIssue ? 'Saved test needs attention' : 'Resume current test'}
+            </Text>
+            <Text style={styles.recoveryDescription} numberOfLines={2}>
+              {draftRecoveryIssue
+                ? draftRecoveryIssue.message
+                : `${recoverableDraft?.scannedData
+                    ? `${recoverableDraft.scannedData.name} ${recoverableDraft.scannedData.surname}`
+                    : 'Identity not captured yet'} · ${recoverableDraft?.step === 'reading' ? 'Reading' : 'Licence scan'} · Updated ${formatDraftUpdatedAt(recoverableDraft?.updatedAt ?? '')}`}
+            </Text>
+            {recoverableDraft ? (
+              <Text style={styles.recoveryMeta}>
+                {recoverableDraft.officerNotes.trim() ? 'Notes saved' : 'No notes'} · {recoverableDraft.attachments.length} attachment{recoverableDraft.attachments.length === 1 ? '' : 's'} · {recoverableDraft.bacReading ? 'BAC saved' : 'Awaiting BAC'}
+              </Text>
+            ) : null}
+            <View style={styles.recoveryActions}>
+              {recoverableDraft && onResumeDraft ? (
+                <Pressable
+                  style={styles.recoveryPrimaryButton}
+                  onPress={onResumeDraft}
+                  accessibilityRole="button"
+                  accessibilityLabel="Resume current test"
+                >
+                  <Feather name="play" size={13} color={colors.background} />
+                  <Text style={styles.recoveryPrimaryText}>RESUME CURRENT TEST</Text>
+                </Pressable>
+              ) : null}
+              {onDiscardDraft ? (
+                <Pressable
+                  style={styles.recoverySecondaryButton}
+                  onPress={onDiscardDraft}
+                  accessibilityRole="button"
+                  accessibilityLabel="Discard unfinished test"
+                >
+                  <Text style={styles.recoverySecondaryText}>Discard</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+        </View>
+      )}
 
       <View style={styles.syncCard}>
         <View style={styles.syncCardLeft}>

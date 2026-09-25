@@ -3,17 +3,23 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 jest.mock('../../src/db/client', () => require('../../src/db/client.web'));
 
 import {
+  deleteActiveTestDraft,
   getAttachmentStatusCounts,
   getAuditEventsByAction,
   getFailedSync,
+  getLatestActiveTestDraft,
   getNewestSyncedAt,
   getPendingSync,
   getSyncEvidenceAttachments,
   insertAuditEvent,
   insertEvidenceAttachment,
   insertTest,
+  insertTestWithAttachments,
+  getAttachmentsByTest,
+  updateEvidenceIntegrity,
   markAttachmentSyncSuccess,
   markSyncSuccess,
+  saveActiveTestDraft,
   recordAttachmentSyncAttempt,
   recordSyncAttempt,
   resetFailedAttachmentsToPending,
@@ -87,6 +93,39 @@ describe('sync diagnostics repository web shim', () => {
     await expect(getNewestSyncedAt(1)).resolves.toEqual(new Date('2026-09-24T10:06:00.000Z'));
   });
 
+  it('writes a receipt and evidence integrity metadata in one bundle and protects it from overwrite', async () => {
+    await insertTestWithAttachments(
+      makeRecord({ id: 'bundle-1', receiptNumber: 'IS-20260924-ABCDEF123456' }),
+      [{
+        id: 'bundle-evidence-1',
+        testId: 'bundle-1',
+        category: 'licence_front',
+        uri: 'file:///bundle.jpg',
+        idempotencyKey: 'evidence-bundle-evidence-1',
+        contentHash: 'a'.repeat(64),
+        syncStatus: 'pending_sync',
+        retryCount: 0,
+        createdAt: '2026-09-24T10:01:00.000Z',
+        syncedAt: null,
+      }],
+    );
+
+    expect((await getAttachmentsByTest('bundle-1'))[0]).toMatchObject({
+      idempotencyKey: 'evidence-bundle-evidence-1',
+      contentHash: 'a'.repeat(64),
+    });
+
+    await updateEvidenceIntegrity(
+      'bundle-evidence-1',
+      'evidence-different',
+      'b'.repeat(64),
+    );
+    expect((await getAttachmentsByTest('bundle-1'))[0]).toMatchObject({
+      idempotencyKey: 'evidence-bundle-evidence-1',
+      contentHash: 'a'.repeat(64),
+    });
+  });
+
   it('tracks evidence independently and re-queues it even when its parent failed', async () => {
     await insertTest(makeRecord({ id: 'parent-1', syncStatus: 'failed' }));
     await insertEvidenceAttachment({
@@ -148,6 +187,49 @@ describe('sync diagnostics repository web shim', () => {
 
     await expect(getNewestSyncedAt(1)).resolves.toEqual(new Date('2026-09-24T10:08:00.000Z'));
     expect(await getAttachmentStatusCounts(1)).toEqual({ synced: 1, pending: 0, failed: 0 });
+  });
+
+  it('persists one owner-scoped active draft and cleans up superseded rows', async () => {
+    const owner = {
+      ownerKey: 'officer:1',
+      officerId: 1,
+      officerUid: 'officer-uid-1',
+    };
+    await saveActiveTestDraft({
+      id: 'draft-1',
+      owner,
+      driverData: JSON.stringify({ draftId: 'draft-1', version: 1 }),
+      step: 'scan',
+      payloadVersion: 1,
+      createdAt: '2026-09-24T10:00:00.000Z',
+      updatedAt: '2026-09-24T10:01:00.000Z',
+    });
+    await saveActiveTestDraft({
+      id: 'draft-1',
+      owner,
+      driverData: JSON.stringify({ draftId: 'draft-1', version: 1, notes: 'updated' }),
+      step: 'reading',
+      payloadVersion: 1,
+      createdAt: '2026-09-24T10:00:00.000Z',
+      updatedAt: '2026-09-24T10:02:00.000Z',
+    });
+    await saveActiveTestDraft({
+      id: 'draft-2',
+      owner,
+      driverData: JSON.stringify({ draftId: 'draft-2', version: 1 }),
+      step: 'scan',
+      payloadVersion: 1,
+      createdAt: '2026-09-24T10:03:00.000Z',
+      updatedAt: '2026-09-24T10:03:00.000Z',
+    });
+
+    await expect(getLatestActiveTestDraft(owner)).resolves.toMatchObject({
+      id: 'draft-2',
+      step: 'scan',
+      createdAt: '2026-09-24T10:03:00.000Z',
+    });
+    await deleteActiveTestDraft('draft-2', owner);
+    await expect(getLatestActiveTestDraft(owner)).resolves.toBeNull();
   });
 
   it('loads bounded sync and alert activity for the Activity tab', async () => {

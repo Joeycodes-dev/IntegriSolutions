@@ -39,11 +39,19 @@ CREATE TABLE IF NOT EXISTS evidence (
   photo_url TEXT NOT NULL,
   notes TEXT,
   uploaded_by TEXT NOT NULL,
+  idempotency_key TEXT,
+  content_hash TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_evidence_test_id ON evidence (test_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_created_at ON evidence (created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_test_idempotency
+  ON evidence (test_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_evidence_content_hash
+  ON evidence (content_hash)
+  WHERE content_hash IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- Storage bucket for evidence photos (public read for supervisor PDF/UI)

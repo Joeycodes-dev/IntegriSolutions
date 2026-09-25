@@ -12,6 +12,7 @@ type LocalTestRecord = {
   result: string;
   location: string;
   hash: string;
+  receiptNumber?: string | null;
   syncStatus: SyncStatus;
   createdAt: string;
   syncedAt: string | null;
@@ -33,9 +34,13 @@ type LocalTestRecord = {
 type LocalDraft = {
   id: string;
   officerId: number | null;
+  ownerKey?: string | null;
   driverData: string;
   step: "scan" | "reading";
+  payloadVersion?: number;
+  status?: "active" | "discarded" | "committed";
   createdAt: string;
+  updatedAt?: string | null;
 };
 
 type AuditEvent = {
@@ -58,6 +63,8 @@ type LocalEvidenceAttachment = {
   testId: string;
   category: string;
   uri: string;
+  idempotencyKey?: string | null;
+  contentHash?: string | null;
   syncStatus: SyncStatus;
   retryCount: number;
   createdAt: string;
@@ -125,6 +132,24 @@ function saveState(state: WebDbState): void {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+let transactionState: WebDbState | null = null;
+let transactionTail: Promise<void> = Promise.resolve();
+
+function cloneState(state: WebDbState): WebDbState {
+  return {
+    tests: [...state.tests],
+    drafts: [...state.drafts],
+    audit_events: [...state.audit_events],
+    evidence_attachments: [...state.evidence_attachments],
+    alert_cache: [...state.alert_cache],
+    alert_ack_queue: [...state.alert_ack_queue],
+  };
+}
+
+function persistRunState(state: WebDbState): void {
+  if (!transactionState) saveState(state);
+}
+
 function matchesOfficer(row: { officerId: number | null }, officerId?: number | null) {
   if (officerId !== undefined) {
     if (officerId === null) return row.officerId === null;
@@ -151,8 +176,26 @@ const webDb = {
 
   async closeAsync(): Promise<void> {},
 
+  async withTransactionAsync(task: () => Promise<void>): Promise<void> {
+    // The web shim has no SQLite lock. Serialize transactions so two async
+    // callers cannot overwrite one another's working state in localStorage.
+    const run = transactionTail.then(async () => {
+      const workingState = cloneState(loadState());
+      transactionState = workingState;
+      try {
+        await task();
+        saveState(workingState);
+      } finally {
+        transactionState = null;
+      }
+    });
+    transactionTail = run.catch(() => undefined);
+    return run;
+  },
+
   async runAsync(sql: string, params: unknown[] = []): Promise<void> {
-    const state = loadState();
+    const normalizedSql = sql.replace(/\s+/g, " ").trim();
+    const state = transactionState ?? loadState();
 
     if (sql.startsWith("INSERT INTO tests")) {
       const record = {
@@ -181,10 +224,23 @@ const webDb = {
         deviceAvgRaw: (params[22] as number | null) ?? null,
         deviceRaw: (params[23] as number | null) ?? null,
         deviceCapturedAt: (params[24] as string | null) ?? null,
+        receiptNumber: (params[25] as string | null) ?? null,
       } satisfies LocalTestRecord;
+      const existing = state.tests.find((item) => item.id === record.id);
+      if (existing) {
+        const receiptConflict = Boolean(
+          existing.receiptNumber &&
+          record.receiptNumber &&
+          existing.receiptNumber !== record.receiptNumber
+        );
+        if (existing.hash !== record.hash || existing.officerId !== record.officerId || receiptConflict) {
+          throw new Error("A different test already uses this planned test ID.");
+        }
+        return;
+      }
       state.tests = state.tests.filter((item) => item.id !== record.id);
       state.tests.push(record);
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -193,7 +249,7 @@ const webDb = {
       state.tests = state.tests.map((item) =>
         item.id === id ? { ...item, syncStatus, syncedAt, retryCount: 0 } : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -204,7 +260,7 @@ const webDb = {
           ? { ...item, syncStatus, retryCount: item.retryCount + 1 }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -215,7 +271,7 @@ const webDb = {
           ? { ...item, syncStatus: "synced", syncedAt, retryCount: 0, lastError: null, lastAttemptAt }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -238,7 +294,22 @@ const webDb = {
             }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
+      return;
+    }
+
+    if (normalizedSql.startsWith("UPDATE tests SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL WHERE id = ? AND syncStatus = 'failed'")) {
+      const [id, scopedOfficerId] = params as [string, number | null | undefined];
+      state.tests = state.tests.map((item) =>
+        item.id === id &&
+        item.syncStatus === "failed" &&
+        (scopedOfficerId === undefined ||
+          item.officerId === scopedOfficerId ||
+          item.officerId === null)
+          ? { ...item, syncStatus: "pending_sync", retryCount: 0, lastError: null }
+          : item,
+      );
+      persistRunState(state);
       return;
     }
 
@@ -249,7 +320,7 @@ const webDb = {
           ? { ...item, syncStatus: "pending_sync", retryCount: 0, lastError: null }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -258,7 +329,7 @@ const webDb = {
       state.tests = state.tests.map((item) =>
         item.id === id ? { ...item, syncStatus: "failed" } : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -269,7 +340,7 @@ const webDb = {
           ? { ...item, syncStatus: "pending_sync", retryCount: item.retryCount + 1 }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -280,7 +351,7 @@ const webDb = {
           ? { ...item, syncStatus: "pending_sync", retryCount: 0, lastError: null }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -290,7 +361,7 @@ const webDb = {
           ? { ...item, syncStatus: "pending_sync", retryCount: 0, lastError: null }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -299,7 +370,56 @@ const webDb = {
       state.tests = state.tests.filter(
         (item) => !(item.syncStatus === "synced" && item.createdAt < cutoffIso),
       );
-      saveState(state);
+      persistRunState(state);
+      return;
+    }
+
+    if (normalizedSql.startsWith("DELETE FROM drafts") && normalizedSql.includes("ownerKey = ? AND status = 'active' AND id <> ?")) {
+      const [ownerKey, id] = params as [string, string];
+      state.drafts = state.drafts.filter(
+        (item) => !(item.ownerKey === ownerKey && (item.status ?? "active") === "active" && item.id !== id),
+      );
+      persistRunState(state);
+      return;
+    }
+
+    if (normalizedSql.startsWith("INSERT INTO drafts (") && normalizedSql.includes("ownerKey")) {
+      const [id, officerId, ownerKey, driverData, step, payloadVersion, createdAt, updatedAt] = params as [
+        string,
+        number | null,
+        string,
+        string,
+        "scan" | "reading",
+        number,
+        string,
+        string,
+      ];
+      const existing = state.drafts.find((item) => item.id === id);
+      if (!existing || existing.ownerKey === ownerKey) {
+        const draft: LocalDraft = {
+          id,
+          officerId,
+          ownerKey,
+          driverData,
+          step,
+          payloadVersion,
+          status: "active",
+          createdAt: existing?.createdAt ?? createdAt,
+          updatedAt,
+        };
+        state.drafts = state.drafts.filter((item) => item.id !== id);
+        state.drafts.push(draft);
+        persistRunState(state);
+      }
+      return;
+    }
+
+    if (normalizedSql.startsWith("DELETE FROM drafts WHERE id = ? AND ownerKey = ?")) {
+      const [id, ownerKey] = params as [string, string];
+      state.drafts = state.drafts.filter(
+        (item) => !(item.id === id && item.ownerKey === ownerKey),
+      );
+      persistRunState(state);
       return;
     }
 
@@ -313,7 +433,7 @@ const webDb = {
       } satisfies LocalDraft;
       state.drafts = state.drafts.filter((item) => item.id !== draft.id);
       state.drafts.push(draft);
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -322,14 +442,14 @@ const webDb = {
       state.drafts = state.drafts.map((item) =>
         item.id === id ? { ...item, driverData, step } : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
     if (sql.startsWith("DELETE FROM drafts WHERE id = ?")) {
       const [id] = params as [string];
       state.drafts = state.drafts.filter((item) => item.id !== id);
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -349,7 +469,7 @@ const webDb = {
         metadata: (params[11] as string | null) ?? null,
       } satisfies AuditEvent;
       state.audit_events.unshift(event);
-      saveState(state);
+      persistRunState(state);
     }
 
     if (sql.startsWith("INSERT INTO evidence_attachments")) {
@@ -362,10 +482,47 @@ const webDb = {
         retryCount: Number(params[5] ?? 0),
         createdAt: params[6] as string,
         syncedAt: (params[7] as string | null) ?? null,
+        idempotencyKey: (params[8] as string | null) ?? null,
+        contentHash: (params[9] as string | null) ?? null,
       } satisfies LocalEvidenceAttachment;
+      const existing = state.evidence_attachments.find((item) => item.id === attachment.id);
+      if (existing) {
+        const keyConflict = Boolean(
+          existing.idempotencyKey &&
+          attachment.idempotencyKey &&
+          existing.idempotencyKey !== attachment.idempotencyKey
+        );
+        const hashConflict = Boolean(
+          existing.contentHash &&
+          attachment.contentHash &&
+          existing.contentHash !== attachment.contentHash
+        );
+        if (
+          existing.testId !== attachment.testId ||
+          existing.category !== attachment.category ||
+          existing.uri !== attachment.uri ||
+          keyConflict ||
+          hashConflict
+        ) {
+          throw new Error("A different evidence item already uses this attachment ID.");
+        }
+        return;
+      }
       state.evidence_attachments = state.evidence_attachments.filter((item) => item.id !== attachment.id);
       state.evidence_attachments.push(attachment);
-      saveState(state);
+      persistRunState(state);
+      return;
+    }
+
+    if (normalizedSql.startsWith("UPDATE evidence_attachments SET idempotencyKey = ?, contentHash = ? WHERE id = ?")) {
+      const [idempotencyKey, contentHash, id, expectedKey, expectedHash] = params as [string, string, string, string, string];
+      state.evidence_attachments = state.evidence_attachments.map((item) => {
+        if (item.id !== id) return item;
+        const keyMatches = item.idempotencyKey == null || item.idempotencyKey === idempotencyKey || item.idempotencyKey === expectedKey;
+        const hashMatches = item.contentHash == null || item.contentHash === contentHash || item.contentHash === expectedHash;
+        return keyMatches && hashMatches ? { ...item, idempotencyKey, contentHash } : item;
+      });
+      persistRunState(state);
       return;
     }
 
@@ -374,7 +531,7 @@ const webDb = {
       state.evidence_attachments = state.evidence_attachments.map((item) =>
         item.id === id ? { ...item, syncStatus, syncedAt, retryCount: 0 } : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -385,7 +542,7 @@ const webDb = {
           ? { ...item, syncStatus, retryCount: item.retryCount + 1 }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -396,7 +553,7 @@ const webDb = {
           ? { ...item, syncStatus: "synced", syncedAt, retryCount: 0, lastError: null, lastAttemptAt }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -419,7 +576,7 @@ const webDb = {
             }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -427,14 +584,17 @@ const webDb = {
       sql.includes("UPDATE evidence_attachments SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL") &&
       sql.includes("WHERE id = ?")
     ) {
-      const [id] = params as [string];
+      const [id, scopedOfficerId] = params as [string, number | null | undefined];
       const parent = state.tests.find((test) => test.id === state.evidence_attachments.find((item) => item.id === id)?.testId);
+      const parentMatches = scopedOfficerId === undefined ||
+        parent?.officerId === scopedOfficerId ||
+        parent?.officerId === null;
       state.evidence_attachments = state.evidence_attachments.map((item) =>
-        item.id === id && item.syncStatus === "failed" && parent?.syncStatus === "synced"
+        item.id === id && item.syncStatus === "failed" && parent?.syncStatus === "synced" && parentMatches
           ? { ...item, syncStatus: "pending_sync", retryCount: 0, lastError: null }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -450,14 +610,14 @@ const webDb = {
           ? { ...item, syncStatus: "pending_sync", retryCount: 0, lastError: null }
           : item;
       });
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
     if (sql.startsWith("DELETE FROM evidence_attachments WHERE id = ?")) {
       const [id] = params as [string];
       state.evidence_attachments = state.evidence_attachments.filter((item) => item.id !== id);
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -476,7 +636,7 @@ const webDb = {
           ? { ...item, officerId: officerId ?? null, version, alertJson, receivedAt, acknowledgedAt: acknowledgedAt ?? null, updatedAt }
           : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -501,7 +661,7 @@ const webDb = {
       };
       state.alert_cache = state.alert_cache.filter((item) => item.id !== record.id);
       state.alert_cache.push(record);
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -510,7 +670,7 @@ const webDb = {
       state.alert_cache = state.alert_cache.map((item) =>
         item.id === id ? { ...item, acknowledgedAt } : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -519,14 +679,14 @@ const webDb = {
       const record: PendingAlertAck = { alertId, officerId: officerId ?? null, requestedAt, retryCount: 0 };
       state.alert_ack_queue = state.alert_ack_queue.filter((item) => item.alertId !== record.alertId);
       state.alert_ack_queue.push(record);
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
     if (sql.startsWith("DELETE FROM alert_ack_queue WHERE alertId = ?")) {
       const [alertId] = params as [string];
       state.alert_ack_queue = state.alert_ack_queue.filter((item) => item.alertId !== alertId);
-      saveState(state);
+      persistRunState(state);
       return;
     }
 
@@ -535,13 +695,13 @@ const webDb = {
       state.alert_ack_queue = state.alert_ack_queue.map((item) =>
         item.alertId === alertId ? { ...item, retryCount: item.retryCount + 1 } : item,
       );
-      saveState(state);
+      persistRunState(state);
       return;
     }
   },
 
   async getAllAsync<T>(sql: string, params: unknown[] = []): Promise<T[]> {
-    const state = loadState();
+    const state = transactionState ?? loadState();
 
     if (sql.includes("FROM tests WHERE syncStatus = 'pending_sync'")) {
       const officerId = params[0] as number | undefined;
@@ -718,7 +878,8 @@ const webDb = {
   },
 
   async getFirstAsync<T>(sql: string, params: unknown[] = []): Promise<T | null> {
-    const state = loadState();
+    const normalizedSql = sql.replace(/\s+/g, " ").trim();
+    const state = transactionState ?? loadState();
 
     if (sql.includes("FROM evidence_attachments a") && sql.includes("SUM(CASE WHEN a.syncStatus")) {
       const officerId = params[0] as number | undefined;
@@ -803,9 +964,65 @@ const webDb = {
       return { count } as T;
     }
 
+    if (normalizedSql.includes("SELECT hash, officerId, receiptNumber FROM tests WHERE id = ?")) {
+      const [id] = params as [string];
+      const item = state.tests.find((test) => test.id === id);
+      return item
+        ? ({ hash: item.hash, officerId: item.officerId, receiptNumber: item.receiptNumber ?? null } as T)
+        : null;
+    }
+
+    if (normalizedSql.includes("SELECT hash, officerId FROM tests WHERE id = ?")) {
+      const [id] = params as [string];
+      const item = state.tests.find((test) => test.id === id);
+      return item ? ({ hash: item.hash, officerId: item.officerId } as T) : null;
+    }
+
+    if (normalizedSql.includes("SELECT testId, category, uri, idempotencyKey, contentHash FROM evidence_attachments WHERE id = ?")) {
+      const [id] = params as [string];
+      const item = state.evidence_attachments.find((attachment) => attachment.id === id);
+      return item
+        ? ({
+            testId: item.testId,
+            category: item.category,
+            uri: item.uri,
+            idempotencyKey: item.idempotencyKey ?? null,
+            contentHash: item.contentHash ?? null,
+          } as T)
+        : null;
+    }
+
+    if (normalizedSql.includes("SELECT ownerKey FROM drafts WHERE id = ?")) {
+      const [id] = params as [string];
+      const item = state.drafts.find((draft) => draft.id === id);
+      return item ? ({ ownerKey: item.ownerKey ?? "" } as T) : null;
+    }
+
     if (sql.includes("SELECT * FROM tests WHERE id = ?")) {
       const [id] = params as [string];
       return (state.tests.find((item) => item.id === id) ?? null) as T | null;
+    }
+
+    if (sql.includes("FROM drafts") && sql.includes("ownerKey = ?") && sql.includes("payloadVersion > 0")) {
+      const [ownerKey] = params as [string];
+      const drafts = state.drafts
+        .filter(
+          (item) =>
+            item.ownerKey === ownerKey &&
+            (item.status ?? "active") === "active" &&
+            (item.payloadVersion ?? 0) > 0,
+        )
+        .sort((a, b) => (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt));
+      const item = drafts[0];
+      return item
+        ? ({
+            ...item,
+            ownerKey: item.ownerKey ?? "",
+            payloadVersion: item.payloadVersion ?? 0,
+            status: item.status ?? "active",
+            updatedAt: item.updatedAt ?? item.createdAt,
+          } as T)
+        : null;
     }
 
     if (sql.includes("SELECT * FROM drafts WHERE id = ?")) {

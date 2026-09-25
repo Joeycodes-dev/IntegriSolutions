@@ -13,9 +13,16 @@ import {
   ShieldX,
   PlayCircle
 } from 'lucide-react';
-import type { CaseStatus, TestRecord } from '../../types';
+import {
+  EVIDENCE_CATEGORIES,
+  EVIDENCE_CATEGORY_LABELS,
+  evidenceCategoryLabel,
+  type CaseStatus,
+  type EvidenceCategory,
+  type TestRecord
+} from '../../types';
 import { buildTestEvidence } from '../../lib/testEvidence';
-import { evidenceCategoryLabel } from '../../types';
+import { createEvidenceIdempotencyKey } from '../../lib/evidenceIntegrity';
 import { CASE_STATUS_LABELS, CASE_STATUS_STYLES, isCaseStatus } from '../../lib/caseStatus';
 import { annotateTest, getAnnotations, getEvidence, uploadEvidence, type Annotation, type EvidencePhoto } from '../../services/api';
 import { DeviceCustodyPanel } from './DeviceCustodyPanel';
@@ -25,6 +32,13 @@ interface EvidenceReviewProps {
   test: TestRecord;
   onBack: () => void;
 }
+
+type PendingEvidenceUpload = {
+  file: File;
+  category: EvidenceCategory;
+  notes: string;
+  idempotencyKey: string;
+};
 
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
@@ -69,6 +83,9 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
   const [evidencePhotos, setEvidencePhotos] = useState<EvidencePhoto[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadCategory, setUploadCategory] = useState<EvidenceCategory>('vehicle');
+  const [uploadNotes, setUploadNotes] = useState('');
+  const pendingUploadRef = useRef<PendingEvidenceUpload | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initialCaseStatus = useMemo<CaseStatus>(() => {
     if (test && typeof test === 'object' && 'caseStatus' in test) {
@@ -107,20 +124,55 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
     return () => { cancelled = true; };
   }, [test.id]);
 
-  const handleUploadPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const uploadPendingPhoto = async (pending: PendingEvidenceUpload) => {
     setUploading(true);
     setUploadError(null);
     try {
-      const uploaded = await uploadEvidence(test.id, file);
-      setEvidencePhotos((prev) => [uploaded, ...prev]);
+      const uploaded = await uploadEvidence(test.id, pending.file, {
+        category: pending.category,
+        notes: pending.notes,
+        idempotencyKey: pending.idempotencyKey
+      });
+      setEvidencePhotos((prev) => {
+        if (prev.some((photo) => photo.id === uploaded.id)) return prev;
+        return [uploaded, ...prev];
+      });
+      // A successful response (including a server-side duplicate replay) ends
+      // this attempt. A failed attempt intentionally remains in the ref so
+      // Retry reuses the same key rather than minting a new one.
+      if (pendingUploadRef.current?.idempotencyKey === pending.idempotencyKey) {
+        pendingUploadRef.current = null;
+      }
+      setUploadNotes('');
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+      const message = err instanceof Error ? err.message : 'Upload failed';
+      setUploadError(
+        err instanceof Error && err.name === 'EvidenceUploadConflictError'
+          ? `Upload conflict: ${message}`
+          : message
+      );
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  const handleUploadPhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const pending: PendingEvidenceUpload = {
+      file,
+      category: uploadCategory,
+      notes: uploadNotes,
+      idempotencyKey: createEvidenceIdempotencyKey()
+    };
+    pendingUploadRef.current = pending;
+    void uploadPendingPhoto(pending);
+  };
+
+  const handleRetryPhoto = () => {
+    const pending = pendingUploadRef.current;
+    if (pending) void uploadPendingPhoto(pending);
   };
 
   const handleGeneratePdf = async () => {
@@ -241,18 +293,28 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
           </section>
 
           <section className="rounded-xl border bg-white p-3.5" style={{ borderColor: BORDER }}>
-            <div className="mb-2.5 flex items-center justify-between">
+            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-[0.8125rem] font-bold" style={{ color: NAVY }}>
                 Photo Gallery
               </h2>
-              <div>
+              <div className="flex items-center gap-2">
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept="image/*"
-                  onChange={(e) => void handleUploadPhoto(e)}
+                  onChange={handleUploadPhoto}
+                  disabled={uploading}
                   className="hidden"
                 />
+                {pendingUploadRef.current && !uploading && (
+                  <button
+                    type="button"
+                    onClick={handleRetryPhoto}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-[0.6875rem] font-semibold text-amber-800 transition hover:bg-amber-100"
+                  >
+                    Retry Upload
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -268,6 +330,37 @@ export function EvidenceReview({ test, onBack }: EvidenceReviewProps) {
                   {uploading ? 'Uploading...' : 'Add Photo'}
                 </button>
               </div>
+            </div>
+            <div className="mb-2.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="text-[0.6875rem] font-semibold text-slate-600">
+                Evidence category
+                <select
+                  aria-label="Evidence category"
+                  value={uploadCategory}
+                  onChange={(e) => setUploadCategory(e.target.value as EvidenceCategory)}
+                  disabled={uploading}
+                  className="mt-1 block h-8 w-full rounded-md border bg-white px-2 text-[0.75rem] font-normal text-slate-700 outline-none disabled:opacity-60"
+                  style={{ borderColor: BORDER }}
+                >
+                  {EVIDENCE_CATEGORIES.map((category) => (
+                    <option key={category} value={category}>
+                      {EVIDENCE_CATEGORY_LABELS[category]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[0.6875rem] font-semibold text-slate-600">
+                Notes <span className="font-normal text-slate-400">(optional)</span>
+                <input
+                  aria-label="Evidence notes"
+                  value={uploadNotes}
+                  onChange={(e) => setUploadNotes(e.target.value)}
+                  disabled={uploading}
+                  placeholder="Add context for this photo"
+                  className="mt-1 block h-8 w-full rounded-md border px-2 text-[0.75rem] font-normal text-slate-700 outline-none placeholder:text-slate-400 disabled:opacity-60"
+                  style={{ borderColor: BORDER }}
+                />
+              </label>
             </div>
             {uploadError && (
               <p className="mb-2 text-[0.6875rem] font-medium text-rose-600">{uploadError}</p>

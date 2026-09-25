@@ -22,6 +22,25 @@ function assertMobileAccess(profile: UserProfile): void {
   }
 }
 
+function isUsableStoredProfile(value: unknown): value is UserProfile {
+  if (!value || typeof value !== 'object') return false;
+  const profile = value as Partial<UserProfile>;
+  return (
+    typeof profile.uid === 'string' &&
+    typeof profile.email === 'string' &&
+    typeof profile.name === 'string' &&
+    typeof profile.surname === 'string' &&
+    typeof profile.badgeNumber === 'string' &&
+    typeof profile.idNumber === 'string' &&
+    typeof profile.employmentStatus === 'string' &&
+    typeof profile.province === 'string' &&
+    typeof profile.region === 'string' &&
+    typeof profile.officerTypeId === 'number' &&
+    typeof profile.roleId === 'number' &&
+    typeof profile.createdAt === 'string'
+  );
+}
+
 type AuthContextType = {
   profile: UserProfile | null;
   token: string | null;
@@ -39,10 +58,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isRestoring, setIsRestoring] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function restoreSession() {
+      let storedToken: string | null = null;
+      let storedProfile: UserProfile | null = null;
+
       try {
-        const storedToken = await getAccessToken();
-        const storedProfile = await getStoredProfile();
+        storedToken = await getAccessToken();
+        const storedProfileValue = await getStoredProfile();
+        storedProfile = isUsableStoredProfile(storedProfileValue) ? storedProfileValue : null;
+        if (storedProfileValue && !storedProfile) {
+          await clearAccessToken();
+          await clearStoredProfile();
+          return;
+        }
+
         if (storedToken && storedProfile) {
           if (!canAccessMobileApp(storedProfile.roleId)) {
             await clearAccessToken();
@@ -50,33 +81,86 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return;
           }
 
-          // Validate token before restoring protected app screens.
-          const profileResponse = await fetch(`${API_BASE_URL}/profile`, {
-            headers: {
-              Authorization: `Bearer ${storedToken}`
+          // A process restart must remain usable when the officer is offline.
+          // Only an explicit authentication rejection should discard the
+          // stored session; transport failures and server 5xx responses are
+          // treated as an offline session and can be validated on the next
+          // authenticated request.
+          let profileResponse: Response;
+          try {
+            profileResponse = await fetch(`${API_BASE_URL}/profile`, {
+              headers: {
+                Authorization: `Bearer ${storedToken}`
+              }
+            });
+          } catch {
+            if (!cancelled) {
+              setProfile(storedProfile);
+              setToken(storedToken);
             }
-          });
+            return;
+          }
 
-          if (!profileResponse.ok) {
+          if (
+            profileResponse.status === 401 ||
+            profileResponse.status === 403 ||
+            (profileResponse.status >= 400 &&
+              profileResponse.status < 500 &&
+              profileResponse.status !== 408 &&
+              profileResponse.status !== 429)
+          ) {
             await clearAccessToken();
             await clearStoredProfile();
             return;
           }
 
-          setProfile(storedProfile);
-          setToken(storedToken);
+          if (profileResponse.ok) {
+            const latestProfile = await profileResponse
+              .json()
+              .catch(() => null);
+            if (isUsableStoredProfile(latestProfile)) {
+              storedProfile = latestProfile;
+              await saveProfile(latestProfile);
+            }
+          }
+
+          if (!cancelled) {
+            setProfile(storedProfile);
+            setToken(storedToken);
+          }
+        } else if (
+          storedProfile &&
+          typeof storedProfile.uid === 'string' &&
+          !storedToken &&
+          storedProfile.uid.startsWith('local-') &&
+          canAccessMobileApp(storedProfile.roleId)
+        ) {
+          // Local developer/offline login intentionally has no bearer token.
+          if (!cancelled) {
+            setProfile(storedProfile);
+            setToken(null);
+          }
         } else {
           await clearAccessToken();
           await clearStoredProfile();
         }
       } catch {
-        await clearAccessToken();
-        await clearStoredProfile();
+        // Secure-store failures should not manufacture a false sign-out. If
+        // the stored values were readable before the failure, retain them.
+        if (!cancelled && storedProfile) {
+          setProfile(storedProfile);
+          setToken(storedToken);
+        }
       } finally {
-        setIsRestoring(false);
+        if (!cancelled) setIsRestoring(false);
       }
     }
-    restoreSession();
+
+    void restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

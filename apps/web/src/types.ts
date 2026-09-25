@@ -491,6 +491,16 @@ export interface TestEvidence {
 
 export type CaseStatus = 'new' | 'under_review' | 'verified' | 'referred' | 'invalidated' | 'closed';
 
+export const EVIDENCE_CATEGORIES = [
+  'licence_front',
+  'breathalyser_screen',
+  'vehicle',
+  'scene_note',
+  'signature_witness'
+] as const;
+
+export type EvidenceCategory = (typeof EVIDENCE_CATEGORIES)[number];
+
 export const EVIDENCE_CATEGORY_LABELS: Record<string, string> = {
   licence_front: 'Licence Front',
   breathalyser_screen: 'Breathalyser Screen',
@@ -500,7 +510,7 @@ export const EVIDENCE_CATEGORY_LABELS: Record<string, string> = {
 };
 
 export function evidenceCategoryLabel(category: unknown): string {
-  return typeof category === 'string' && EVIDENCE_CATEGORY_LABELS[category]
+  return typeof category === 'string' && Object.prototype.hasOwnProperty.call(EVIDENCE_CATEGORY_LABELS, category)
     ? EVIDENCE_CATEGORY_LABELS[category]
     : 'General';
 }

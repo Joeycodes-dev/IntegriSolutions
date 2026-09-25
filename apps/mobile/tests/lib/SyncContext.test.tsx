@@ -24,12 +24,16 @@ jest.mock('../../src/db/repository', () => ({
   getQueuedAlertAckCount: jest.fn(),
   getNewestSyncedAt: jest.fn(),
   resetFailedToPending: jest.fn(),
-  resetFailedAttachmentsToPending: jest.fn()
+  resetFailedAttachmentsToPending: jest.fn(),
+  retryFailedSyncRecord: jest.fn(),
+  resetAttachmentToPending: jest.fn()
 }));
 
 jest.mock('../../src/services/sync', () => ({
   syncPendingRecords: jest.fn(),
-  syncPendingAlertAcks: jest.fn()
+  syncPendingAlertAcks: jest.fn(),
+  syncPendingRecordsInternal: jest.fn(),
+  syncPendingAlertAcksInternal: jest.fn()
 }));
 
 jest.mock('expo-network', () => ({
@@ -89,9 +93,17 @@ describe('SyncContext', () => {
     ]);
     (repository.resetFailedToPending as jest.Mock).mockResolvedValue(undefined);
     (repository.resetFailedAttachmentsToPending as jest.Mock).mockResolvedValue(undefined);
+    (repository.retryFailedSyncRecord as jest.Mock).mockResolvedValue(undefined);
+    (repository.resetAttachmentToPending as jest.Mock).mockResolvedValue(undefined);
     (Network.getNetworkStateAsync as jest.Mock).mockResolvedValue({ isConnected: true });
     (sync.syncPendingRecords as jest.Mock).mockResolvedValue(emptySyncResult());
+    (sync.syncPendingRecordsInternal as jest.Mock).mockResolvedValue(emptySyncResult());
     (sync.syncPendingAlertAcks as jest.Mock).mockResolvedValue({
+      synced: [],
+      failed: [],
+      errors: []
+    });
+    (sync.syncPendingAlertAcksInternal as jest.Mock).mockResolvedValue({
       synced: [],
       failed: [],
       errors: []
@@ -157,6 +169,11 @@ describe('SyncContext', () => {
       attempted: 1,
       synced: ['record-1']
     });
+    (sync.syncPendingRecordsInternal as jest.Mock).mockResolvedValue({
+      ...emptySyncResult(),
+      attempted: 1,
+      synced: ['record-1']
+    });
 
     const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
     await waitFor(() => expect(result.current.pendingCount).toBe(5));
@@ -166,7 +183,7 @@ describe('SyncContext', () => {
       run = await result.current.forceSync();
     });
 
-    expect(sync.syncPendingRecords).toHaveBeenCalledWith(1);
+    expect(sync.syncPendingRecordsInternal).toHaveBeenCalledWith(1, { kind: 'all' });
     expect(repository.resetFailedToPending).not.toHaveBeenCalled();
     expect(result.current.lastSyncedAt).toEqual(acceptedAt);
     expect(result.current.lastRun?.status).toBe('success');
@@ -183,7 +200,7 @@ describe('SyncContext', () => {
 
     expect(repository.resetFailedToPending).toHaveBeenCalledWith(1);
     expect(repository.resetFailedAttachmentsToPending).toHaveBeenCalledWith(1);
-    expect(sync.syncPendingRecords).toHaveBeenCalled();
+    expect(sync.syncPendingRecordsInternal).toHaveBeenCalled();
   });
 
   it('does not sync when offline', async () => {
@@ -221,7 +238,7 @@ describe('SyncContext', () => {
     });
 
     await waitFor(() => {
-      expect(sync.syncPendingRecords).toHaveBeenCalledTimes(1);
+      expect(sync.syncPendingRecordsInternal).toHaveBeenCalledTimes(1);
     });
 
     await act(async () => {
@@ -229,12 +246,45 @@ describe('SyncContext', () => {
     });
 
     await waitFor(() => {
-      expect(sync.syncPendingRecords).toHaveBeenCalledTimes(2);
+      expect(sync.syncPendingRecordsInternal).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('retries only the selected record through the serialized scope', async () => {
+    const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
+    await waitFor(() => expect(result.current.pendingCount).toBe(5));
+
+    await act(async () => {
+      await result.current.retryRecord('record-1');
+    });
+
+    expect(repository.retryFailedSyncRecord).toHaveBeenCalledWith('record-1', 1);
+    expect(sync.syncPendingRecordsInternal).toHaveBeenCalledWith(1, {
+      kind: 'selected',
+      recordIds: ['record-1']
+    });
+    expect(sync.syncPendingAlertAcksInternal).not.toHaveBeenCalled();
+  });
+
+  it('retries only the selected evidence item through the serialized scope', async () => {
+    const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
+    await waitFor(() => expect(result.current.pendingCount).toBe(5));
+
+    await act(async () => {
+      await result.current.retryEvidence('evidence-1');
+    });
+
+    expect(repository.resetAttachmentToPending).toHaveBeenCalledWith('evidence-1', 1);
+    expect(sync.syncPendingRecordsInternal).toHaveBeenCalledWith(1, {
+      kind: 'selected',
+      attachmentIds: ['evidence-1']
+    });
+    expect(sync.syncPendingAlertAcksInternal).not.toHaveBeenCalled();
   });
 
   it('handles sync errors gracefully', async () => {
     (sync.syncPendingRecords as jest.Mock).mockRejectedValue(new Error('Network error'));
+    (sync.syncPendingRecordsInternal as jest.Mock).mockRejectedValue(new Error('Network error'));
 
     const { result } = renderHook(() => useSync(), { wrapper: SyncProvider });
 

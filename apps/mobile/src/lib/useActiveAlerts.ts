@@ -3,6 +3,7 @@ import { getActiveAlerts, acknowledgeAlert, isNetworkRequestError } from '../ser
 import { getCachedAlerts, upsertCachedAlerts, updateCachedAlertAcknowledgement, queueAlertAck } from '../db/repository';
 import { logAuditEvent } from '../services/audit';
 import { useAuth } from './AuthContext';
+import { syncCoordinator } from './SyncCoordinator';
 import type { OperationalAlert } from '../types';
 
 /**
@@ -74,7 +75,7 @@ export function useActiveAlerts() {
 
   const acknowledge = useCallback(async (alertId: string) => {
     try {
-      const result = await acknowledgeAlert(alertId);
+      const result = await syncCoordinator.run(() => acknowledgeAlert(alertId));
       setAlerts((prev) =>
         prev.map((item) => (item.id === alertId ? { ...item, acknowledgedAt: result.acknowledgedAt } : item))
       );

@@ -9,6 +9,28 @@ import { readJson } from '../utilities/jsonBody';
 
 const router = new Hono<AppEnv>();
 const SHA256_HEX = /^[a-f0-9]{64}$/i;
+const RECEIPT_NUMBER = /^[A-Z0-9][A-Z0-9-]{7,63}$/;
+
+type SyncFailure = {
+  id: string;
+  error: string;
+  code?: string;
+  retryable?: boolean;
+};
+
+function isValidReceiptNumber(value: unknown): value is string | null | undefined {
+  return value == null || (typeof value === 'string' && RECEIPT_NUMBER.test(value));
+}
+
+function normalizeHash(value: unknown): string | null {
+  if (typeof value !== 'string' || !SHA256_HEX.test(value)) return null;
+  return value.toLowerCase();
+}
+
+function normalizeReceiptNumber(value: unknown): string | null | undefined {
+  if (value == null) return value;
+  return typeof value === 'string' ? value.trim().toUpperCase() : undefined;
+}
 
 router.use('*', async (c, next) => {
   const authHeader = c.req.header('authorization');
@@ -48,6 +70,7 @@ interface SyncRecord {
     driverCategory?: string;
   };
   hash: string;
+  receiptNumber?: string | null;
   createdAt: string;
   originalTestId?: string | null;
   deviceTransport?: string | null;
@@ -138,8 +161,12 @@ router.post('/', async (c) => {
   }
 
   const synced: string[] = [];
-  const failed: { id: string; error: string }[] = [];
+  const failed: SyncFailure[] = [];
   const duplicates: string[] = [];
+  const duplicateReceipts: Record<string, string | null> = {};
+  const receipts: Record<string, string | null> = {};
+  const seenRecordHashes = new Map<string, string>();
+  const seenRecordReceipts = new Map<string, string | null>();
   const userEmail = c.get('userEmail');
   const userId = c.get('userId');
 
@@ -188,15 +215,53 @@ router.post('/', async (c) => {
       typeof record.bacReading !== 'number' ||
       !Number.isFinite(record.bacReading) ||
       !record.result?.trim() ||
-      !record.hash?.trim()
+      !record.hash?.trim() ||
+      !isValidReceiptNumber(record.receiptNumber)
     ) {
-      failed.push({ id: record.id || 'unknown', error: 'Missing or invalid fields' });
+      failed.push({ id: record.id || 'unknown', error: 'Missing or invalid fields', code: 'INVALID_RECORD_FORMAT', retryable: false });
+      continue;
+    }
+
+    const normalizedHash = normalizeHash(record.hash);
+    const normalizedReceiptNumber = normalizeReceiptNumber(record.receiptNumber);
+    if (!normalizedHash || !isValidReceiptNumber(normalizedReceiptNumber)) {
+      failed.push({ id: record.id, error: 'Invalid record hash or receipt format', code: 'INVALID_RECORD_FORMAT', retryable: false });
+      continue;
+    }
+    record.hash = normalizedHash;
+    record.receiptNumber = normalizedReceiptNumber;
+
+    const priorHash = seenRecordHashes.get(record.id);
+    if (priorHash) {
+      const priorReceipt = seenRecordReceipts.get(record.id) ?? null;
+      if (
+        priorHash === normalizedHash &&
+        (!priorReceipt || !record.receiptNumber || priorReceipt === record.receiptNumber)
+      ) {
+        duplicates.push(record.id);
+        duplicateReceipts[record.id] = priorReceipt ?? record.receiptNumber ?? null;
+        receipts[record.id] = duplicateReceipts[record.id];
+      } else if (priorHash === normalizedHash) {
+        failed.push({
+          id: record.id,
+          error: 'Record ID collision: duplicate records in the batch have different receipts.',
+          code: 'RECEIPT_MISMATCH',
+          retryable: false,
+        });
+      } else {
+        failed.push({
+          id: record.id,
+          error: 'Record ID collision: duplicate records in the batch have different hashes.',
+          code: 'RECORD_ID_COLLISION',
+          retryable: false,
+        });
+      }
       continue;
     }
 
     const device = extractDeviceCustody(record);
     if (device === 'invalid') {
-      failed.push({ id: record.id || 'unknown', error: 'Invalid device custody fields' });
+      failed.push({ id: record.id || 'unknown', error: 'Invalid device custody fields', code: 'INVALID_DEVICE_CUSTODY', retryable: false });
       continue;
     }
 
@@ -230,18 +295,51 @@ router.post('/', async (c) => {
       console.error(`HASH MISMATCH id=${record.id}`);
       console.error(`  mobile=${record.hash}`);
       console.error(`  backend=${computedHash}`);
-      failed.push({ id: record.id, error: 'Hash verification failed — record may have been tampered with' });
+      failed.push({
+        id: record.id,
+        error: 'Hash verification failed — record may have been tampered with',
+        code: 'HASH_MISMATCH',
+        retryable: false,
+      });
       continue;
     }
-
-    const { data: existing } = await serviceSupabase
+    const { data: existing, error: existingError } = await serviceSupabase
       .from('tests')
-      .select('id')
+      .select('id, hash, receipt_number')
       .eq('id', record.id)
       .single();
 
+    if (existingError && existingError.code !== 'PGRST116') {
+      failed.push({ id: record.id, error: existingError.message, code: 'DATABASE_LOOKUP_FAILED', retryable: true });
+      continue;
+    }
+
     if (existing) {
+      const existingHash = normalizeHash(existing.hash);
+      if (!existingHash || existingHash !== record.hash) {
+        failed.push({
+          id: record.id,
+          error: 'Record ID collision: the stored hash does not match this record.',
+          code: 'RECORD_ID_COLLISION',
+          retryable: false,
+        });
+        continue;
+      }
+      const existingReceipt = normalizeReceiptNumber(existing.receipt_number);
+      if (existingReceipt && record.receiptNumber && existingReceipt !== record.receiptNumber) {
+        failed.push({
+          id: record.id,
+          error: 'Record ID collision: the stored receipt does not match this record.',
+          code: 'RECEIPT_MISMATCH',
+          retryable: false,
+        });
+        continue;
+      }
       duplicates.push(record.id);
+      duplicateReceipts[record.id] = existingReceipt ?? record.receiptNumber ?? null;
+      receipts[record.id] = duplicateReceipts[record.id];
+      seenRecordHashes.set(record.id, normalizedHash);
+      seenRecordReceipts.set(record.id, existingReceipt ?? record.receiptNumber ?? null);
       continue;
     }
 
@@ -257,6 +355,7 @@ router.post('/', async (c) => {
       result: record.result,
       location: JSON.stringify(record.location),
       hash: storedHash,
+      receipt_number: record.receiptNumber ?? null,
       created_at: record.createdAt,
       original_test_id: record.originalTestId || null,
       ...(device
@@ -276,19 +375,39 @@ router.post('/', async (c) => {
     const { error } = await serviceSupabase.from('tests').insert([insertPayload]);
 
     if (error) {
+      if (error.code === '23505') {
+        const { data: racedExisting } = await serviceSupabase
+          .from('tests')
+          .select('id, hash, receipt_number')
+          .eq('id', record.id)
+          .single();
+        const racedHash = normalizeHash(racedExisting?.hash);
+        const racedReceipt = normalizeReceiptNumber(racedExisting?.receipt_number);
+        if (racedHash === record.hash && (!racedReceipt || !record.receiptNumber || racedReceipt === record.receiptNumber)) {
+          duplicates.push(record.id);
+          duplicateReceipts[record.id] = racedReceipt ?? record.receiptNumber ?? null;
+          receipts[record.id] = duplicateReceipts[record.id];
+          seenRecordHashes.set(record.id, normalizedHash);
+          seenRecordReceipts.set(record.id, racedReceipt ?? record.receiptNumber ?? null);
+          continue;
+        }
+      }
       console.error('Supabase insert error:', error);
-      failed.push({ id: record.id, error: error.message });
+      failed.push({ id: record.id, error: error.message, code: 'SYNC_INSERT_FAILED', retryable: true });
       continue;
     }
 
     synced.push(record.id);
+    receipts[record.id] = record.receiptNumber ?? null;
+    seenRecordHashes.set(record.id, normalizedHash);
+    seenRecordReceipts.set(record.id, record.receiptNumber ?? null);
   }
 
   if (synced.length > 0) {
     await publishTestInserted(c.env, 'mobile-sync', synced.length);
   }
 
-  return c.json({ synced, failed, duplicates });
+  return c.json({ synced, failed, duplicates, duplicateReceipts, receipts });
 });
 
 export default router;

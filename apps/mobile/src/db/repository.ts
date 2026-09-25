@@ -1,4 +1,5 @@
 import { getDB } from './client';
+import type { DraftOwner } from '../lib/activeTestDraft';
 
 export type SyncStatus = 'pending_sync' | 'synced' | 'failed';
 
@@ -53,6 +54,7 @@ export interface LocalTestRecord {
   result: string;
   location: string;
   hash: string;
+  receiptNumber?: string | null;
   syncStatus: SyncStatus;
   createdAt: string;
   syncedAt: string | null;
@@ -76,6 +78,8 @@ export interface LocalEvidenceAttachment {
   testId: string;
   category: string;
   uri: string;
+  idempotencyKey?: string | null;
+  contentHash?: string | null;
   syncStatus: SyncStatus;
   retryCount: number;
   createdAt: string;
@@ -92,44 +96,181 @@ export interface SyncEvidenceAttachment extends LocalEvidenceAttachment {
 export interface LocalDraft {
   id: string;
   officerId: number | null;
+  ownerKey?: string | null;
   driverData: string;
   step: 'scan' | 'reading';
+  payloadVersion?: number;
+  status?: 'active' | 'discarded' | 'committed';
   createdAt: string;
+  updatedAt?: string | null;
+}
+
+export type ActiveTestDraftStatus = 'active' | 'discarded' | 'committed';
+
+export interface ActiveTestDraftRecord {
+  id: string;
+  owner: DraftOwner;
+  driverData: string;
+  step: 'scan' | 'reading';
+  payloadVersion: number;
+  status: ActiveTestDraftStatus;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export async function insertTest(record: LocalTestRecord): Promise<void> {
+  await insertTestWithAttachments(record, []);
+}
+
+export async function insertTestWithAttachments(
+  record: LocalTestRecord,
+  attachments: LocalEvidenceAttachment[]
+): Promise<void> {
   const db = await getDB();
-  await db.runAsync(
-    `INSERT INTO tests (id, officerId, officerName, badgeNumber, driverName, driverId, driverDob, bacReading, result, location, hash, syncStatus, createdAt, syncedAt, retryCount, photoUri, originalTestId, deviceTransport, deviceSerial, deviceCalibrationVersion, deviceCalibrationR0, deviceSessionPeakRaw, deviceAvgRaw, deviceRaw, deviceCapturedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      record.id,
-      record.officerId,
-      record.officerName,
-      record.badgeNumber,
-      record.driverName,
-      record.driverId,
-      record.driverDob,
-      record.bacReading,
-      record.result,
-      record.location,
-      record.hash,
-      record.syncStatus,
-      record.createdAt,
-      record.syncedAt,
-      record.retryCount,
-      record.photoUri,
-      record.originalTestId,
-      record.deviceTransport ?? null,
-      record.deviceSerial ?? null,
-      record.deviceCalibrationVersion ?? null,
-      record.deviceCalibrationR0 ?? null,
-      record.deviceSessionPeakRaw ?? null,
-      record.deviceAvgRaw ?? null,
-      record.deviceRaw ?? null,
-      record.deviceCapturedAt ?? null
-    ]
-  );
+  await db.withTransactionAsync(async () => {
+    const existing = await db.getFirstAsync<{ hash: string; officerId: number | null; receiptNumber?: string | null }>(
+      'SELECT hash, officerId, receiptNumber FROM tests WHERE id = ?',
+      [record.id]
+    );
+    if (existing) {
+      const receiptConflict = Boolean(
+        existing.receiptNumber &&
+        record.receiptNumber &&
+        existing.receiptNumber !== record.receiptNumber
+      );
+      if (existing.hash !== record.hash || existing.officerId !== record.officerId || receiptConflict) {
+        throw new Error('A different test already uses this planned test ID.');
+      }
+      for (const attachment of attachments) {
+        const existingAttachment = await db.getFirstAsync<{
+          testId: string;
+          category: string;
+          uri: string;
+          idempotencyKey?: string | null;
+          contentHash?: string | null;
+        }>('SELECT testId, category, uri, idempotencyKey, contentHash FROM evidence_attachments WHERE id = ?', [attachment.id]);
+        if (existingAttachment) {
+          const keyConflict = Boolean(
+            existingAttachment.idempotencyKey &&
+            attachment.idempotencyKey &&
+            existingAttachment.idempotencyKey !== attachment.idempotencyKey
+          );
+          const hashConflict = Boolean(
+            existingAttachment.contentHash &&
+            attachment.contentHash &&
+            existingAttachment.contentHash !== attachment.contentHash
+          );
+          if (
+            existingAttachment.testId !== attachment.testId ||
+            existingAttachment.category !== attachment.category ||
+            existingAttachment.uri !== attachment.uri ||
+            keyConflict ||
+            hashConflict
+          ) {
+            throw new Error('A different evidence item already uses this attachment ID.');
+          }
+          continue;
+        }
+        await db.runAsync(
+          `INSERT INTO evidence_attachments (id, testId, category, uri, syncStatus, retryCount, createdAt, syncedAt, idempotencyKey, contentHash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            attachment.id,
+            attachment.testId,
+            attachment.category,
+            attachment.uri,
+            attachment.syncStatus,
+            attachment.retryCount,
+            attachment.createdAt,
+            attachment.syncedAt,
+            attachment.idempotencyKey ?? null,
+            attachment.contentHash ?? null
+          ]
+        );
+      }
+      return;
+    }
+
+    await db.runAsync(
+      `INSERT INTO tests (id, officerId, officerName, badgeNumber, driverName, driverId, driverDob, bacReading, result, location, hash, syncStatus, createdAt, syncedAt, retryCount, photoUri, originalTestId, deviceTransport, deviceSerial, deviceCalibrationVersion, deviceCalibrationR0, deviceSessionPeakRaw, deviceAvgRaw, deviceRaw, deviceCapturedAt, receiptNumber)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        record.id,
+        record.officerId,
+        record.officerName,
+        record.badgeNumber,
+        record.driverName,
+        record.driverId,
+        record.driverDob,
+        record.bacReading,
+        record.result,
+        record.location,
+        record.hash,
+        record.syncStatus,
+        record.createdAt,
+        record.syncedAt,
+        record.retryCount,
+        record.photoUri,
+        record.originalTestId,
+        record.deviceTransport ?? null,
+        record.deviceSerial ?? null,
+        record.deviceCalibrationVersion ?? null,
+        record.deviceCalibrationR0 ?? null,
+        record.deviceSessionPeakRaw ?? null,
+        record.deviceAvgRaw ?? null,
+        record.deviceRaw ?? null,
+        record.deviceCapturedAt ?? null,
+        record.receiptNumber ?? null
+      ]
+    );
+    for (const attachment of attachments) {
+      const existingAttachment = await db.getFirstAsync<{
+        testId: string;
+        category: string;
+        uri: string;
+        idempotencyKey?: string | null;
+        contentHash?: string | null;
+      }>('SELECT testId, category, uri, idempotencyKey, contentHash FROM evidence_attachments WHERE id = ?', [attachment.id]);
+      if (existingAttachment) {
+        const keyConflict = Boolean(
+          existingAttachment.idempotencyKey &&
+          attachment.idempotencyKey &&
+          existingAttachment.idempotencyKey !== attachment.idempotencyKey
+        );
+        const hashConflict = Boolean(
+          existingAttachment.contentHash &&
+          attachment.contentHash &&
+          existingAttachment.contentHash !== attachment.contentHash
+        );
+        if (
+          existingAttachment.testId !== attachment.testId ||
+          existingAttachment.category !== attachment.category ||
+          existingAttachment.uri !== attachment.uri ||
+          keyConflict ||
+          hashConflict
+        ) {
+          throw new Error('A different evidence item already uses this attachment ID.');
+        }
+        continue;
+      }
+      await db.runAsync(
+        `INSERT INTO evidence_attachments (id, testId, category, uri, syncStatus, retryCount, createdAt, syncedAt, idempotencyKey, contentHash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          attachment.id,
+          attachment.testId,
+          attachment.category,
+          attachment.uri,
+          attachment.syncStatus,
+          attachment.retryCount,
+          attachment.createdAt,
+          attachment.syncedAt,
+          attachment.idempotencyKey ?? null,
+          attachment.contentHash ?? null
+        ]
+      );
+    }
+  });
 }
 
 export async function updateSyncStatus(
@@ -178,11 +319,15 @@ export async function recordSyncAttempt(
   );
 }
 
-export async function retryFailedSyncRecord(id: string): Promise<void> {
+export async function retryFailedSyncRecord(
+  id: string,
+  officerId?: number | null
+): Promise<void> {
   const db = await getDB();
+  const scope = officerId === undefined ? '' : ' AND (officerId = ? OR officerId IS NULL)';
   await db.runAsync(
-    `UPDATE tests SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL WHERE id = ? AND syncStatus = 'failed'`,
-    [id]
+    `UPDATE tests SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL WHERE id = ? AND syncStatus = 'failed'${scope}`,
+    officerId === undefined ? [id] : [id, officerId]
   );
 }
 
@@ -567,11 +712,111 @@ export async function insertDraft(draft: LocalDraft): Promise<void> {
   );
 }
 
+export async function saveActiveTestDraft(input: {
+  id: string;
+  owner: DraftOwner;
+  driverData: string;
+  step: 'scan' | 'reading';
+  payloadVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}): Promise<void> {
+  const db = await getDB();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `DELETE FROM drafts
+       WHERE ownerKey = ? AND status = 'active' AND id <> ?`,
+      [input.owner.ownerKey, input.id]
+    );
+    await db.runAsync(
+      `INSERT INTO drafts (
+         id, officerId, ownerKey, driverData, step, payloadVersion, status, createdAt, updatedAt
+       ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         officerId = excluded.officerId,
+         ownerKey = excluded.ownerKey,
+         driverData = excluded.driverData,
+         step = excluded.step,
+         payloadVersion = excluded.payloadVersion,
+         status = 'active',
+         updatedAt = excluded.updatedAt
+       WHERE drafts.ownerKey = excluded.ownerKey`,
+      [
+        input.id,
+        input.owner.officerId,
+        input.owner.ownerKey,
+        input.driverData,
+        input.step,
+        input.payloadVersion,
+        input.createdAt,
+        input.updatedAt
+      ]
+    );
+    const persisted = await db.getFirstAsync<{ ownerKey: string }>(
+      'SELECT ownerKey FROM drafts WHERE id = ?',
+      [input.id]
+    );
+    if (!persisted || persisted.ownerKey !== input.owner.ownerKey) {
+      throw new Error('The active test draft is owned by another session.');
+    }
+  });
+}
+
+export async function getLatestActiveTestDraft(
+  owner: DraftOwner
+): Promise<ActiveTestDraftRecord | null> {
+  const db = await getDB();
+  const row = await db.getFirstAsync<{
+    id: string;
+    officerId: number | null;
+    ownerKey: string;
+    driverData: string;
+    step: 'scan' | 'reading';
+    payloadVersion: number;
+    status: ActiveTestDraftStatus;
+    createdAt: string;
+    updatedAt: string | null;
+  }>(
+    `SELECT id, officerId, ownerKey, driverData, step, payloadVersion, status, createdAt, updatedAt
+     FROM drafts
+     WHERE ownerKey = ? AND status = 'active' AND payloadVersion > 0
+     ORDER BY updatedAt DESC
+     LIMIT 1`,
+    [owner.ownerKey]
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    owner: {
+      ownerKey: row.ownerKey,
+      officerId: row.officerId,
+      officerUid: owner.officerUid,
+    },
+    driverData: row.driverData,
+    step: row.step,
+    payloadVersion: row.payloadVersion,
+    status: row.status,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt ?? row.createdAt,
+  };
+}
+
+export async function deleteActiveTestDraft(
+  id: string,
+  owner: DraftOwner
+): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    'DELETE FROM drafts WHERE id = ? AND ownerKey = ?',
+    [id, owner.ownerKey]
+  );
+}
+
 export async function insertEvidenceAttachment(attachment: LocalEvidenceAttachment): Promise<void> {
   const db = await getDB();
   await db.runAsync(
-    `INSERT INTO evidence_attachments (id, testId, category, uri, syncStatus, retryCount, createdAt, syncedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO evidence_attachments (id, testId, category, uri, syncStatus, retryCount, createdAt, syncedAt, idempotencyKey, contentHash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       attachment.id,
       attachment.testId,
@@ -580,8 +825,26 @@ export async function insertEvidenceAttachment(attachment: LocalEvidenceAttachme
       attachment.syncStatus,
       attachment.retryCount,
       attachment.createdAt,
-      attachment.syncedAt
+      attachment.syncedAt,
+      attachment.idempotencyKey ?? null,
+      attachment.contentHash ?? null
     ]
+  );
+}
+
+export async function updateEvidenceIntegrity(
+  id: string,
+  idempotencyKey: string,
+  contentHash: string
+): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `UPDATE evidence_attachments
+     SET idempotencyKey = ?, contentHash = ?
+     WHERE id = ?
+       AND (idempotencyKey IS NULL OR idempotencyKey = ?)
+       AND (contentHash IS NULL OR contentHash = ?)`,
+    [idempotencyKey, contentHash, id, idempotencyKey, contentHash]
   );
 }
 
@@ -660,16 +923,20 @@ export async function recordAttachmentSyncAttempt(
   );
 }
 
-export async function resetAttachmentToPending(id: string): Promise<void> {
+export async function resetAttachmentToPending(
+  id: string,
+  officerId?: number | null
+): Promise<void> {
   const db = await getDB();
+  const scope = officerId === undefined ? '' : ' AND (t.officerId = ? OR t.officerId IS NULL)';
   await db.runAsync(
     `UPDATE evidence_attachments SET syncStatus = 'pending_sync', retryCount = 0, lastError = NULL
      WHERE id = ? AND syncStatus = 'failed'
        AND EXISTS (
          SELECT 1 FROM tests t
-         WHERE t.id = evidence_attachments.testId AND t.syncStatus = 'synced'
+         WHERE t.id = evidence_attachments.testId AND t.syncStatus = 'synced'${scope}
        )`,
-    [id]
+    officerId === undefined ? [id] : [id, officerId]
   );
 }
 

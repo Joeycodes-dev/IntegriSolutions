@@ -1,6 +1,7 @@
 import { sha256 } from 'js-sha256';
 import {
   insertTest,
+  insertTestWithAttachments,
   getPendingSync,
   getTestById,
   markSyncSuccess,
@@ -9,12 +10,29 @@ import {
 } from '../db/repository';
 import type { TestLocationPayload } from '../lib/testLocation';
 import type { DeviceEvidencePayload } from './breathalyzer';
-import { syncRecords, uploadEvidencePhoto, acknowledgeAlert, isNetworkRequestError, isRateLimitError } from './api';
+import {
+  syncRecords,
+  uploadEvidencePhoto,
+  acknowledgeAlert,
+  isNetworkRequestError,
+  isRateLimitError,
+  isPermanentApiError,
+  isRetryableApiError,
+} from './api';
 import { logAuditEvent } from './audit';
 import { getAccessToken } from './auth';
+import { deleteDurableAttachmentFile } from './activeTestDraftAttachments';
+import { syncCoordinator } from '../lib/SyncCoordinator';
+import { createLocalReceiptNumber } from '../lib/receipt';
+import {
+  evidenceIdempotencyKey,
+  hashEvidenceFile,
+  isSha256,
+} from '../lib/evidenceIntegrity';
 import {
   getPendingAttachments,
   insertEvidenceAttachment,
+  updateEvidenceIntegrity,
   markAttachmentSyncSuccess,
   recordAttachmentSyncAttempt,
   getPendingAlertAcks,
@@ -33,10 +51,21 @@ function normalizeSyncError(error: unknown, fallback = 'Sync failed'): string {
 }
 
 function isTransientSyncError(error: unknown): boolean {
-  if (isRateLimitError(error) || isNetworkRequestError(error)) return true;
+  if (
+    isRateLimitError(error) ||
+    isNetworkRequestError(error) ||
+    (typeof isRetryableApiError === 'function' && isRetryableApiError(error))
+  ) return true;
   const message = normalizeSyncError(error);
   return /\bHTTP 5\d\d\b|internal server error|service unavailable|bad gateway|gateway timeout|temporarily unavailable|invalid or expired access token|session expired|sign in again|unauthorized/i.test(
     message,
+  );
+}
+
+function isPermanentSyncError(error: unknown): boolean {
+  if (typeof isPermanentApiError === 'function' && isPermanentApiError(error)) return true;
+  return /\b(?:collision|conflict|idempotency|integrity|invalid|mismatch|not found|forbidden|unauthorized|hashed|could not be read|unsupported|hash verification|tampered)\b/i.test(
+    normalizeSyncError(error),
   );
 }
 
@@ -132,17 +161,20 @@ export async function saveLocally(params: {
   bacReading: number;
   result: string;
   location: TestLocationPayload;
+  createdAt?: string;
   photoUri?: string | null;
   attachments?: Array<{
     id: string;
     category: string;
     uri: string;
+    idempotencyKey?: string | null;
+    contentHash?: string | null;
   }>;
   originalTestId?: string | null;
   device?: DeviceEvidencePayload | null;
 }): Promise<LocalTestRecord> {
   const protectedDriverId = protectIdentifier(params.driverId);
-  const createdAt = new Date().toISOString();
+  const createdAt = params.createdAt ?? new Date().toISOString();
   const device = params.device ?? null;
 
   const recordPayload = buildRecordPayload({
@@ -168,6 +200,7 @@ export async function saveLocally(params: {
 
   const record: LocalTestRecord = {
     id: params.id,
+    receiptNumber: createLocalReceiptNumber(params.id, createdAt),
     officerId: params.officerId,
     officerName: params.officerName,
     badgeNumber: params.badgeNumber,
@@ -194,8 +227,6 @@ export async function saveLocally(params: {
     deviceCapturedAt: device?.capturedAt ?? null
   };
 
-  await insertTest(record);
-
   const attachments = [...(params.attachments ?? [])];
   if (params.photoUri && !attachments.some((attachment) => attachment.uri === params.photoUri)) {
     attachments.push({
@@ -205,17 +236,28 @@ export async function saveLocally(params: {
     });
   }
 
-  for (const attachment of attachments) {
-    await insertEvidenceAttachment({
-      id: attachment.id,
-      testId: record.id,
-      category: attachment.category,
-      uri: attachment.uri,
-      syncStatus: 'pending_sync',
-      retryCount: 0,
-      createdAt: new Date().toISOString(),
-      syncedAt: null
-    });
+  const localAttachments = attachments.map((attachment) => ({
+    id: attachment.id,
+    testId: record.id,
+    category: attachment.category,
+    uri: attachment.uri,
+    idempotencyKey: attachment.idempotencyKey ?? evidenceIdempotencyKey(attachment.id),
+    contentHash: isSha256(attachment.contentHash) ? attachment.contentHash : null,
+    syncStatus: 'pending_sync' as const,
+    retryCount: 0,
+    createdAt: new Date().toISOString(),
+    syncedAt: null
+  }));
+
+  // Keep the fallback for lightweight repository mocks and older native
+  // bundles; current SQLite builds use the atomic bundle insert.
+  if (typeof insertTestWithAttachments === 'function') {
+    await insertTestWithAttachments(record, localAttachments);
+  } else {
+    await insertTest(record);
+    for (const attachment of localAttachments) {
+      await insertEvidenceAttachment(attachment);
+    }
   }
 
   await logAuditEvent({
@@ -230,6 +272,7 @@ export async function saveLocally(params: {
     metadata: {
       bacReading: record.bacReading,
       result: record.result,
+      receiptNumber: record.receiptNumber,
       retest: !!record.originalTestId,
       originalTestId: record.originalTestId,
       roadblock: params.location.roadblock ?? null
@@ -249,13 +292,33 @@ export type SyncRecordsResult = {
   attempted: number;
   synced: string[];
   duplicates: string[];
-  failed: { id: string; error: string }[];
+  duplicateReceipts?: Record<string, string | null>;
+  receipts?: Record<string, string | null>;
+  failed: { id: string; error: string; code?: string; retryable?: boolean }[];
   deferred: { id: string; error: string }[];
   attachmentResults: SyncAttachmentResult[];
   runError: string | null;
 };
 
-export async function syncPendingRecords(officerId?: number | null): Promise<SyncRecordsResult> {
+export type SyncScope =
+  | { kind: 'all' }
+  | {
+      kind: 'selected';
+      recordIds?: readonly string[];
+      attachmentIds?: readonly string[];
+    };
+
+export function syncPendingRecords(
+  officerId?: number | null,
+  scope: SyncScope = { kind: 'all' }
+): Promise<SyncRecordsResult> {
+  return syncCoordinator.run(() => syncPendingRecordsInternal(officerId, scope));
+}
+
+export async function syncPendingRecordsInternal(
+  officerId?: number | null,
+  scope: SyncScope = { kind: 'all' }
+): Promise<SyncRecordsResult> {
   const token = await getAccessToken();
   if (!token) {
     return {
@@ -269,13 +332,28 @@ export async function syncPendingRecords(officerId?: number | null): Promise<Syn
     };
   }
 
-  const pending = await getPendingSync(officerId);
+  const selectedRecordIds = scope.kind === 'selected'
+    ? new Set(scope.recordIds ?? [])
+    : null;
+  const selectedAttachmentIds = scope.kind === 'selected'
+    ? new Set(scope.attachmentIds ?? [])
+    : null;
+  const allPending = await getPendingSync(officerId);
+  const pending = selectedRecordIds
+    ? allPending.filter((record) => selectedRecordIds.has(record.id))
+    : allPending;
   const attachmentResults: SyncAttachmentResult[] = [];
   const processedAttachmentTestIds = new Set<string>();
   // Flipped as soon as the server tells us to back off. Attachments are one HTTP
   // request each, so without this a throttled batch would keep spending the
   // budget we have just been told has run out.
   let throttled = false;
+
+  const attachmentInScope = (attachment: { id: string; testId: string }): boolean => {
+    if (scope.kind === 'all') return true;
+    if (selectedAttachmentIds?.has(attachment.id)) return true;
+    return selectedRecordIds?.has(attachment.testId) ?? false;
+  };
 
   const uploadAttachmentsFor = async (testId: string) => {
     if (throttled || processedAttachmentTestIds.has(testId)) return;
@@ -284,13 +362,29 @@ export async function syncPendingRecords(officerId?: number | null): Promise<Syn
 
     processedAttachmentTestIds.add(testId);
     const attachments = await getPendingAttachments(officerId);
-    const owned = attachments.filter((attachment) => attachment.testId === testId);
+    const owned = attachments.filter(
+      (attachment) => attachment.testId === testId && attachmentInScope(attachment)
+    );
 
     for (const attachment of owned) {
       try {
-        await uploadEvidencePhoto(testId, attachment.uri, attachment.category);
+        const idempotencyKey = attachment.idempotencyKey ?? evidenceIdempotencyKey(attachment.id);
+        const contentHash = isSha256(attachment.contentHash)
+          ? attachment.contentHash
+          : await hashEvidenceFile(attachment.uri);
+        if (!isSha256(contentHash)) {
+          throw new Error('Evidence file could not be hashed before upload.');
+        }
+        if (!isSha256(attachment.contentHash) && typeof updateEvidenceIntegrity === 'function') {
+          await updateEvidenceIntegrity(attachment.id, idempotencyKey, contentHash);
+        }
+        await uploadEvidencePhoto(testId, attachment.uri, attachment.category, {
+          idempotencyKey,
+          contentHash
+        });
         const syncedAt = new Date().toISOString();
         await markAttachmentSyncSuccess(attachment.id, syncedAt);
+        await deleteDurableAttachmentFile(attachment.uri);
         attachmentResults.push({
           testId,
           attachmentId: attachment.id,
@@ -303,8 +397,9 @@ export async function syncPendingRecords(officerId?: number | null): Promise<Syn
       } catch (photoError) {
         const message = normalizeSyncError(photoError, 'Photo upload failed');
         const deferred = isTransientSyncError(photoError);
+        const permanent = isPermanentSyncError(photoError);
         if (isRateLimitError(photoError)) throttled = true;
-        const finalStatus = !deferred && attachment.retryCount >= 4 ? 'failed' : 'pending_sync';
+        const finalStatus = !deferred && (permanent || attachment.retryCount >= 4) ? 'failed' : 'pending_sync';
         await recordAttachmentSyncAttempt(
           attachment.id,
           finalStatus,
@@ -328,7 +423,7 @@ export async function syncPendingRecords(officerId?: number | null): Promise<Syn
   };
 
   if (pending.length === 0) {
-    const pendingAttachments = await getPendingAttachments(officerId);
+    const pendingAttachments = (await getPendingAttachments(officerId)).filter(attachmentInScope);
     const attachmentTestIds = Array.from(new Set(pendingAttachments.map((attachment) => attachment.testId)));
     for (const testId of attachmentTestIds) {
       await uploadAttachmentsFor(testId);
@@ -356,6 +451,7 @@ export async function syncPendingRecords(officerId?: number | null): Promise<Syn
     result: record.result,
     location: safeParseLocation(record.location),
     hash: record.hash,
+    receiptNumber: record.receiptNumber,
     createdAt: record.createdAt,
     originalTestId: record.originalTestId,
     deviceTransport: record.deviceTransport ?? undefined,
@@ -370,14 +466,26 @@ export async function syncPendingRecords(officerId?: number | null): Promise<Syn
 
   let responseComplete = false;
   try {
-    const response = { synced: [] as string[], failed: [] as { id: string; error: string }[], duplicates: [] as string[] };
+    const response = {
+      synced: [] as string[],
+      failed: [] as { id: string; error: string; code?: string; retryable?: boolean }[],
+      duplicates: [] as string[],
+      duplicateReceipts: {} as Record<string, string | null>,
+      receipts: {} as Record<string, string | null>
+    };
     for (let index = 0; index < records.length; index += 50) {
       const chunk = await syncRecords(records.slice(index, index + 50));
       response.synced.push(...chunk.synced);
       response.failed.push(...chunk.failed);
       response.duplicates.push(...chunk.duplicates);
+      Object.assign(response.duplicateReceipts, chunk.duplicateReceipts ?? {});
+      Object.assign(response.receipts, chunk.receipts ?? {});
     }
     responseComplete = true;
+    const submittedIds = new Set(pending.map((record) => record.id));
+    response.synced = response.synced.filter((id) => submittedIds.has(id));
+    response.duplicates = response.duplicates.filter((id) => submittedIds.has(id));
+    response.failed = response.failed.filter((failure) => submittedIds.has(failure.id));
     const syncedIds: string[] = [];
     const failedIds: { id: string; error: string }[] = [];
 
@@ -395,7 +503,7 @@ export async function syncPendingRecords(officerId?: number | null): Promise<Syn
 
     const failedTestIds = new Set(response.failed.map((failure) => failure.id));
     const pendingTestIds = new Set(pending.map((record) => record.id));
-    const remainingAttachments = await getPendingAttachments(officerId);
+    const remainingAttachments = (await getPendingAttachments(officerId)).filter(attachmentInScope);
     const orphanTestIds = Array.from(new Set(remainingAttachments.map((attachment) => attachment.testId)))
       .filter((testId) => !pendingTestIds.has(testId) && !failedTestIds.has(testId) && !processedAttachmentTestIds.has(testId));
     for (const testId of orphanTestIds) {
@@ -404,7 +512,8 @@ export async function syncPendingRecords(officerId?: number | null): Promise<Syn
 
     for (const failure of response.failed) {
       const record = pending.find((r) => r.id === failure.id);
-      const finalStatus = record && record.retryCount >= 4 ? 'failed' : 'pending_sync';
+      const permanent = failure.retryable === false || isPermanentSyncError(failure.error);
+      const finalStatus = record && (permanent || record.retryCount >= 4) ? 'failed' : 'pending_sync';
       const normalizedFailure = {
         id: failure.id,
         error: normalizeSyncError(failure.error, 'The server rejected this record.'),
@@ -457,6 +566,8 @@ export async function syncPendingRecords(officerId?: number | null): Promise<Syn
       attempted: pending.length,
       synced: syncedIds,
       duplicates: response.duplicates,
+      duplicateReceipts: response.duplicateReceipts,
+      receipts: response.receipts,
       failed: failedIds,
       deferred: [],
       attachmentResults,
@@ -549,7 +660,17 @@ export async function syncPendingRecords(officerId?: number | null): Promise<Syn
  * Called from SyncContext's existing sync tick (see lib/SyncContext.tsx) —
  * this deliberately reuses that heartbeat rather than running its own timer.
  */
-export async function syncPendingAlertAcks(
+export function syncPendingAlertAcks(
+  officerId?: number | null
+): Promise<{
+  synced: string[];
+  failed: string[];
+  errors: { alertId: string; error: string }[];
+}> {
+  return syncCoordinator.run(() => syncPendingAlertAcksInternal(officerId));
+}
+
+export async function syncPendingAlertAcksInternal(
   officerId?: number | null
 ): Promise<{
   synced: string[];
@@ -594,6 +715,9 @@ export async function syncPendingAlertAcks(
         officerId: ack.officerId,
         metadata: { retryCount: ack.retryCount, error: message }
       });
+      if (isRateLimitError(error) || /invalid or expired access token|session expired|sign in again|unauthorized/i.test(message)) {
+        return { synced, failed, errors };
+      }
       if (isTransientSyncError(error)) {
         // Still offline, or the server is throttling us — leave queued and retry
         // next tick. Neither is the server rejecting the acknowledgement, so

@@ -75,6 +75,8 @@ function attachment(id: string, testId: string) {
     testId,
     category: 'licence_front',
     uri: `file:///${id}.jpg`,
+    idempotencyKey: `evidence-${id}`,
+    contentHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     syncStatus: 'pending_sync' as const,
     retryCount: 4,
     createdAt: '2026-08-01T10:00:01Z',

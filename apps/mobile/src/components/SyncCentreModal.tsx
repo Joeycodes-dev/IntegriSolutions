@@ -17,8 +17,6 @@ import {
   getFailedSync,
   getPendingSync,
   getSyncEvidenceAttachments,
-  resetAttachmentToPending,
-  retryFailedSyncRecord,
   type AuditEvent,
   type LocalTestRecord,
   type SyncEvidenceAttachment,
@@ -285,6 +283,8 @@ export function SyncCentreModal({
     databaseError,
     syncNow,
     retryFailed,
+    retryRecord,
+    retryEvidence,
     refreshCounts,
   } = useSync();
   const [activeTab, setActiveTab] = useState<SyncCentreTab>('overview');
@@ -412,8 +412,7 @@ export function SyncCentreModal({
     setBusyItemId(record.id);
     setNotice(null);
     try {
-      await retryFailedSyncRecord(record.id);
-      const result = await syncNow();
+      const result = await retryRecord(record.id);
       await loadDetails();
       setNotice({ type: noticeTypeForRun(result.status), text: result.message });
     } catch (error) {
@@ -437,8 +436,7 @@ export function SyncCentreModal({
     setBusyItemId(attachment.id);
     setNotice(null);
     try {
-      await resetAttachmentToPending(attachment.id);
-      const result = await syncNow();
+      const result = await retryEvidence(attachment.id);
       await loadDetails();
       setNotice({ type: noticeTypeForRun(result.status), text: result.message });
     } catch (error) {
@@ -468,7 +466,7 @@ export function SyncCentreModal({
     if (records.some((record) => record.lastError)) {
       lines.push('', 'Failed record details:');
       for (const record of records.filter((item) => item.lastError).slice(0, 20)) {
-        lines.push(`${shortId(record.id)} — ${redactDiagnosticText(record.lastError ?? '')}`);
+        lines.push(`${shortId(record.id)}${record.receiptNumber ? ` · local receipt ${record.receiptNumber}` : ''} — ${redactDiagnosticText(record.lastError ?? '')}`);
       }
     }
     if (evidence.some((item) => item.lastError)) {
@@ -648,6 +646,9 @@ export function SyncCentreModal({
                 <Text style={styles.queueMeta}>
                   {record.result.toUpperCase()} · {record.bacReading.toFixed(3)} g/100ml · {formatTimestamp(record.createdAt)}
                 </Text>
+                {record.receiptNumber ? (
+                  <Text style={styles.queueMeta}>Local receipt {record.receiptNumber}</Text>
+                ) : null}
               </View>
               <View style={[styles.statusPill, failed ? styles.statusPillError : styles.statusPillPending]}>
                 <Text style={[styles.statusPillText, failed ? styles.statusPillTextError : styles.statusPillTextPending]}>
@@ -666,9 +667,9 @@ export function SyncCentreModal({
             </View>
             {failed ? (
               <Pressable
-                style={[styles.secondaryButton, busyItemId === record.id && styles.buttonDisabled]}
+                style={[styles.secondaryButton, busyItemId !== null && styles.buttonDisabled]}
                 onPress={() => void handleRetryRecord(record)}
-                disabled={busyItemId === record.id}
+                disabled={busyItemId !== null}
                 accessibilityRole="button"
                 accessibilityLabel={`Retry test ${shortId(record.id)}`}
               >
@@ -744,9 +745,9 @@ export function SyncCentreModal({
             </View>
             {failed ? (
               <Pressable
-                style={[styles.secondaryButton, (!parentReady || busyItemId === attachment.id) && styles.buttonDisabled]}
+                style={[styles.secondaryButton, (!parentReady || busyItemId !== null) && styles.buttonDisabled]}
                 onPress={() => void handleRetryEvidence(attachment)}
-                disabled={!parentReady || busyItemId === attachment.id}
+                disabled={!parentReady || busyItemId !== null}
                 accessibilityRole="button"
                 accessibilityLabel={`Retry ${evidenceCategoryLabel(attachment.category)}`}
               >

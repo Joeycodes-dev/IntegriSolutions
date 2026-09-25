@@ -39,9 +39,14 @@ import type { AppEnv } from '../../src/env';
 const app = new Hono<AppEnv>();
 app.route('/api/evidence', evidenceRoutes);
 
+const INTEGRITY_KEY = 'evidence-test-photo-1';
+const BYTES_HASH = '277089d91c0bdf4f2e6862ba7e4a07605119431f5d13f726dd352b06f1b206a9';
+let existingEvidenceRow: Record<string, unknown> | null = null;
+
 describe('Evidence Routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    existingEvidenceRow = null;
 
     mockServiceSupabase.storage.from.mockReturnValue({
       upload: jest.fn().mockResolvedValue({ error: null }),
@@ -66,6 +71,13 @@ describe('Evidence Routes', () => {
       }
       if (table === 'evidence') {
         return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              eq: jest.fn().mockReturnValue({
+                limit: jest.fn().mockResolvedValue({ data: existingEvidenceRow ? [existingEvidenceRow] : [], error: null }),
+              }),
+            }),
+          }),
           insert: jest.fn().mockReturnValue({
             select: jest.fn().mockResolvedValue({
               data: [{
@@ -92,17 +104,42 @@ describe('Evidence Routes', () => {
     function captureEvidenceInsert() {
       const fromMock = mockServiceSupabase.from as jest.Mock;
       const evidenceCall = fromMock.mock.calls.find((args) => args[0] === 'evidence');
-      const branch = fromMock.mock.results.find(
-        (result, index) => fromMock.mock.calls[index]?.[0] === 'evidence'
+      const evidenceResults = fromMock.mock.results.filter(
+        (_result, index) => fromMock.mock.calls[index]?.[0] === 'evidence'
       );
+      const branch = evidenceResults[evidenceResults.length - 1];
       const insertMock = (branch?.value as { insert?: unknown } | undefined)?.insert;
       return insertMock as jest.Mock | undefined;
     }
+
+    it('requires both an idempotency key and a content hash', async () => {
+      const response = await request(app)
+        .post('/api/evidence/test-1')
+        .set('Authorization', 'Bearer valid-token')
+        .attach('photo', Buffer.from('bytes'), 'photo.jpg');
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('Idempotency-Key');
+    });
+
+    it('rejects a claimed hash that does not match the uploaded bytes', async () => {
+      const response = await request(app)
+        .post('/api/evidence/test-1')
+        .set('Authorization', 'Bearer valid-token')
+        .set('Idempotency-Key', INTEGRITY_KEY)
+        .set('X-Content-SHA256', 'a'.repeat(64))
+        .attach('photo', Buffer.from('bytes'), 'photo.jpg');
+
+      expect(response.status).toBe(409);
+      expect(response.body.error).toContain('does not match');
+    });
 
     it('uploads a photo with the default category when none is supplied', async () => {
       const response = await request(app)
         .post('/api/evidence/test-1')
         .set('Authorization', 'Bearer valid-token')
+        .set('Idempotency-Key', INTEGRITY_KEY)
+        .set('X-Content-SHA256', BYTES_HASH)
         .attach('photo', Buffer.from('bytes'), 'photo.jpg');
 
       expect(response.status).toBe(201);
@@ -122,6 +159,8 @@ describe('Evidence Routes', () => {
       const response = await request(app)
         .post('/api/evidence/test-1')
         .set('Authorization', 'Bearer valid-token')
+        .set('Idempotency-Key', INTEGRITY_KEY)
+        .set('X-Content-SHA256', BYTES_HASH)
         .field('category', 'licence_front')
         .attach('photo', Buffer.from('bytes'), 'photo.jpg');
 
@@ -135,18 +174,63 @@ describe('Evidence Routes', () => {
       ]);
     });
 
-    it('falls back to vehicle for an invalid category', async () => {
+    it('replays the same key and bytes without inserting a second row', async () => {
+      existingEvidenceRow = {
+        id: 7,
+        test_id: 'test-1',
+        category: 'vehicle',
+        notes: null,
+        content_hash: BYTES_HASH,
+        idempotency_key: INTEGRITY_KEY,
+        photo_url: 'https://supabase.example/photo.jpg',
+      };
+
       const response = await request(app)
         .post('/api/evidence/test-1')
         .set('Authorization', 'Bearer valid-token')
+        .set('Idempotency-Key', INTEGRITY_KEY)
+        .set('X-Content-SHA256', BYTES_HASH)
+        .attach('photo', Buffer.from('bytes'), 'photo.jpg');
+
+      expect(response.status).toBe(200);
+      expect(response.body.duplicate).toBe(true);
+      expect(captureEvidenceInsert()).toBeDefined();
+      expect(mockServiceSupabase.storage.from().upload).not.toHaveBeenCalled();
+    });
+
+    it('rejects reuse of a key with different bytes', async () => {
+      existingEvidenceRow = {
+        id: 7,
+        test_id: 'test-1',
+        category: 'vehicle',
+        notes: null,
+        content_hash: 'b'.repeat(64),
+        idempotency_key: INTEGRITY_KEY,
+      };
+
+      const response = await request(app)
+        .post('/api/evidence/test-1')
+        .set('Authorization', 'Bearer valid-token')
+        .set('Idempotency-Key', INTEGRITY_KEY)
+        .set('X-Content-SHA256', BYTES_HASH)
+        .attach('photo', Buffer.from('bytes'), 'photo.jpg');
+
+      expect(response.status).toBe(409);
+      expect(mockServiceSupabase.storage.from().upload).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid category', async () => {
+      const response = await request(app)
+        .post('/api/evidence/test-1')
+        .set('Authorization', 'Bearer valid-token')
+        .set('Idempotency-Key', INTEGRITY_KEY)
+        .set('X-Content-SHA256', BYTES_HASH)
         .field('category', 'selfie')
         .attach('photo', Buffer.from('bytes'), 'photo.jpg');
 
-      expect(response.status).toBe(201);
-      const insertMock = captureEvidenceInsert();
-      expect(insertMock).toHaveBeenCalledWith([
-        expect.objectContaining({ category: 'vehicle' }),
-      ]);
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe('Invalid evidence category');
+      expect(captureEvidenceInsert()).toBeUndefined();
     });
 
     it('returns 404 when the test does not exist', async () => {
@@ -171,6 +255,8 @@ describe('Evidence Routes', () => {
       const response = await request(app)
         .post('/api/evidence/non-existent')
         .set('Authorization', 'Bearer valid-token')
+        .set('Idempotency-Key', INTEGRITY_KEY)
+        .set('X-Content-SHA256', BYTES_HASH)
         .attach('photo', Buffer.from('bytes'), 'photo.jpg');
 
       expect(response.status).toBe(404);

@@ -184,7 +184,7 @@ describe('Sync Routes', () => {
       mockServiceSupabase.from.mockReturnValue({
         select: jest.fn().mockReturnValue({
           eq: jest.fn().mockReturnValue({
-            single: jest.fn().mockResolvedValue({ data: { id: 'test-123' }, error: null }),
+            single: jest.fn().mockResolvedValue({ data: { id: 'test-123', hash: validRecord.hash, receipt_number: null }, error: null }),
           }),
         }),
       });
@@ -197,6 +197,54 @@ describe('Sync Routes', () => {
       expect(response.status).toBe(200);
       expect(response.body.duplicates).toContain('test-123');
       expect(response.body.synced).toHaveLength(0);
+    });
+
+    it('returns a terminal collision when the stored hash differs', async () => {
+      mockServiceSupabase.from.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            single: jest.fn().mockResolvedValue({
+              data: { id: 'test-123', hash: 'b'.repeat(64), receipt_number: null },
+              error: null,
+            }),
+          }),
+        }),
+      });
+
+      const response = await request(app)
+        .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
+        .send({ records: [validRecord] });
+
+      expect(response.status).toBe(200);
+      expect(response.body.duplicates).not.toContain('test-123');
+      expect(response.body.failed[0]).toMatchObject({
+        id: 'test-123',
+        code: 'RECORD_ID_COLLISION',
+        retryable: false,
+      });
+    });
+
+    it('returns a terminal conflict when a receipt differs for the same hash', async () => {
+      const record = { ...validRecord, receiptNumber: 'IS-20260530-ABCDEF1234567890' };
+      mockServiceSupabase.from.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          eq: jest.fn().mockReturnValue({
+            single: jest.fn().mockResolvedValue({
+              data: { id: 'test-123', hash: validRecord.hash, receipt_number: 'IS-20260530-0000000000000000' },
+              error: null,
+            }),
+          }),
+        }),
+      });
+
+      const response = await request(app)
+        .post('/api/sync')
+        .set('Authorization', 'Bearer token-123')
+        .send({ records: [record] });
+
+      expect(response.status).toBe(200);
+      expect(response.body.failed[0]).toMatchObject({ code: 'RECEIPT_MISMATCH', retryable: false });
     });
 
     it('should successfully sync valid records', async () => {

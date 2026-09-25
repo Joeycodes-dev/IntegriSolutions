@@ -18,7 +18,6 @@ import { useSync } from '../lib/SyncContext';
 import {
   getAllTests,
   getAttachmentsByTest,
-  resetAttachmentToPending,
   type LocalTestRecord,
   type LocalEvidenceAttachment
 } from '../db/repository';
@@ -89,7 +88,7 @@ function AttachmentRow({
 
 export function OfficerReportsScreen(_props: Props) {
   const { profile, signOut } = useAuth();
-  const { pendingCount, failedCount, syncedCount } = useSync();
+  const { pendingCount, failedCount, syncedCount, retryEvidence } = useSync();
   const [tests, setTests] = useState<LocalTestRecord[]>([]);
   const [attachmentsByTest, setAttachmentsByTest] = useState<Record<string, LocalEvidenceAttachment[]>>({});
   const [loading, setLoading] = useState(true);
@@ -121,17 +120,14 @@ export function OfficerReportsScreen(_props: Props) {
 
   const handleAttachmentRetry = async (attachment: LocalEvidenceAttachment) => {
     try {
-      await resetAttachmentToPending(attachment.id);
-      setAttachmentsByTest((prev) => ({
-        ...prev,
-        [attachment.testId]: (prev[attachment.testId] ?? []).map((item) =>
-          item.id === attachment.id ? { ...item, syncStatus: 'pending_sync' as const } : item
-        )
-      }));
-      Alert.alert(
-        'Attachment queued',
-        `${evidenceCategoryLabel(attachment.category)} will retry on the next sync.`
-      );
+      const result = await retryEvidence(attachment.id);
+      if (result.status === 'auth_required') {
+        Alert.alert('Sign-in required', 'Sign in before retrying this evidence item.');
+      } else if (result.status === 'offline') {
+        Alert.alert('Offline', 'The evidence item remains safe and will retry when connected.');
+      } else {
+        await loadTests();
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Retry failed';
       Alert.alert('Retry failed', message);

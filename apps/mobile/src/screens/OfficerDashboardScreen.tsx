@@ -32,8 +32,9 @@ import {
 import {
   classifyBacReading,
   resolveDriverPolicy,
+  type ResolvedDriverPolicy,
 } from "../lib/driverPolicy";
-import { saveLocally, syncPendingRecords } from "../services/sync";
+import { saveLocally } from "../services/sync";
 import { useSync } from "../lib/SyncContext";
 import { getRuntimeConfig, updateDutyStatus } from "../services/api";
 import { useAlertsContext } from "../lib/AlertsContext";
@@ -72,6 +73,7 @@ import {
 import {
   getSelectedRoadblockShift,
   isRoadblockShiftActive,
+  type RoadblockShift,
 } from "../services/shifts";
 import type { LocalTestRecord } from "../db/repository";
 import { OfficerBottomNav } from "../components/OfficerBottomNav";
@@ -81,6 +83,21 @@ import {
   EVIDENCE_CATEGORY_LABELS,
   type EvidenceCategory,
 } from "../lib/evidenceCategories";
+import {
+  draftOwnerForProfile,
+  type ActiveTestDraftContent,
+  type ActiveTestPendingCapture,
+} from "../lib/activeTestDraft";
+import { useActiveTestDraftPersistence } from "../lib/useActiveTestDraftPersistence";
+import {
+  deleteDurableAttachmentFile,
+  durableAttachmentExists,
+  persistDraftAttachment,
+} from "../services/activeTestDraftAttachments";
+import {
+  evidenceIdempotencyKey,
+  hashEvidenceFile,
+} from "../lib/evidenceIntegrity";
 
 import { styles } from "./OfficerDashboardScreen.styles";
 import { colors } from "../styles/colors";
@@ -106,6 +123,8 @@ type CapturedAttachment = {
   id: string;
   category: EvidenceCategory;
   uri: string;
+  idempotencyKey?: string;
+  contentHash?: string | null;
 };
 
 type AttachmentMap = Partial<Record<EvidenceCategory, CapturedAttachment>>;
@@ -742,6 +761,13 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     useState<DriverLicenseData | null>(null);
   const [isRetest, setIsRetest] = useState(false);
   const [autoWorkflow, setAutoWorkflow] = useState(false);
+  const [subjectSource, setSubjectSource] = useState<ActiveTestDraftContent["subjectSource"]>("barcode");
+  const [selectedShift, setSelectedShift] = useState<RoadblockShift | null>(null);
+  const [capturedDriverPolicy, setCapturedDriverPolicy] =
+    useState<ResolvedDriverPolicy | null>(null);
+  const [draftWarning, setDraftWarning] = useState<string | null>(null);
+  const [missingAttachmentUris, setMissingAttachmentUris] = useState<string[]>([]);
+  const pendingCaptureRef = useRef<ActiveTestPendingCapture | null>(null);
   const [ocrDebug, setOcrDebug] = useState<DriverLicenseData["_ocr"] | null>(
     null,
   );
@@ -830,12 +856,114 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }
   };
 
-  const driverPolicy = useMemo(
+  const resolvedDriverPolicy = useMemo(
     () => resolveDriverPolicy(scannedData?.licenseCodes, runtimeConfig),
     [runtimeConfig, scannedData?.licenseCodes],
   );
+  const driverPolicy = capturedDriverPolicy ?? resolvedDriverPolicy;
   const bacLimit = driverPolicy.limitG100ml;
   const bacPresentation = bacStatus(bacReading, bacLimit);
+
+  useEffect(() => {
+    if (scannedData && !capturedDriverPolicy) {
+      setCapturedDriverPolicy(resolvedDriverPolicy);
+    }
+  }, [capturedDriverPolicy, resolvedDriverPolicy, scannedData]);
+
+  const draftOwner = useMemo(
+    () => (profile ? draftOwnerForProfile(profile) : null),
+    [profile],
+  );
+  const buildDraftSnapshot = useCallback(
+    (): ActiveTestDraftContent => ({
+      step: step === "reading" ? "reading" : "scan",
+      subjectSource,
+      scannedData,
+      decryptedData: decryptedLicenseData,
+      decryptError,
+      officerNotes: officerNotes.slice(0, 10_000),
+      bacReading: bacReading.slice(0, 32),
+      capturedDeviceEvidence,
+      photoUri,
+      attachments: Object.values(attachments).filter(
+        (attachment): attachment is CapturedAttachment => !!attachment,
+      ),
+      selectedShift,
+      policy: driverPolicy,
+      retest:
+        isRetest && lastSavedTestId && lastSavedDriver
+          ? { originalTestId: lastSavedTestId, driver: lastSavedDriver }
+          : null,
+      autoWorkflow,
+      pendingCapture: pendingCaptureRef.current,
+    }),
+    [
+      step,
+      subjectSource,
+      scannedData,
+      decryptedLicenseData,
+      decryptError,
+      officerNotes,
+      bacReading,
+      capturedDeviceEvidence,
+      photoUri,
+      attachments,
+      selectedShift,
+      driverPolicy,
+      isRetest,
+      lastSavedTestId,
+      lastSavedDriver,
+      autoWorkflow,
+    ],
+  );
+  const {
+    recoverableDraft,
+    recoveryIssue,
+    storageError: draftStorageError,
+    refresh: refreshDraft,
+    adopt: adoptDraft,
+    schedulePersist: scheduleDraftPersist,
+    flush: flushDraft,
+    getDraftIdentity,
+    commit: commitDraft,
+    discard: discardDraft,
+  } = useActiveTestDraftPersistence({
+    owner: draftOwner,
+    enabled: step === "scan" || step === "reading",
+    buildSnapshot: buildDraftSnapshot,
+    onStorageError: setDraftWarning,
+  });
+
+  useEffect(() => {
+    if (step === "scan" || step === "reading") {
+      scheduleDraftPersist();
+    }
+  }, [
+    step,
+    subjectSource,
+    scannedData,
+    decryptedLicenseData,
+    decryptError,
+    officerNotes,
+    bacReading,
+    capturedDeviceEvidence,
+    photoUri,
+    attachments,
+    selectedShift,
+    driverPolicy,
+    isRetest,
+    lastSavedTestId,
+    lastSavedDriver,
+    autoWorkflow,
+    scheduleDraftPersist,
+  ]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      void refreshDraft();
+      return undefined;
+    }, [refreshDraft]),
+  );
 
   const resetActiveSubjectState = ({
     clearRetestContext = true,
@@ -852,7 +980,12 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     setAttachments({});
     setOfficerNotes("");
     setAutoWorkflow(false);
+    setSubjectSource("barcode");
+    setCapturedDriverPolicy(null);
     setOcrDebug(null);
+    setDraftWarning(null);
+    setMissingAttachmentUris([]);
+    pendingCaptureRef.current = null;
 
     if (clearRetestContext) {
       setLastSavedTestId(null);
@@ -866,12 +999,24 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     resetActiveSubjectState();
   };
 
-  const startScan = async () => {
+  const loadSelectedShiftForTest = async (): Promise<RoadblockShift | null> => {
+    try {
+      const storedShift = await getSelectedRoadblockShift();
+      return isRoadblockShiftActive(storedShift) ? storedShift : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const beginFreshScan = async () => {
     if (isDevBypassProfile(profile)) {
       if (!profile) return;
+      const shift = await loadSelectedShiftForTest();
       resetSessionState();
+      setSelectedShift(shift);
       setHasPermission(true);
       setScannedData(DEV_DRIVER_LICENSE);
+      setSubjectSource("developer");
       setLicensePayload(DEV_LICENSE_PAYLOAD);
       setStep("reading");
       setAutoCaptureBac(DEV_BAC_READING);
@@ -885,9 +1030,46 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       return;
     }
 
+    const shift = await loadSelectedShiftForTest();
     resetSessionState();
+    setSelectedShift(shift);
     setHasPermission(true);
     setStep("scan");
+  };
+
+  const startScan = async () => {
+    if (recoverableDraft || recoveryIssue) {
+      const actions = [];
+      if (recoverableDraft) {
+        actions.push({
+          text: "Resume",
+          onPress: () => {
+            void resumeCurrentTest();
+          },
+        });
+      }
+      actions.push({
+        text: "Discard & start new",
+        style: "destructive" as const,
+        onPress: () => {
+          void (async () => {
+            await discardDraft();
+            await beginFreshScan();
+          })();
+        },
+      });
+      actions.push({ text: "Cancel", style: "cancel" as const });
+      Alert.alert(
+        "Unfinished test found",
+        recoverableDraft
+          ? "Resume the saved active test before starting a new subject."
+          : "The saved active test could not be read. Discard it before starting a new subject.",
+        actions,
+      );
+      return;
+    }
+
+    await beginFreshScan();
   };
 
   const handleBarcodeScanned = (scanningResult: BarcodeScanningResult) => {
@@ -923,13 +1105,102 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       setBarcodeScanned(false);
       return;
     }
-    resetActiveSubjectState();
+    resetActiveSubjectState({ clearRetestContext: !isRetest });
+    setSubjectSource("barcode");
     setLicensePayload(formatRawPayloadForDisplay(rawPayload));
     setScannedData(data);
     setDecryptedLicenseData(decodedLicense);
     setDecryptError(decryptErrorMessage);
     setOcrDebug(null);
     setStep("reading");
+  };
+
+  const processFrontImage = async (
+    image: ImagePicker.ImagePickerAsset,
+    retryMode = false,
+    previousUri?: string | null,
+  ) => {
+    const qualityIssue = getCaptureQualityIssue(image);
+    if (qualityIssue) {
+      pendingCaptureRef.current = null;
+      scheduleDraftPersist();
+      Alert.alert("Retake required", qualityIssue);
+      return;
+    }
+
+    const identity = getDraftIdentity();
+    if (!identity) {
+      pendingCaptureRef.current = null;
+      scheduleDraftPersist();
+      Alert.alert("Draft unavailable", "Could not prepare local test recovery. Please try again.");
+      return;
+    }
+    const attachmentId = generateId();
+    let durableUri: string;
+    try {
+      durableUri = await persistDraftAttachment({
+        draftId: identity.draftId,
+        attachmentId,
+        sourceUri: image.uri,
+        mimeType: image.mimeType,
+      });
+    } catch (error) {
+      pendingCaptureRef.current = null;
+      scheduleDraftPersist();
+      const message = error instanceof Error ? error.message : "The photo could not be stored safely.";
+      Alert.alert("Photo could not be stored", message);
+      return;
+    }
+
+    let contentHash: string;
+    try {
+      contentHash = await hashEvidenceFile(durableUri);
+    } catch (error) {
+      void deleteDurableAttachmentFile(durableUri);
+      pendingCaptureRef.current = null;
+      scheduleDraftPersist();
+      const message = error instanceof Error ? error.message : "The photo could not be hashed for safe upload.";
+      Alert.alert("Photo integrity check failed", message);
+      return;
+    }
+    if (previousUri && previousUri !== durableUri) {
+      void deleteDurableAttachmentFile(previousUri);
+    }
+    setMissingAttachmentUris((previous) => previous.filter((uri) => uri !== durableUri));
+    setSubjectSource("photo");
+    setPhotoUri(durableUri);
+    setAttachments((prev) => ({
+      ...prev,
+      licence_front: {
+        id: attachmentId,
+        category: "licence_front",
+        uri: durableUri,
+        idempotencyKey: evidenceIdempotencyKey(attachmentId),
+        contentHash,
+      },
+    }));
+    setBarcodeScanned(true);
+    setLicensePayload(null);
+    setDecryptError(null);
+    setAutoWorkflow(true);
+    try {
+      if (!image.base64)
+        throw new Error("The camera did not return image data.");
+      const data = await scanDriverLicense(durableUri, { retry: retryMode });
+      setScannedData(data);
+      setOcrDebug(data._ocr ?? null);
+      setDecryptedLicenseData(null);
+      setStep("reading");
+    } catch (error) {
+      setBarcodeScanned(false);
+      setAutoWorkflow(false);
+      const message =
+        error instanceof Error ? error.message : "Licence OCR failed.";
+      Alert.alert("Licence scan failed", message);
+    } finally {
+      pendingCaptureRef.current = null;
+      scheduleDraftPersist();
+    }
   };
 
   const captureFrontOfLicense = async (retryMode = false) => {
@@ -950,6 +1221,13 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       return;
     }
 
+    const preserveRetest = isRetest;
+    const previousUri = attachments.licence_front?.uri;
+    resetActiveSubjectState({ clearRetestContext: !preserveRetest });
+    pendingCaptureRef.current = { kind: "licence_front" };
+    scheduleDraftPersist();
+    await flushDraft();
+
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ["images"],
       quality: 0.8,
@@ -958,54 +1236,93 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     });
 
     const image = result.assets?.[0];
-    if (result.canceled || !image) return;
-
-    const qualityIssue = getCaptureQualityIssue(image);
-    if (qualityIssue) {
-      Alert.alert("Retake required", qualityIssue);
+    if (result.canceled || !image) {
+      pendingCaptureRef.current = null;
+      scheduleDraftPersist();
       return;
     }
 
-    resetActiveSubjectState();
-    setPhotoUri(image.uri);
-    setAttachments((prev) => ({
-      ...prev,
-      licence_front: { id: generateId(), category: "licence_front", uri: image.uri },
-    }));
-    setBarcodeScanned(true);
-    setLicensePayload(null);
-    setDecryptError(null);
-    setAutoWorkflow(true);
-    try {
-      if (!image.base64)
-        throw new Error("The camera did not return image data.");
-      const data = await scanDriverLicense(image.uri, { retry: retryMode });
-      setScannedData(data);
-      setOcrDebug(data._ocr ?? null);
-      setDecryptedLicenseData(null);
-      setStep("reading");
-    } catch (error) {
-      setBarcodeScanned(false);
-      setAutoWorkflow(false);
-      const message =
-        error instanceof Error ? error.message : "Licence OCR failed.";
-      Alert.alert("Licence scan failed", message);
-    }
+    await processFrontImage(image, retryMode, previousUri);
   };
 
   const retakeFrontOfLicense = async () => {
     await captureFrontOfLicense(true);
   };
 
-  const cancelScan = () => {
+  const cancelScan = async () => {
+    await discardDraft();
     resetSessionState();
+    setSelectedShift(null);
     setStep("idle");
   };
 
-  const returnToScanner = () => {
-    resetActiveSubjectState();
+  const returnToScanner = async () => {
+    const preserveRetest = isRetest;
+    await discardDraft();
+    resetActiveSubjectState({ clearRetestContext: !preserveRetest });
     setHasPermission(true);
     setStep("scan");
+  };
+
+  const processEvidenceImage = async (
+    category: EvidenceCategory,
+    image: ImagePicker.ImagePickerAsset,
+  ) => {
+    const identity = getDraftIdentity();
+    if (!identity) {
+      pendingCaptureRef.current = null;
+      scheduleDraftPersist();
+      Alert.alert("Draft unavailable", "Could not prepare local evidence recovery. Please try again.");
+      return;
+    }
+    const attachmentId = generateId();
+    let durableUri: string;
+    try {
+      durableUri = await persistDraftAttachment({
+        draftId: identity.draftId,
+        attachmentId,
+        sourceUri: image.uri,
+        mimeType: image.mimeType,
+      });
+    } catch (error) {
+      pendingCaptureRef.current = null;
+      scheduleDraftPersist();
+      const message = error instanceof Error ? error.message : "The photo could not be stored safely.";
+      Alert.alert("Photo could not be stored", message);
+      return;
+    }
+
+    let contentHash: string;
+    try {
+      contentHash = await hashEvidenceFile(durableUri);
+    } catch (error) {
+      void deleteDurableAttachmentFile(durableUri);
+      pendingCaptureRef.current = null;
+      scheduleDraftPersist();
+      const message = error instanceof Error ? error.message : "The photo could not be hashed for safe upload.";
+      Alert.alert("Photo integrity check failed", message);
+      return;
+    }
+    const previousUri = attachments[category]?.uri;
+    if (previousUri && previousUri !== durableUri) {
+      void deleteDurableAttachmentFile(previousUri);
+    }
+    setMissingAttachmentUris((previous) => previous.filter((uri) => uri !== durableUri));
+    setAttachments((prev) => ({
+      ...prev,
+      [category]: {
+        id: attachmentId,
+        category,
+        uri: durableUri,
+        idempotencyKey: evidenceIdempotencyKey(attachmentId),
+        contentHash,
+      },
+    }));
+    if (!photoUri) {
+      setPhotoUri(durableUri);
+    }
+    pendingCaptureRef.current = null;
+    scheduleDraftPersist();
   };
 
   const captureAttachment = async (category: EvidenceCategory) => {
@@ -1018,6 +1335,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       return;
     }
 
+    pendingCaptureRef.current = { kind: "evidence", category };
+    scheduleDraftPersist();
+    await flushDraft();
+
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ["images"],
       quality: 0.7,
@@ -1025,19 +1346,21 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     });
 
     const image = result.assets?.[0];
-    if (result.canceled || !image) return;
-
-    setAttachments((prev) => ({
-      ...prev,
-      [category]: { id: generateId(), category, uri: image.uri },
-    }));
-    if (!photoUri) {
-      setPhotoUri(image.uri);
+    if (result.canceled || !image) {
+      pendingCaptureRef.current = null;
+      scheduleDraftPersist();
+      return;
     }
+
+    await processEvidenceImage(category, image);
   };
 
   const removeAttachment = (category: EvidenceCategory) => {
     const current = attachments[category];
+    if (current) {
+      setMissingAttachmentUris((previous) => previous.filter((uri) => uri !== current.uri));
+      void deleteDurableAttachmentFile(current.uri);
+    }
     setAttachments((prev) => {
       const next = { ...prev };
       delete next[category];
@@ -1050,11 +1373,13 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }
   };
 
-  const handleRetest = () => {
+  const handleRetest = async () => {
     if (!lastSavedTestId || !lastSavedDriver) return;
 
+    await commitDraft();
     resetActiveSubjectState({ clearRetestContext: false });
     setScannedData(lastSavedDriver);
+    setSubjectSource("barcode");
     setIsRetest(true);
     setStep("reading");
   };
@@ -1067,15 +1392,120 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     }
   };
 
-  const handleFinishSession = () => {
+  const handleFinishSession = async () => {
+    await discardDraft();
     resetSessionState();
+    setSelectedShift(null);
     setStep("idle");
   };
 
-  const abortSession = () => {
+  const abortSession = async () => {
     if (isSaving) return;
+    await discardDraft();
     resetSessionState();
+    setSelectedShift(null);
     setStep("idle");
+  };
+
+  const recoverPendingPickerImage = async (
+    pending: ActiveTestPendingCapture,
+  ): Promise<void> => {
+    if (Platform.OS === "web") return;
+    try {
+      const result = await ImagePicker.getPendingResultAsync();
+      if (!result || !("assets" in result) || result.canceled || !result.assets?.[0]) {
+        pendingCaptureRef.current = null;
+        scheduleDraftPersist();
+        return;
+      }
+      const image = result.assets[0];
+      if (pending.kind === "licence_front") {
+        await processFrontImage(image, false);
+      } else {
+        await processEvidenceImage(pending.category, image);
+      }
+    } catch (error) {
+      pendingCaptureRef.current = null;
+      scheduleDraftPersist();
+      const message = error instanceof Error ? error.message : "The pending photo could not be recovered.";
+      Alert.alert("Photo recovery failed", message);
+    }
+  };
+
+  const resumeCurrentTest = async () => {
+    const draft = recoverableDraft;
+    if (!draft) {
+      await refreshDraft();
+      return;
+    }
+
+    if (draft.step === "scan") {
+      const { status } = await Camera.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Camera access denied",
+          "Allow camera access to resume the licence scanner.",
+        );
+        return;
+      }
+    }
+
+    const durableUris = [
+      draft.photoUri,
+      ...draft.attachments.map((attachment) => attachment.uri),
+    ].filter((uri): uri is string => !!uri);
+    const uniqueUris = [...new Set(durableUris)];
+    const missingUris: string[] = [];
+    for (const uri of uniqueUris) {
+      if (!(await durableAttachmentExists(uri))) missingUris.push(uri);
+    }
+    const warnings: string[] = [];
+    if (missingUris.length > 0) {
+      warnings.push(
+        `${missingUris.length} recovered photo${missingUris.length === 1 ? " is" : "s are"} no longer available on this device. Recapture the missing evidence before saving.`,
+      );
+    }
+    if (draft.selectedShift && !isRoadblockShiftActive(draft.selectedShift)) {
+      warnings.push("The selected roadblock shift has ended; verify the shift before saving.");
+    }
+    setDraftWarning(warnings.length > 0 ? warnings.join(" ") : null);
+    setMissingAttachmentUris(missingUris);
+
+    breathalyzerSession.startNewSubject();
+    setScannedData(draft.scannedData);
+    setLicensePayload(null);
+    setDecryptedLicenseData(draft.decryptedData);
+    setDecryptError(draft.decryptError);
+    setBarcodeScanned(!!draft.scannedData);
+    setBacReading(draft.bacReading);
+    setCapturedDeviceEvidence(draft.capturedDeviceEvidence);
+    setAutoCaptureBac(null);
+    const recoveredPhotoUri =
+      draft.photoUri && !missingUris.includes(draft.photoUri)
+        ? draft.photoUri
+        : draft.attachments.find((attachment) => !missingUris.includes(attachment.uri))?.uri ?? null;
+    setPhotoUri(recoveredPhotoUri);
+    setAttachments(
+      Object.fromEntries(
+        draft.attachments.map((attachment) => [attachment.category, attachment]),
+      ) as AttachmentMap,
+    );
+    setOfficerNotes(draft.officerNotes);
+    setSelectedShift(draft.selectedShift);
+    setCapturedDriverPolicy(draft.policy);
+    setIsRetest(!!draft.retest);
+    setLastSavedTestId(draft.retest?.originalTestId ?? null);
+    setLastSavedDriver(draft.retest?.driver ?? null);
+    setAutoWorkflow(draft.autoWorkflow);
+    setOcrDebug(null);
+    setHasPermission(true);
+    setSubjectSource(draft.subjectSource);
+    pendingCaptureRef.current = draft.pendingCapture ?? null;
+    setStep(draft.step);
+    adoptDraft(draft);
+    if (draft.pendingCapture) {
+      await recoverPendingPickerImage(draft.pendingCapture);
+    }
   };
 
   useEffect(() => {
@@ -1212,24 +1642,55 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
     setIsSaving(true);
     try {
+      const localAttachments = Object.values(attachments).filter(
+        (attachment): attachment is CapturedAttachment => !!attachment,
+      );
+      const attachmentUris = [
+        ...localAttachments.map((attachment) => attachment.uri),
+        ...(photoUri && !localAttachments.some((attachment) => attachment.uri === photoUri)
+          ? [photoUri]
+          : []),
+      ];
+      const missingNow: string[] = [];
+      for (const uri of attachmentUris) {
+        if (!(await durableAttachmentExists(uri))) {
+          missingNow.push(uri);
+        }
+      }
+      if (missingNow.length > 0) {
+        setMissingAttachmentUris(missingNow);
+        Alert.alert(
+          "Evidence photo missing",
+          "One or more recovered photos are no longer available. Recapture the missing evidence before saving this record.",
+        );
+        return;
+      }
+      setMissingAttachmentUris([]);
+      scheduleDraftPersist();
+      await flushDraft();
+      const draftIdentity = getDraftIdentity();
       const storedShift = await getSelectedRoadblockShift();
-      const selectedShift = isRoadblockShiftActive(storedShift)
-        ? storedShift
-        : null;
+      const shiftForSave = selectedShift
+        ? isRoadblockShiftActive(selectedShift)
+          ? selectedShift
+          : null
+        : isRoadblockShiftActive(storedShift)
+          ? storedShift
+          : null;
 
       const currentLocation = await getDeviceLocation();
       const effectiveLimit = driverPolicy.limitG100ml;
       const isOver = reading >= effectiveLimit;
       const result = reading === 0 ? "pass" : isOver ? "fail" : "pass";
-      const id = generateId();
+      const id = draftIdentity?.plannedTestId ?? generateId();
 
       const location = buildTestLocation({
         lat: currentLocation.lat,
         lng: currentLocation.lng,
-        roadblock: selectedShift?.roadblockName ?? "",
+        roadblock: shiftForSave?.roadblockName ?? "",
         station:
-          selectedShift?.station || stationFromProfileRegion(profile.region),
-        roadblockShift: selectedShift,
+          shiftForSave?.station || stationFromProfileRegion(profile.region),
+        roadblockShift: shiftForSave,
         officerRank: "",
         serviceNumber: profile.badgeNumber,
         officerNotes,
@@ -1251,21 +1712,21 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         bacReading: reading,
         result,
         location,
+        createdAt: draftIdentity?.createdAt,
         photoUri,
-        attachments: Object.values(attachments).filter(
-          (attachment): attachment is CapturedAttachment => !!attachment,
-        ),
+        attachments: localAttachments,
         originalTestId: isRetest ? lastSavedTestId : null,
         device: capturedDeviceEvidence,
       });
 
+      await commitDraft();
       setLastSavedTestId(id);
       setLastSavedDriver(scannedData);
       setIsRetest(false);
       setStep("saved");
       await refreshCounts();
 
-      syncPendingRecords(profile.officerId ?? null).catch(() => {
+      void Promise.resolve(forceSync()).catch(() => {
         // Background sync attempt — errors are non-blocking
       });
     } catch (error) {
@@ -1406,6 +1867,14 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             otherAlertsCount={alertsSummary.otherCount}
             onAcknowledgeAlert={handleAcknowledgeAlert}
             onViewAlerts={() => navigation.navigate("Alerts")}
+            recoverableDraft={recoverableDraft}
+            draftRecoveryIssue={recoveryIssue}
+            onResumeDraft={() => {
+              void resumeCurrentTest();
+            }}
+            onDiscardDraft={() => {
+              void discardDraft();
+            }}
           />
         )}
 
@@ -1447,6 +1916,14 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
         {step === "reading" && (
           <View style={styles.card}>
+            {draftWarning || draftStorageError ? (
+              <View style={styles.decryptErrorCard}>
+                <Text style={styles.decryptErrorLabel}>Recovery notice</Text>
+                <Text style={styles.decryptErrorText}>
+                  {draftWarning ?? draftStorageError}
+                </Text>
+              </View>
+            ) : null}
             <View style={styles.profileSummary}>
               <View style={styles.profileIcon}>
                 <MaterialCommunityIcons
@@ -1861,10 +2338,17 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               <Pressable
                 style={[
                   styles.primaryButton,
-                  (!bacReading || isSaving) && styles.buttonDisabled,
+                  (!bacReading ||
+                    isSaving ||
+                    missingAttachmentUris.length > 0) &&
+                    styles.buttonDisabled,
                 ]}
                 onPress={saveRecord}
-                disabled={!bacReading || isSaving}
+                disabled={
+                  !bacReading ||
+                  isSaving ||
+                  missingAttachmentUris.length > 0
+                }
               >
                 {isSaving ? (
                   <ActivityIndicator color="#fff" />

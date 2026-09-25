@@ -18,6 +18,7 @@ const SCHEMA = `
     result TEXT NOT NULL,
     location TEXT NOT NULL,
     hash TEXT NOT NULL,
+    receiptNumber TEXT,
     syncStatus TEXT NOT NULL DEFAULT 'pending_sync',
     createdAt TEXT NOT NULL,
     syncedAt TEXT,
@@ -42,9 +43,13 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS drafts (
     id TEXT PRIMARY KEY NOT NULL,
     officerId INTEGER,
+    ownerKey TEXT,
     driverData TEXT NOT NULL DEFAULT '',
     step TEXT NOT NULL DEFAULT 'scan',
-    createdAt TEXT NOT NULL
+    payloadVersion INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT
   );
 
   CREATE TABLE IF NOT EXISTS audit_events (
@@ -71,6 +76,8 @@ const SCHEMA = `
     testId TEXT NOT NULL,
     category TEXT NOT NULL,
     uri TEXT NOT NULL,
+    idempotencyKey TEXT,
+    contentHash TEXT,
     syncStatus TEXT NOT NULL DEFAULT 'pending_sync',
     retryCount INTEGER NOT NULL DEFAULT 0,
     createdAt TEXT NOT NULL,
@@ -123,7 +130,7 @@ export async function getDB(): Promise<SQLite.SQLiteDatabase> {
     return dbInitPromise;
   }
 
-  dbInitPromise = (async () => {
+  const initialization = (async () => {
     const db = await SQLite.openDatabaseAsync('integiscan.db');
     await db.execAsync(SCHEMA);
 
@@ -142,15 +149,49 @@ export async function getDB(): Promise<SQLite.SQLiteDatabase> {
       'ALTER TABLE tests ADD COLUMN lastAttemptAt TEXT',
       'ALTER TABLE tests ADD COLUMN lastError TEXT',
       'ALTER TABLE evidence_attachments ADD COLUMN lastAttemptAt TEXT',
-      'ALTER TABLE evidence_attachments ADD COLUMN lastError TEXT'
+      'ALTER TABLE evidence_attachments ADD COLUMN lastError TEXT',
+      'ALTER TABLE drafts ADD COLUMN ownerKey TEXT',
+      'ALTER TABLE tests ADD COLUMN receiptNumber TEXT',
+      'ALTER TABLE evidence_attachments ADD COLUMN idempotencyKey TEXT',
+      'ALTER TABLE evidence_attachments ADD COLUMN contentHash TEXT',
+      'ALTER TABLE drafts ADD COLUMN payloadVersion INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE drafts ADD COLUMN status TEXT NOT NULL DEFAULT \'active\'',
+      'ALTER TABLE drafts ADD COLUMN updatedAt TEXT'
     ]) {
-      try { await db.runAsync(stmt); } catch { /* column already exists */ }
+      try {
+        await db.runAsync(stmt);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/duplicate column name|already exists/i.test(message)) {
+          throw error;
+        }
+      }
     }
+
+    await db.runAsync(
+      'CREATE INDEX IF NOT EXISTS idx_drafts_owner_updated ON drafts(ownerKey, updatedAt DESC)'
+    );
+    await db.runAsync(
+      'CREATE INDEX IF NOT EXISTS idx_tests_receipt ON tests(receiptNumber)'
+    );
+    await db.runAsync(
+      'CREATE INDEX IF NOT EXISTS idx_attachments_idempotency ON evidence_attachments(idempotencyKey)'
+    );
+    await db.runAsync(
+      "UPDATE drafts SET ownerKey = 'officer:' || officerId WHERE officerId IS NOT NULL AND (ownerKey IS NULL OR ownerKey = '')"
+    );
+    await db.runAsync(
+      'UPDATE drafts SET updatedAt = createdAt WHERE updatedAt IS NULL OR updatedAt = \'\''
+    );
 
     dbInstance = db;
     return db;
   })();
 
+  dbInitPromise = initialization.catch((error) => {
+    dbInitPromise = null;
+    throw error;
+  });
   return dbInitPromise;
 }
 

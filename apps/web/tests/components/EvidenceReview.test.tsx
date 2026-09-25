@@ -33,6 +33,7 @@ vi.mock('../../src/services/api', () => ({
   getAnnotations: vi.fn(),
   annotateTest: vi.fn(),
   getEvidence: vi.fn(),
+  uploadEvidence: vi.fn(),
   getRuntimeConfig: vi.fn().mockResolvedValue({
     auth: { sessionTimeoutMinutes: 30 },
     export: {
@@ -89,6 +90,46 @@ describe('EvidenceReview', () => {
       expect(screen.getByText(/No evidence photos uploaded yet/i)).toBeInTheDocument();
     });
     expect(screen.queryByAltText('Evidence 1')).not.toBeInTheDocument();
+  });
+
+  it('uploads category and notes with one stable key across retries', async () => {
+    const file = new File([new Uint8Array([1, 2, 3])], 'licence.jpg', { type: 'image/jpeg' });
+    const uploaded = {
+      id: 42,
+      test_id: 'test-123',
+      photo_url: 'https://cdn.example/licence.jpg',
+      notes: 'Front of licence',
+      uploaded_by: 'supervisor@example.com',
+      category: 'licence_front',
+      created_at: '2026-05-30T10:00:00Z'
+    };
+    (api.uploadEvidence as any)
+      .mockRejectedValueOnce(new Error('temporary network failure'))
+      .mockResolvedValueOnce(uploaded);
+
+    const { container } = render(<EvidenceReview test={mockTest} onBack={mockOnBack} />);
+    fireEvent.change(screen.getByLabelText('Evidence category'), { target: { value: 'licence_front' } });
+    fireEvent.change(screen.getByLabelText('Evidence notes'), { target: { value: 'Front of licence' } });
+    const fileInput = container.querySelector('input[type="file"]');
+    expect(fileInput).not.toBeNull();
+    fireEvent.change(fileInput!, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(api.uploadEvidence).toHaveBeenCalledTimes(1);
+    });
+    const firstOptions = (api.uploadEvidence as any).mock.calls[0][2];
+    expect(firstOptions.category).toBe('licence_front');
+    expect(firstOptions.notes).toBe('Front of licence');
+    expect(firstOptions.idempotencyKey).toMatch(/^evidence-[a-f0-9]{32}$/);
+
+    const retry = await screen.findByRole('button', { name: 'Retry Upload' });
+    fireEvent.click(retry);
+
+    await waitFor(() => {
+      expect(api.uploadEvidence).toHaveBeenCalledTimes(2);
+    });
+    const secondOptions = (api.uploadEvidence as any).mock.calls[1][2];
+    expect(secondOptions.idempotencyKey).toBe(firstOptions.idempotencyKey);
   });
 
   it('renders test details correctly', async () => {

@@ -54,6 +54,8 @@ const mockSyncContext = {
   databaseError: null,
   syncNow: jest.fn(),
   retryFailed: jest.fn(),
+  retryRecord: jest.fn(),
+  retryEvidence: jest.fn(),
   forceSync: jest.fn(),
   refreshCounts: jest.fn()
 };
@@ -193,6 +195,8 @@ describe('SyncCentreModal', () => {
     };
     mockSyncContext.syncNow.mockResolvedValue(summary());
     mockSyncContext.retryFailed.mockResolvedValue(summary());
+     mockSyncContext.retryRecord.mockResolvedValue(summary());
+     mockSyncContext.retryEvidence.mockResolvedValue(summary());
     mockSyncContext.refreshCounts.mockResolvedValue(undefined);
     repository.getFailedSync.mockResolvedValue([failedRecord]);
     repository.getPendingSync.mockResolvedValue([pendingRecord]);
@@ -237,8 +241,8 @@ describe('SyncCentreModal', () => {
     fireEvent.press(screen.getByLabelText('Retry test record-1…7890'));
 
     await waitFor(() => {
-      expect(repository.retryFailedSyncRecord).toHaveBeenCalledWith('record-1234567890');
-      expect(mockSyncContext.syncNow).toHaveBeenCalled();
+      expect(mockSyncContext.retryRecord).toHaveBeenCalledWith('record-1234567890');
+      expect(mockSyncContext.syncNow).not.toHaveBeenCalled();
     });
   });
 
@@ -254,8 +258,8 @@ describe('SyncCentreModal', () => {
 
     fireEvent.press(screen.getByLabelText('Retry Licence Front'));
     await waitFor(() => {
-      expect(repository.resetAttachmentToPending).toHaveBeenCalledWith('evidence-1234567890');
-      expect(mockSyncContext.syncNow).toHaveBeenCalled();
+      expect(mockSyncContext.retryEvidence).toHaveBeenCalledWith('evidence-1234567890');
+      expect(mockSyncContext.syncNow).not.toHaveBeenCalled();
     });
   });
 

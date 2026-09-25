@@ -1,3 +1,5 @@
+import { createEvidenceIdempotencyKey, hashEvidenceFile, isSha256 } from '../lib/evidenceIntegrity';
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 export const AUTH_EXPIRED_EVENT = 'integriscan:auth-expired';
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
@@ -548,6 +550,143 @@ export interface EvidencePhoto {
   uploaded_by: string;
   category: string | null;
   created_at: string;
+  /** Present on evidence rows created with the integrity contract. */
+  idempotency_key?: string | null;
+  content_hash?: string | null;
+  /** The backend marks a successful replay of an idempotent upload. */
+  duplicate?: boolean;
+  integrity_status?: 'verified' | 'legacy' | 'unavailable';
+}
+
+export interface EvidenceUploadOptions {
+  /** The server normalizes unknown categories to its safe default. */
+  category?: string;
+  notes?: string;
+  /** Reuse this exact key for every retry of this attachment. */
+  idempotencyKey?: string;
+  /** Optional previously computed hash; it is checked against the File bytes. */
+  contentHash?: string;
+  /** Alias accepted for callers that use the wire-header spelling. */
+  contentSha256?: string;
+}
+
+/**
+ * A 409 means the server rejected this attempt as conflicting with an already
+ * used key (or with the claimed content hash). The key is deliberately kept
+ * on the error so callers can retry/repair the same attempt; generating a new
+ * key here would turn a conflict into a possible duplicate evidence row.
+ */
+export class EvidenceUploadConflictError extends Error {
+  readonly status = 409;
+  readonly code = 'EVIDENCE_CONFLICT';
+  readonly idempotencyKey: string;
+  readonly contentHash: string;
+
+  constructor(message: string, idempotencyKey: string, contentHash: string) {
+    super(message);
+    this.name = 'EvidenceUploadConflictError';
+    this.idempotencyKey = idempotencyKey;
+    this.contentHash = contentHash;
+  }
+}
+
+export function isEvidenceUploadConflictError(error: unknown): error is EvidenceUploadConflictError {
+  return error instanceof EvidenceUploadConflictError ||
+    (error instanceof Error && error.name === 'EvidenceUploadConflictError' && 'status' in error && error.status === 409);
+}
+
+type EvidenceUploadAttempt = {
+  idempotencyKey: string;
+  contentHash: string;
+};
+
+/**
+ * A File is immutable, so a WeakMap is a safe in-memory place to retain the
+ * key for retries. The UI also retains the key explicitly; this map protects
+ * direct API callers that retry by passing the same File object. Entries are
+ * removed after success, while errors (especially 409) retain the attempt.
+ */
+const evidenceUploadAttempts = new WeakMap<object, Map<string, EvidenceUploadAttempt>>();
+
+function getUploadAttempt(
+  file: File,
+  testId: string,
+  explicitKey: string | undefined,
+  contentHash: string
+): EvidenceUploadAttempt {
+  let attemptsForTest = evidenceUploadAttempts.get(file);
+  if (!attemptsForTest) {
+    attemptsForTest = new Map<string, EvidenceUploadAttempt>();
+    evidenceUploadAttempts.set(file, attemptsForTest);
+  }
+
+  const existing = attemptsForTest.get(testId);
+  const idempotencyKey = explicitKey || existing?.idempotencyKey || createEvidenceIdempotencyKey();
+  const attempt = { idempotencyKey, contentHash };
+  attemptsForTest.set(testId, attempt);
+  return attempt;
+}
+
+function clearUploadAttempt(file: File, testId: string, attempt: EvidenceUploadAttempt) {
+  const attemptsForTest = evidenceUploadAttempts.get(file);
+  const current = attemptsForTest?.get(testId);
+  if (current?.idempotencyKey !== attempt.idempotencyKey || current.contentHash !== attempt.contentHash) {
+    return;
+  }
+  attemptsForTest?.delete(testId);
+  if (attemptsForTest?.size === 0) {
+    evidenceUploadAttempts.delete(file);
+  }
+}
+
+function normalizeUploadOptions(
+  notesOrOptions?: string | EvidenceUploadOptions,
+  categoryOrOptions?: string | EvidenceUploadOptions,
+  explicitKey?: string,
+  explicitContentHash?: string
+): EvidenceUploadOptions {
+  const options: EvidenceUploadOptions = typeof notesOrOptions === 'object' && notesOrOptions !== null
+    ? { ...notesOrOptions }
+    : { notes: typeof notesOrOptions === 'string' ? notesOrOptions : undefined };
+
+  if (typeof categoryOrOptions === 'string') {
+    options.category = categoryOrOptions;
+  } else if (categoryOrOptions && typeof categoryOrOptions === 'object') {
+    Object.assign(options, categoryOrOptions);
+  }
+
+  if (explicitKey) options.idempotencyKey = explicitKey;
+  if (explicitContentHash) options.contentHash = explicitContentHash;
+  return options;
+}
+
+async function readUploadResponse(response: Response): Promise<{
+  payload: Record<string, unknown>;
+  rawText: string;
+}> {
+  let rawText = '';
+  if (typeof response.text === 'function') {
+    rawText = await response.text();
+  } else if (typeof response.json === 'function') {
+    try {
+      const value = await response.json();
+      return { payload: (value && typeof value === 'object' ? value : {}) as Record<string, unknown>, rawText: '' };
+    } catch {
+      return { payload: {}, rawText: '' };
+    }
+  }
+
+  if (!rawText) return { payload: {}, rawText: '' };
+
+  try {
+    const value = JSON.parse(rawText) as unknown;
+    return {
+      payload: value && typeof value === 'object' ? (value as Record<string, unknown>) : {},
+      rawText
+    };
+  } catch {
+    return { payload: { error: rawText.slice(0, 500) }, rawText };
+  }
 }
 
 export async function getEvidence(testId: string) {
@@ -607,40 +746,84 @@ export async function getPublicVerification(token: string) {
   return payload as unknown as import('../types').PublicVerification;
 }
 
-export async function uploadEvidence(testId: string, file: File, notes?: string) {
+/**
+ * Upload one evidence image with a content hash and retry-safe idempotency
+ * key. The primary call form is an options object:
+ *
+ *   uploadEvidence(testId, file, { category, notes, idempotencyKey })
+ *
+ * The legacy `(testId, file, notes, category, idempotencyKey)` form remains
+ * supported for existing callers.
+ */
+export async function uploadEvidence(
+  testId: string,
+  file: File,
+  notesOrOptions?: string | EvidenceUploadOptions,
+  categoryOrOptions?: string | EvidenceUploadOptions,
+  explicitKey?: string,
+  explicitContentHash?: string
+): Promise<EvidencePhoto> {
   const token = getAccessToken();
   if (!token) throw new Error('Not authenticated');
 
-  const formData = new FormData();
-  formData.append('photo', file);
-  if (notes) formData.append('notes', notes);
+  const options = normalizeUploadOptions(
+    notesOrOptions,
+    categoryOrOptions,
+    explicitKey,
+    explicitContentHash
+  );
 
-  const response = await fetch(`${API_BASE}/api/evidence/${testId}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: formData
-  });
-
-  const rawText = await response.text();
-  let payload: Record<string, unknown> = {};
-  if (rawText) {
-    try {
-      payload = JSON.parse(rawText) as Record<string, unknown>;
-    } catch {
-      payload = { error: rawText.slice(0, 500) };
+  // Always derive the header from the File's bytes. A supplied hash is only
+  // an assertion/check for a retained retry attempt, never a replacement.
+  const contentHash = await hashEvidenceFile(file);
+  const claimedContentHash = options.contentHash || options.contentSha256;
+  if (claimedContentHash) {
+    const normalizedClaim = claimedContentHash.trim().toLowerCase();
+    if (!isSha256(normalizedClaim) || normalizedClaim !== contentHash) {
+      throw new Error('Evidence content hash does not match the selected file.');
     }
   }
 
+  const attempt = getUploadAttempt(file, testId, options.idempotencyKey, contentHash);
+  const category = options.category ?? 'vehicle';
+  const formData = new FormData();
+  formData.append('photo', file);
+  formData.append('category', category);
+  if (options.notes?.trim()) formData.append('notes', options.notes);
+  // Keep the form fallback for proxies that strip custom request headers.
+  formData.append('idempotencyKey', attempt.idempotencyKey);
+  formData.append('contentHash', contentHash);
+
+  const response = await fetch(`${API_BASE}/api/evidence/${testId}`, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(),
+      'Idempotency-Key': attempt.idempotencyKey,
+      'X-Content-SHA256': contentHash
+    },
+    body: formData
+  });
+
+  const { payload, rawText } = await readUploadResponse(response);
   if (!response.ok) {
     const message =
       (typeof payload.error === 'string' ? payload.error : null) ||
+      (typeof payload.message === 'string' ? payload.message : null) ||
+      (rawText ? rawText.slice(0, 300) : null) ||
       `Upload failed (${response.status} ${response.statusText})`;
+
+    if (response.status === 409) {
+      // Keep the attempt in the WeakMap. In particular, never mint a fresh
+      // key in response to a conflict.
+      throw new EvidenceUploadConflictError(message, attempt.idempotencyKey, contentHash);
+    }
     if (isExpiredTokenResponse(response.status, message)) {
       emitAuthExpired(message, token);
     }
     throw new Error(message);
   }
 
+  clearUploadAttempt(file, testId, attempt);
   return payload as unknown as EvidencePhoto;
 }
 
