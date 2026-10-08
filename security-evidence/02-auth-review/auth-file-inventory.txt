@@ -1,0 +1,8 @@
+backend\src\constants\roles.ts
+backend\src\middleware\auth.ts
+backend\src\middleware\security.ts
+backend\src\routes\auth.ts
+backend\src\routes\supervisor\verificationTokens.ts
+backend\tests\middleware\security.test.ts
+backend\tests\routes\auth.test.ts
+backend\tests\routes\verificationTokens.test.ts
