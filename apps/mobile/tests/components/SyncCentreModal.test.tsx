@@ -269,9 +269,15 @@ describe('SyncCentreModal', () => {
     const onSignIn = jest.fn();
     renderModal(jest.fn(), onSignIn);
 
-    await waitFor(() => {
-      expect(screen.queryByText('Reading local sync queue…')).toBeNull();
-    });
+    // Generous timeout: this waits on an async local SQLite read. That runs far
+    // slower under coverage instrumentation than waitFor's 1s default, which
+    // made this assertion fail spuriously on `npm run test:coverage`.
+    await waitFor(
+      () => {
+        expect(screen.queryByText('Reading local sync queue…')).toBeNull();
+      },
+      { timeout: 10000 }
+    );
     fireEvent.press(screen.getByLabelText('Sign in again to resume syncing'));
 
     expect(onSignIn).toHaveBeenCalledTimes(1);
@@ -283,9 +289,15 @@ describe('SyncCentreModal', () => {
     } as never);
 
     renderModal();
-    await waitFor(() => {
-      expect(screen.queryByText('Reading local sync queue…')).toBeNull();
-    });
+    // Generous timeout: this waits on an async local SQLite read. That runs far
+    // slower under coverage instrumentation than waitFor's 1s default, which
+    // made this assertion fail spuriously on `npm run test:coverage`.
+    await waitFor(
+      () => {
+        expect(screen.queryByText('Reading local sync queue…')).toBeNull();
+      },
+      { timeout: 10000 }
+    );
     fireEvent.press(screen.getByLabelText('Activity sync tab'));
     fireEvent.press(screen.getByText('Share sync report'));
 

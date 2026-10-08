@@ -12,7 +12,9 @@
     "apk": "npx eas-cli build --platform android --profile preview --non-interactive --no-wait",
     "apk:list": "npx eas-cli build:list --platform android --limit 10",
     "apk:local": "node scripts/buildAndroidApkLocal.js",
-    "test": "jest"
+    "lint": "tsc --noEmit",
+    "test": "jest",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
     "@react-navigation/native": "^7.2.2",

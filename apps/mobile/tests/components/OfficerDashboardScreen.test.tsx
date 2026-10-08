@@ -242,6 +242,23 @@ jest.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
 }));
 
+// OfficerDashboardScreen mounts useActiveTestDraftPersistence, whose mount
+// effect fires an async draft read. Without this mock that read hits a real
+// SQLite driver that rejects in the test environment, and the rejection
+// settled after the test body finished — surfacing as "An update to
+// OfficerDashboardScreen inside a test was not wrapped in act(...)" via
+// reportStorageError -> setStorageError. Resolving to null is the normal
+// empty state and keeps the async update inside the act() scope.
+// Sibling suites (DeviceSettingsModal, SyncCentreModal) mock this module
+// the same way. Everything else stays real so the screen keeps its behaviour.
+jest.mock('../../src/db/repository', () => ({
+  ...jest.requireActual('../../src/db/repository'),
+  getLatestActiveTestDraft: jest.fn().mockResolvedValue(null),
+  saveActiveTestDraft: jest.fn().mockResolvedValue(undefined),
+  deleteActiveTestDraft: jest.fn().mockResolvedValue(undefined),
+  getTestById: jest.fn().mockResolvedValue(null),
+}));
+
 const navigation = {
   navigate: jest.fn(),
   goBack: jest.fn(),

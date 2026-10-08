@@ -1,12 +1,14 @@
 name: Web CI
 
+# Triggers on every branch rather than only main/develop, so feature branches
+# get test feedback before merge instead of first seeing failures on main.
 on:
   push:
-    branches: [main, develop]
+    branches: ['**']
     paths:
       - 'apps/web/**'
   pull_request:
-    branches: [main, develop]
+    branches: ['**']
     paths:
       - 'apps/web/**'
 
@@ -31,11 +33,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run linting
-        run: npm run lint --if-present
+      - name: Run linting (typecheck)
+        run: npm run lint
 
-      - name: Run tests
-        run: npm test -- --run
+      - name: Run tests (with coverage ratchet)
+        run: npm run test:coverage
 
       - name: Build
         run: npm run build
