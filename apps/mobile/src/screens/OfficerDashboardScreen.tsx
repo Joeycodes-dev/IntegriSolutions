@@ -9,6 +9,7 @@ import React, {
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Image,
   Platform,
   Pressable,
@@ -61,6 +62,7 @@ import {
   type DeviceSettingsTab,
 } from "../components/DeviceSettingsModal";
 import { SyncCentreModal } from "../components/SyncCentreModal";
+import { SyncStatusBar } from "../components/SyncStatusBar";
 import {
   decryptLicensePayload,
   parseDecryptedLicensePayload,
@@ -163,6 +165,9 @@ function isDevBypassProfile(profile: { uid: string } | null): boolean {
 
 const BREATHALYZER_SIMULATION_ENABLED =
   __DEV__ || process.env.EXPO_PUBLIC_BREATHALYZER_SIMULATION === "1";
+
+/** Fade duration for the collapsible scan-guidance card. */
+const SCAN_HELP_ANIMATION_MS = 200;
 
 const subscribeBreathalyzer = (listener: () => void) =>
   breathalyzerSession.subscribe(listener);
@@ -700,6 +705,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     recentTests,
     isSyncing,
     lastSyncedAt,
+    lastRun,
     forceSync,
     refreshCounts,
   } = useSync();
@@ -733,6 +739,11 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       )
     : false;
   const [syncModalVisible, setSyncModalVisible] = useState(false);
+  // Scan guidance starts expanded and can be minimised by the officer so the
+  // licence framing area stays unobstructed. Reset whenever a new scan begins.
+  const [scanHelpExpanded, setScanHelpExpanded] = useState(true);
+  const scanHelpAnim = useRef(new Animated.Value(1)).current;
+  const scanHelpAnimRef = useRef<Animated.CompositeAnimation | null>(null);
   const [deviceSettingsVisible, setDeviceSettingsVisible] = useState(false);
   const [deviceSettingsTab, setDeviceSettingsTab] = useState<DeviceSettingsTab>("device");
   const [step, setStep] = useState<OfficerStep>("idle");
@@ -775,6 +786,40 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(null);
   const [duty, setDuty] = useState<DutyPillStatus>(() =>
     mapProfileDutyStatus(profile?.dutyStatus),
+  );
+
+  const animateScanHelp = useCallback((toValue: number) => {
+    scanHelpAnimRef.current?.stop();
+    scanHelpAnimRef.current = Animated.timing(scanHelpAnim, {
+      toValue,
+      duration: SCAN_HELP_ANIMATION_MS,
+      useNativeDriver: true,
+    });
+    scanHelpAnimRef.current.start();
+  }, [scanHelpAnim]);
+
+  const expandScanHelp = useCallback(() => {
+    setScanHelpExpanded(true);
+    // Restart from zero so re-opening always plays the fade, never snaps.
+    scanHelpAnim.setValue(0);
+    animateScanHelp(1);
+  }, [animateScanHelp, scanHelpAnim]);
+
+  const collapseScanHelp = useCallback(() => {
+    // Unmount immediately rather than fading out on a timer: the officer is
+    // asking for the camera view back *now*, so the card must release the
+    // framing area on the same frame as the tap. The chip takes its place.
+    scanHelpAnimRef.current?.stop();
+    scanHelpAnim.setValue(0);
+    setScanHelpExpanded(false);
+  }, [scanHelpAnim]);
+
+  // Stop the animation on unmount so it never fires against a dead component.
+  useEffect(
+    () => () => {
+      scanHelpAnimRef.current?.stop();
+    },
+    [],
   );
 
   const handleDutyChange = async (next: DutyPillStatus) => {
@@ -1009,6 +1054,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   };
 
   const beginFreshScan = async () => {
+    // Every new subject starts with the guidance visible again: an officer
+    // starting a fresh scan should never have to remember how the last one went.
+    expandScanHelp();
     if (isDevBypassProfile(profile)) {
       if (!profile) return;
       const shift = await loadSelectedShiftForTest();
@@ -1080,7 +1128,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     if (!rawPayload) {
       Alert.alert(
         "Scan failed",
-        "No barcode payload was decoded. Please try again.",
+        "The licence could not be read. Hold the FRONT steady in the frame and try again.",
       );
       resetSessionState();
       setStep("idle");
@@ -1100,7 +1148,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     if (!hasUsableLicenseData(data)) {
       Alert.alert(
         "Scan failed",
-        "The licence barcode did not contain readable driver details. Try the front-photo scan.",
+        "The driver's details could not be read from the front of the licence. Use the photograph button below instead.",
       );
       setBarcodeScanned(false);
       return;
@@ -1207,7 +1255,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     if (Platform.OS === "web") {
       Alert.alert(
         "Not available on web",
-        "Front-of-licence photo scanning is only available in the mobile app. Use the PDF417 barcode scanner instead.",
+        "Photographing the licence is only available in the mobile app. Use the live scanner on a handset instead.",
       );
       return;
     }
@@ -1262,6 +1310,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     resetActiveSubjectState({ clearRetestContext: !preserveRetest });
     setHasPermission(true);
     setStep("scan");
+    // Re-show the guidance: coming back to the scanner is exactly when an
+    // officer needs the reminder about which face to present.
+    expandScanHelp();
   };
 
   const processEvidenceImage = async (
@@ -1798,12 +1849,18 @@ export function OfficerDashboardScreen({ navigation }: Props) {
           >
             <Feather name="settings" size={20} color={colors.primaryDark} />
           </Pressable>
+          {/*
+            Kept as a compact secondary entry point. The labelled
+            SyncStatusBar below the header is now the primary, always-labelled
+            affordance, so this is redundant on Home but useful while a test is
+            mid-capture and the header is the only chrome above the fold.
+          */}
           <Pressable
             style={styles.syncBadge}
             onPress={() => setSyncModalVisible(true)}
             accessibilityRole="button"
             accessibilityLabel={syncStatusLabel}
-            accessibilityHint="Open sync status"
+            accessibilityHint="Open the Sync Centre"
             accessibilityState={{ busy: isSyncing }}
           >
             {isSyncing ? (
@@ -1837,6 +1894,24 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         </View>
       </View>
 
+      {/*
+        Persistent across every step of the capture flow. Officers previously had
+        no visible sync affordance once they left Home, and could not tell
+        whether a saved record had actually reached the server — a problem for
+        enforcement use where the ledger copy matters.
+      */}
+      <SyncStatusBar
+        isSyncing={isSyncing}
+        pendingCount={syncPendingCount}
+        failedCount={syncFailureCount}
+        lastSyncedAt={lastSyncedAt}
+        lastRun={lastRun}
+        onSyncNow={() => {
+          void forceSync();
+        }}
+        onOpenSyncCentre={() => setSyncModalVisible(true)}
+      />
+
       <ScrollView
         contentContainerStyle={styles.content}
         style={styles.contentScroll}
@@ -1845,20 +1920,13 @@ export function OfficerDashboardScreen({ navigation }: Props) {
           <OfficerHome
             profile={profile}
             pendingCount={pendingCount}
-            pendingEvidenceCount={pendingEvidenceCount}
-            failedCount={failedCount}
-            failedEvidenceCount={failedEvidenceCount}
-            syncedCount={syncedCount}
             todayCount={todayCount}
             weekCount={weekCount}
             recentStops={recentTests.map(formatRecentStop)}
-            isSyncing={isSyncing}
-            lastSyncedAt={lastSyncedAt}
             initialDuty={duty}
             onDutyChange={handleDutyChange}
             onStartSession={startScan}
             onOpenRoadOffence={() => navigation.navigate("RoadOffence")}
-            onForceSync={forceSync}
             onOpenReports={() => navigation.navigate("OfficerReports")}
             onOpenAudit={() => navigation.navigate("Audit")}
             featuredAlert={alertsSummary.featuredAlert}
@@ -1888,22 +1956,117 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               onBarcodeScanned={handleBarcodeScanned}
             />
             <View style={styles.scanOverlay} />
-            <View style={styles.scanInstructions}>
-              <Text style={styles.scanHint}>
-                {barcodeScanned
-                  ? "Reading barcode..."
-                  : "Point the PDF417 barcode inside the frame."}
-              </Text>
+            {/*
+              Explicit "front of the licence" guidance. Officers were scanning the
+              wrong side of the card: the details we need (name, initials, expiry)
+              are on the front, and the previous hint ("Point the PDF417 barcode
+              inside the frame") gave no indication of which face to present.
+
+              This card floats over the live CameraView, so it is laid out as:
+                - outer wrapper  → pointerEvents="box-none" (transparent to taps)
+                - the copy itself → pointerEvents="none"
+                - the collapse button → pointerEvents="auto"
+              That keeps the framing area fully tappable for the scanner while
+              still allowing the officer to dismiss the guidance.
+            */}
+            <View style={styles.scanHelpWrap} pointerEvents="box-none">
+              {scanHelpExpanded ? (
+                <Animated.View
+                  style={[
+                    styles.scanInstructions,
+                    {
+                      opacity: scanHelpAnim,
+                      transform: [
+                        {
+                          translateY: scanHelpAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [-8, 0],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                  pointerEvents="box-none"
+                >
+                  <View pointerEvents="none">
+                    <View style={styles.scanStepBadge}>
+                      <Text style={styles.scanStepBadgeText}>STEP 1 OF 2</Text>
+                    </View>
+                    <Text style={styles.scanHeadline}>
+                      {barcodeScanned
+                        ? "Reading the front of the licence…"
+                        : "Scan the FRONT of the driver's licence"}
+                    </Text>
+                    {!barcodeScanned ? (
+                      <>
+                        <View style={styles.scanInstructionRow}>
+                          <Feather
+                            name="check"
+                            size={13}
+                            color={colors.successText}
+                            style={styles.scanInstructionIcon}
+                          />
+                          <Text style={styles.scanInstructionText}>
+                            The FRONT has the driver's name, initials and expiry
+                            date.
+                          </Text>
+                        </View>
+                        <View style={styles.scanInstructionRow}>
+                          <Feather
+                            name="check"
+                            size={13}
+                            color={colors.successText}
+                            style={styles.scanInstructionIcon}
+                          />
+                          <Text style={styles.scanInstructionText}>
+                            Fill the frame with the whole front of the licence,
+                            then hold steady.
+                          </Text>
+                        </View>
+                      </>
+                    ) : null}
+                  </View>
+
+                  <Pressable
+                    style={styles.scanHelpCollapse}
+                    onPress={collapseScanHelp}
+                    pointerEvents="auto"
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Minimise scanning instructions"
+                    accessibilityHint="Hides the guidance so the camera view is unobstructed"
+                  >
+                    <Feather name="chevron-up" size={16} color="#fff" />
+                    <Text style={styles.scanHelpCollapseText}>Minimise</Text>
+                  </Pressable>
+                </Animated.View>
+              ) : (
+                // Collapsed: a small persistent reminder that never covers the frame.
+                <Pressable
+                  style={styles.scanHelpChip}
+                  onPress={expandScanHelp}
+                  pointerEvents="auto"
+                  accessibilityRole="button"
+                  accessibilityLabel="Show scanning instructions"
+                  accessibilityHint="Scan the front of the driver's licence"
+                >
+                  <Feather name="maximize" size={14} color="#fff" />
+                  <Text style={styles.scanHelpChipText}>How to scan</Text>
+                </Pressable>
+              )}
             </View>
             <View style={styles.scanActions}>
               <Pressable
-                style={styles.primaryButton}
+                style={styles.scanFallbackButton}
                 onPress={() => {
                   void captureFrontOfLicense(false);
                 }}
+                accessibilityRole="button"
+                accessibilityLabel="Photograph the front of the driver's licence"
+                accessibilityHint="Opens the camera to take a photo of the front of the licence"
               >
                 <Feather name="camera" size={17} color="#fff" />
-                <Text style={styles.primaryButtonText}>
+                <Text style={styles.scanFallbackButtonText}>
                   Photograph Front of Licence
                 </Text>
               </Pressable>
@@ -1916,6 +2079,18 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
         {step === "reading" && (
           <View style={styles.card}>
+            {/* Tells the officer where they are in the flow and what is next —
+                the main "hard to follow" complaint during capture. */}
+            <View style={styles.flowBanner}>
+              <View style={styles.flowBannerStep}>
+                <Text style={styles.flowBannerStepText}>STEP 2 OF 2</Text>
+              </View>
+              <Text style={styles.flowBannerTitle}>Confirm reading and save</Text>
+              <Text style={styles.flowBannerDetail}>
+                Check the licence details, capture the breathalyzer reading, then
+                tap SAVE RECORD. You cannot edit a reading after saving.
+              </Text>
+            </View>
             {draftWarning || draftStorageError ? (
               <View style={styles.decryptErrorCard}>
                 <Text style={styles.decryptErrorLabel}>Recovery notice</Text>
@@ -2031,7 +2206,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
             ) : null}
             {licensePayload ? (
               <View style={styles.rawPayloadCard}>
-                <Text style={styles.overline}>Raw barcode payload</Text>
+                <Text style={styles.overline}>Raw licence payload</Text>
                 <Text style={styles.rawPayloadText}>{licensePayload}</Text>
               </View>
             ) : null}
@@ -2390,6 +2565,71 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               Test record has been committed to the ledger and will sync when
               network is available.
             </Text>
+            {/*
+              Closing the loop on the save screen: tell the officer their work is
+              safe AND what the upload state is, rather than leaving them to
+              infer it from the header.
+            */}
+            <View
+              style={[
+                styles.savedSyncCard,
+                syncFailureCount > 0 && styles.savedSyncCardError,
+                !syncFailureCount &&
+                  syncPendingCount > 0 &&
+                  styles.savedSyncCardPending,
+              ]}
+            >
+              <View style={styles.savedSyncRow}>
+                <Feather
+                  name={
+                    isSyncing
+                      ? 'refresh-cw'
+                      : syncFailureCount > 0
+                        ? 'alert-triangle'
+                        : syncPendingCount > 0
+                          ? 'upload-cloud'
+                          : 'check-circle'
+                  }
+                  size={17}
+                  color={
+                    isSyncing
+                      ? colors.warning
+                      : syncFailureCount > 0
+                        ? colors.error
+                        : syncPendingCount > 0
+                          ? colors.warning
+                          : colors.successText
+                  }
+                />
+                <Text style={styles.savedSyncText}>{syncStatusLabel}</Text>
+              </View>
+              <Pressable
+                style={styles.savedSyncButton}
+                onPress={() => {
+                  void forceSync();
+                }}
+                disabled={isSyncing}
+                accessibilityRole="button"
+                accessibilityLabel="Sync now"
+                accessibilityState={{ busy: isSyncing }}
+              >
+                {isSyncing ? (
+                  <ActivityIndicator size="small" color={colors.accentBlue} />
+                ) : (
+                  <Feather name="refresh-cw" size={14} color={colors.accentBlue} />
+                )}
+                <Text style={styles.savedSyncButtonText}>Sync now</Text>
+              </Pressable>
+              <Pressable
+                style={styles.savedSyncLink}
+                onPress={() => setSyncModalVisible(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Open Sync Centre"
+              >
+                <Text style={styles.savedSyncLinkText}>Open Sync Centre</Text>
+                <Feather name="chevron-right" size={14} color={colors.accentBlue} />
+              </Pressable>
+            </View>
 
             {lastSavedDriver && (
               <View style={styles.savedDriverCard}>

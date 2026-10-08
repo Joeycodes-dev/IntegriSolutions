@@ -116,22 +116,48 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
-const apkPath = path.join(
+// With the ABI splits enabled in app/build.gradle, Gradle emits one APK per ABI
+// plus a universal APK instead of a single app-release.apk. Collect whatever
+// landed in the output directory so the summary stays correct either way.
+const releaseOutputDirectory = path.join(
   androidDirectory,
   'app',
   'build',
   'outputs',
   'apk',
   'release',
-  'app-release.apk',
 );
 
-if (!fs.existsSync(apkPath)) {
-  console.error(`Build finished, but the expected APK was not found: ${apkPath}`);
+if (!fs.existsSync(releaseOutputDirectory)) {
+  console.error(
+    `Build finished, but the APK output directory was not found: ${releaseOutputDirectory}`,
+  );
+  process.exit(1);
+}
+
+const apks = fs
+  .readdirSync(releaseOutputDirectory)
+  .filter((entry) => entry.toLowerCase().endsWith('.apk'))
+  .map((entry) => {
+    const fullPath = path.join(releaseOutputDirectory, entry);
+    return { name: entry, path: fullPath, sizeMb: fs.statSync(fullPath).size / (1024 * 1024) };
+  })
+  .sort((left, right) => left.sizeMb - right.sizeMb);
+
+if (apks.length === 0) {
+  console.error(`Build finished, but no APK was found in: ${releaseOutputDirectory}`);
   process.exit(1);
 }
 
 console.log('');
 console.log('Local APK build complete.');
-console.log(`Installable APK: ${apkPath}`);
-console.log('Copy that file to your phone and open it to install.');
+console.log('');
+console.log('Installable APKs:');
+for (const apk of apks) {
+  console.log(`  ${apk.name.padEnd(34)} ${apk.sizeMb.toFixed(1)} MB`);
+  console.log(`  ${' '.repeat(34)} ${apk.path}`);
+}
+console.log('');
+console.log('Install the arm64-v8a APK on a modern handset, armeabi-v7a on an older');
+console.log('one, and x86_64 on an Android emulator. The universal APK works everywhere');
+console.log('but is the largest download.');

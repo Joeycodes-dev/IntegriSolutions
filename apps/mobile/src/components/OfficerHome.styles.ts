@@ -102,69 +102,6 @@ export const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500'
   },
-  syncCard: {
-    backgroundColor: colors.background,
-    borderRadius: 16,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    marginBottom: 14
-  },
-  syncCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1
-  },
-  syncIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: colors.surfaceHighlight,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  syncIconWrapActive: {
-    backgroundColor: colors.borderHighlight
-  },
-  syncTextBlock: {
-    flex: 1
-  },
-  syncTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textPrimary
-  },
-  syncSubtitle: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2
-  },
-  syncActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8
-  },
-  syncButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: colors.surfaceHighlight
-  },
-  syncButtonDisabled: {
-    opacity: 0.6
-  },
-  syncButtonText: {
-    color: colors.accentBlue,
-    fontSize: 13,
-    fontWeight: '600'
-  },
   alertBanner: {
     // Background/border color is applied per-priority via alertPriorityStyle()
     // at render time — see OfficerHome.tsx.
@@ -404,6 +341,119 @@ export const styles = StyleSheet.create({
     color: colors.neutralGray,
     letterSpacing: 1.2,
     marginBottom: 10
+  },
+  /**
+   * The one action most officers need most of the time, so it is rendered as a
+   * filled primary button rather than the outlined `cta` treatment shared with
+   * secondary actions. Participants could not tell what the main path was.
+   */
+  primaryCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 13,
+    backgroundColor: colors.primaryDark,
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 14,
+    shadowColor: colors.primaryDark,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.22,
+    shadowRadius: 16,
+    elevation: 8
+  },
+  primaryCtaBadge: {
+    width: 50,
+    height: 50,
+    borderRadius: 15,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  primaryCtaBody: {
+    flex: 1
+  },
+  primaryCtaTitle: {
+    fontSize: 19,
+    fontWeight: '800',
+    color: colors.background,
+    letterSpacing: -0.3
+  },
+  primaryCtaSubtitle: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.82)',
+    marginTop: 3,
+    lineHeight: 18
+  },
+  primaryCtaCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.accentBlue,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9
+  },
+  primaryCtaCtaText: {
+    color: colors.background,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.4
+  },
+  flowCard: {
+    backgroundColor: colors.background,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    padding: 14,
+    marginBottom: 22
+  },
+  flowCardTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    color: colors.neutralGray,
+    textTransform: 'uppercase',
+    marginBottom: 11
+  },
+  flowSteps: {
+    gap: 12
+  },
+  flowStep: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 11
+  },
+  flowStepNumber: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceHighlight,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  flowStepNumberText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.primaryDark
+  },
+  flowStepBody: {
+    flex: 1
+  },
+  flowStepTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5
+  },
+  flowStepTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary
+  },
+  flowStepDetail: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+    lineHeight: 17
   },
   cta: {
     backgroundColor: colors.background,

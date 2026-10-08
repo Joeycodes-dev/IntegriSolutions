@@ -159,12 +159,17 @@ async function request<T>(path: string, options: RequestInit = {}, behavior: Req
 
   const doFetch = async (bearerToken: string | null): Promise<Response> => {
     return fetch(url, {
+      // `options` is spread FIRST so the composed headers win. Spreading it last
+      // meant that any caller passing its own `headers` (the evidence upload
+      // passes Idempotency-Key / X-Content-SHA256) replaced the whole header
+      // object and silently dropped Authorization, which the backend rejects
+      // with 401 "Authorization header missing or malformed".
+      ...options,
       headers: {
         ...finalHeaders,
         ...roleHeader,
         ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {})
-      },
-      ...options
+      }
     });
   };
 

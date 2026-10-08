@@ -95,6 +95,15 @@ android {
         versionCode 8
         versionName "1.0.7"
 
+        // Restrict the native libraries that get packaged at all. The splits
+        // block below only decides which per-ABI APKs are emitted; it does not
+        // stop a dependency's x86 libraries from reaching the universal APK.
+        // Setting abiFilters here trims those too, which is what keeps the
+        // universal APK from carrying ~40 MB of dead 32-bit x86 code.
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
     signingConfigs {
@@ -127,6 +136,24 @@ android {
             useLegacyPackaging enableLegacyPackaging.toBoolean()
         }
     }
+    // Per-ABI APKs. The Hermes and React Native native libraries dominate the
+    // package (~150 MB across four ABIs in a universal APK), so shipping one
+    // APK per architecture is by far the biggest size win available.
+    //   arm64-v8a   - every modern handset; this is the one to install first
+    //   armeabi-v7a - older / entry-level handsets
+    //   x86_64      - Android emulators (kept so the release build stays
+    //                 testable on the team's Pixel emulator)
+    // x86 is excluded on purpose; add it here if a 32-bit-x86 emulator is ever
+    // needed. universalApk keeps a single all-ABI installer for convenience.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            universalApk true
+        }
+    }
+
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }

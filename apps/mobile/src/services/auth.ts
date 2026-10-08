@@ -59,12 +59,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
+      // `options` first so a caller-supplied `headers` object can never replace
+      // the composed headers wholesale (same hazard as services/api.ts).
+      ...options,
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
         ...(options.headers ?? {})
-      },
-      ...options
+      }
     });
   } catch (error) {
     throw new Error(`Network error requesting ${API_BASE_URL}${path}: ${error instanceof Error ? error.message : String(error)}`);

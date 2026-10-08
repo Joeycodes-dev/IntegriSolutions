@@ -17,21 +17,15 @@ import type { ActiveTestDraftPayload } from '../lib/activeTestDraft';
 
 interface Props {
   profile: UserProfile;
+  /** Records still queued for upload — shown as the "Pending" stat tile. */
   pendingCount: number;
-  pendingEvidenceCount: number;
-  failedCount: number;
-  failedEvidenceCount: number;
-  syncedCount: number;
   todayCount: number;
   weekCount: number;
   recentStops: RecentStop[];
-  isSyncing: boolean;
-  lastSyncedAt: Date | null;
   initialDuty?: DutyStatus;
   onDutyChange?: (next: DutyStatus) => void;
   onStartSession: () => void;
   onOpenRoadOffence: () => void;
-  onForceSync: () => void;
   onOpenReports: () => void;
   onOpenAudit: () => void;
   /** Single most urgent alert to feature prominently, or null when nothing
@@ -75,18 +69,6 @@ function greeting(): string {
   return 'Working late';
 }
 
-function formatLastSync(d: Date | null): string {
-  if (!d) return 'Not synced yet';
-
-  return d.toLocaleString([], {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-}
-
 function formatDraftUpdatedAt(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return 'Recently';
@@ -119,20 +101,13 @@ function formatAlertExpiry(iso: string): string {
 export function OfficerHome({
   profile,
   pendingCount,
-  pendingEvidenceCount,
-  failedCount,
-  failedEvidenceCount,
-  syncedCount,
   todayCount,
   weekCount,
   recentStops,
-  isSyncing,
-  lastSyncedAt,
   initialDuty = 'on',
   onDutyChange,
   onStartSession,
   onOpenRoadOffence,
-  onForceSync,
   onOpenReports,
   onOpenAudit,
   featuredAlert = null,
@@ -158,9 +133,6 @@ export function OfficerHome({
     }
   };
   const [duty, setDuty] = useState<DutyStatus>(initialDuty);
-
-  const pendingSyncCount = pendingCount + pendingEvidenceCount;
-  const failedSyncCount = failedCount + failedEvidenceCount;
 
   const todayStats = useMemo(() => {
     return {
@@ -273,49 +245,14 @@ export function OfficerHome({
         </View>
       )}
 
-      <View style={styles.syncCard}>
-        <View style={styles.syncCardLeft}>
-          <View style={[styles.syncIconWrap, isSyncing && styles.syncIconWrapActive]}>
-            {isSyncing ? (
-              <ActivityIndicator size="small" color="#4338ca" />
-            ) : (
-              <Feather
-                name={failedSyncCount > 0 ? 'alert-circle' : pendingSyncCount > 0 ? 'cloud-off' : 'cloud'}
-                size={18}
-                color={failedSyncCount > 0 ? '#dc2626' : pendingSyncCount > 0 ? '#f59e0b' : '#22c55e'}
-              />
-            )}
-          </View>
-          <View style={styles.syncTextBlock}>
-            <Text style={styles.syncTitle}>
-              {isSyncing
-                ? 'Syncing to ledger…'
-                : failedSyncCount > 0
-                ? `${failedSyncCount} sync failure${failedSyncCount === 1 ? '' : 's'}`
-                : pendingSyncCount > 0
-                ? `${pendingSyncCount} item${pendingSyncCount === 1 ? '' : 's'} pending`
-                : 'All records and evidence synced'}
-            </Text>
-            <Text style={styles.syncSubtitle}>
-              {failedSyncCount > 0
-                ? `Needs attention · Last sync ${formatLastSync(lastSyncedAt)}`
-                : `Last sync ${formatLastSync(lastSyncedAt)}`}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.syncActions}>
-          <Pressable
-            style={[styles.syncButton, isSyncing && styles.syncButtonDisabled]}
-            onPress={onForceSync}
-            disabled={isSyncing}
-            accessibilityRole="button"
-            accessibilityLabel="Sync pending records and evidence"
-          >
-            <Feather name="refresh-cw" size={14} color="#4338ca" />
-            <Text style={styles.syncButtonText}>Sync</Text>
-          </Pressable>
-        </View>
-      </View>
+      {/*
+        No sync card here. Sync status now lives in the persistent
+        SyncStatusBar under the dashboard header, with the Sync Centre
+        reachable from that bar, the saved-confirmation screen, and the saved
+        record's own actions. Duplicating it on Home gave the secondary
+        operational concern more visual weight than "Start Test", which is the
+        action an officer opens the app to perform.
+      */}
 
       {featuredAlert && (() => {
         const priorityStyle = alertPriorityStyle(featuredAlert.priority);
@@ -387,18 +324,72 @@ export function OfficerHome({
         </View>
       </View>
 
-      <Pressable style={styles.cta} onPress={onStartSession}>
-        <View style={styles.ctaInner}>
-          <View style={styles.ctaIconWrap}>
-            <Feather name="camera" size={22} color="#4338ca" />
-          </View>
-          <View style={styles.ctaTextBlock}>
-            <Text style={styles.ctaTitle}>Start New Session</Text>
-            <Text style={styles.ctaSubtitle}>Scan a license to begin a verified record</Text>
-          </View>
-          <Feather name="arrow-right" size={20} color="#4338ca" />
+      {/*
+        Primary capture action. Participants described this as "Start test /
+        Scan licence" not "Start New Session", so the label now names the
+        action and the step that follows, and the card states the two-step
+        flow up front so officers know what happens after they tap.
+      */}
+      <Pressable
+        style={styles.primaryCta}
+        onPress={onStartSession}
+        accessibilityRole="button"
+        accessibilityLabel="Start test — scan the front of the driver's licence"
+        accessibilityHint="Opens the licence scanner"
+      >
+        <View style={styles.primaryCtaBadge}>
+          <Feather name="camera" size={24} color="#fff" />
+        </View>
+        <View style={styles.primaryCtaBody}>
+          <Text style={styles.primaryCtaTitle}>Start Test</Text>
+          <Text style={styles.primaryCtaSubtitle}>
+            Scan the front of the driver's licence
+          </Text>
+        </View>
+        <View style={styles.primaryCtaCta}>
+          <Text style={styles.primaryCtaCtaText}>SCAN LICENCE</Text>
+          <Feather name="arrow-right" size={18} color="#fff" />
         </View>
       </Pressable>
+
+      <View style={styles.flowCard}>
+        <Text style={styles.flowCardTitle}>What happens next</Text>
+        <View style={styles.flowSteps}>
+          {[
+            {
+              step: '1',
+              icon: 'maximize' as const,
+              title: 'Scan the front',
+              detail: 'Hold the front of the licence to the camera'
+            },
+            {
+              step: '2',
+              icon: 'wind' as const,
+              title: 'Breath test',
+              detail: 'Connect the breathalyzer and capture the reading'
+            },
+            {
+              step: '3',
+              icon: 'save' as const,
+              title: 'Save the record',
+              detail: 'Reviewed locally, then synced to the ledger'
+            }
+          ].map((item) => (
+            <View key={item.step} style={styles.flowStep}>
+              <View style={styles.flowStepNumber}>
+                <Text style={styles.flowStepNumberText}>{item.step}</Text>
+              </View>
+              <View style={styles.flowStepBody}>
+                <View style={styles.flowStepTitleRow}>
+                  <Feather name={item.icon} size={13} color={colors.accentBlue} />
+                  <Text style={styles.flowStepTitle}>{item.title}</Text>
+                </View>
+                <Text style={styles.flowStepDetail}>{item.detail}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
 
       <Pressable style={styles.cta} onPress={onOpenRoadOffence}>
         <View style={styles.ctaInner}>
@@ -418,9 +409,12 @@ export function OfficerHome({
           <Feather name="info" size={16} color="#4338ca" />
         </View>
         <View style={styles.tipTextBlock}>
-          <Text style={styles.tipTitle}>Tip</Text>
+          <Text style={styles.tipTitle}>Which side to scan</Text>
           <Text style={styles.tipBody}>
-            Hold the phone 15-20 cm from the license barcode and tilt slightly to avoid glare. PDF417 is read best in daylight.
+            Scan the FRONT of the licence. That is the side carrying the driver's
+            name, initials and expiry date we need. Hold the phone 15-20 cm away,
+            fill the frame with the whole card, and tilt slightly to avoid
+            glare. Best results in daylight.
           </Text>
         </View>
       </View>

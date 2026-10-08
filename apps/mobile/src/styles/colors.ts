@@ -31,6 +31,12 @@ export const colors = {
   successBorder: '#BBF7D0',     // green
   successText: '#15803D',       // green
 
+  // Sync queue ("waiting to upload") accents, used by the persistent
+  // SyncStatusBar. Kept distinct from the alert palette above so an
+  // ordinary upload backlog never reads as an operational alert.
+  syncQueuedBackground: '#FFFBEB',  // amber-50
+  syncQueuedBorder: '#FCD34D',      // amber-300
+
   // Operational Alert priority accents (Home banner + bottom-nav badge).
   // Deliberately NOT red for ordinary High-priority alerts — red is
   // reserved for a genuinely urgent/emergency state (e.g. future SOS /

@@ -151,20 +151,95 @@ export const styles = StyleSheet.create({
     borderRadius: 24,
     margin: 20
   },
-  scanInstructions: {
+  /**
+   * Transparent wrapper over the camera. `pointerEvents="box-none"` on this
+   * element (set in the component) means the framing area underneath stays
+   * fully tappable while the card above it can still host its own button.
+   */
+  scanHelpWrap: {
     position: 'absolute',
     top: 30,
     left: 20,
-    right: 20,
+    right: 20
+  },
+  scanInstructions: {
     backgroundColor: colors.overlay,
-    borderRadius: 16,
-    padding: 12
+    borderRadius: 18,
+    padding: 14,
+    paddingRight: 52,
+    gap: 7
+  },
+  scanHelpCollapse: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.16)'
+  },
+  scanHelpCollapseText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  scanHelpChip: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: colors.overlay
+  },
+  scanHelpChipText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700'
   },
   scanHint: {
     color: colors.background,
     textAlign: 'center',
     fontSize: 14,
     lineHeight: 20
+  },
+  scanStepBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.accentBlue,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 3
+  },
+  scanStepBadgeText: {
+    color: colors.background,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6
+  },
+  scanHeadline: {
+    color: colors.background,
+    fontSize: 19,
+    fontWeight: '800',
+    lineHeight: 25,
+    letterSpacing: -0.3
+  },
+  scanInstructionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8
+  },
+  scanInstructionIcon: {
+    marginTop: 3
+  },
+  scanInstructionText: {
+    flex: 1,
+    color: 'rgba(255,255,255,0.88)',
+    fontSize: 13,
+    lineHeight: 18
   },
   scanActions: {
     position: 'absolute',
@@ -174,6 +249,60 @@ export const styles = StyleSheet.create({
     flexDirection: 'column',
     justifyContent: 'space-between',
     gap: 12
+  },
+  /**
+   * The barcode scan is the primary path, so the photo fallback is a
+   * secondary-weight button rather than an equal-weight `primaryButton` that
+   * competed with it.
+   */
+  scanFallbackButton: {
+    backgroundColor: colors.primaryDark,
+    borderRadius: 16,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 9,
+    borderWidth: 1,
+    borderColor: colors.accentBlue
+  },
+  scanFallbackButtonText: {
+    color: colors.background,
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  flowBanner: {
+    backgroundColor: colors.surfaceHighlight,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.borderHighlight,
+    padding: 14,
+    marginBottom: 18,
+    gap: 6
+  },
+  flowBannerStep: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.primaryDark,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 3
+  },
+  flowBannerStepText: {
+    color: colors.background,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6
+  },
+  flowBannerTitle: {
+    color: colors.textPrimary,
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: -0.3
+  },
+  flowBannerDetail: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19
   },
   rawPayloadCard: {
     marginBottom: 20,
@@ -756,6 +885,63 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textSecondary,
     marginTop: 4
+  },
+  savedSyncCard: {
+    backgroundColor: colors.successBackground,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.successBorder,
+    padding: 14,
+    marginBottom: 20,
+    gap: 9
+  },
+  savedSyncCardPending: {
+    backgroundColor: colors.syncQueuedBackground,
+    borderColor: colors.syncQueuedBorder
+  },
+  savedSyncCardError: {
+    backgroundColor: colors.errorBackground,
+    borderColor: colors.errorBorder
+  },
+  savedSyncRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  savedSyncText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    lineHeight: 18
+  },
+  savedSyncButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 42,
+    borderRadius: 11,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.borderHighlight
+  },
+  savedSyncButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.accentBlue
+  },
+  savedSyncLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    minHeight: 30
+  },
+  savedSyncLinkText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.accentBlue
   },
   secondaryActionButton: {
     flex: 1,
