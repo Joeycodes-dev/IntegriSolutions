@@ -92,8 +92,12 @@ android {
         applicationId 'com.thabza102.integrisolutionsmobile'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 8
-        versionName "1.0.7"
+        // 9 > the versionCode 8 shipped as v1.0.7. Android refuses an
+        // update-install unless the versionCode is strictly greater, and an
+        // equal versionCode would force testers to uninstall first, wiping any
+        // locally queued records and evidence.
+        versionCode 9
+        versionName "1.0.8"
 
         // Restrict the native libraries that get packaged at all. The splits
         // block below only decides which per-ABI APKs are emitted; it does not
