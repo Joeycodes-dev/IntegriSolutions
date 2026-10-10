@@ -29,6 +29,7 @@ import {
 import type { ChatMessage, ChatOfficerContact, ChatThreadSummary } from '../types';
 import { hasSupabaseRealtimeConfig, supabaseRealtime } from '../lib/supabaseRealtime';
 import { roleLabel } from '../lib/chatRoleLabel';
+import { formatDayAwareDateTime } from '../lib/dateTime';
 
 type RootStackParamList = {
   OfficerDashboard: undefined;
@@ -39,13 +40,6 @@ type RootStackParamList = {
 };
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EmergencyChat'>;
-
-function formatStamp(iso: string): string {
-  const value = new Date(iso);
-  if (Number.isNaN(value.getTime())) return iso;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(value.getHours())}:${pad(value.getMinutes())}`;
-}
 
 function threadTitle(thread: ChatThreadSummary, selfOfficerId?: number): string {
   if (thread.title?.trim()) {
@@ -510,7 +504,7 @@ export function EmergencyChatScreen(_props: Props) {
                       </Text>
                       <View style={styles.threadMeta}>
                         <Text style={styles.threadTime}>
-                          {item.latestMessage ? formatStamp(item.latestMessage.createdAt) : '--:--'}
+                          {item.latestMessage ? formatDayAwareDateTime(item.latestMessage.createdAt) : '--:--'}
                         </Text>
                         {item.unreadCount > 0 && (
                           <View style={styles.unreadPill}>
@@ -603,12 +597,12 @@ export function EmergencyChatScreen(_props: Props) {
                             <View style={styles.seenListWrap}>
                               {seenBy.map((viewer) => (
                                 <Text key={`${item.id}-${viewer.source}-${viewer.participantId}`} style={styles.seenListText}>
-                                  {viewer.name} · {roleLabel(viewer.roleId)} · {formatStamp(viewer.readAt)}
+                                  {viewer.name} · {roleLabel(viewer.roleId)} · {formatDayAwareDateTime(viewer.readAt)}
                                 </Text>
                               ))}
                             </View>
                           )}
-                          <Text style={styles.messageTime}>{formatStamp(item.createdAt)}</Text>
+                          <Text style={styles.messageTime}>{formatDayAwareDateTime(item.createdAt)}</Text>
                         </View>
                       );
                     }}

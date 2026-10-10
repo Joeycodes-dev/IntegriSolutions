@@ -73,6 +73,12 @@ router.post('/', requireAuth, async (c) => {
   if (!id || !OFFENCE_TYPES.has(offenceType) || !ACTIONS.has(actionTaken) || !notes || !location || typeof location !== 'object') {
     return c.json({ error: 'Missing or invalid road offence payload' }, 400);
   }
+
+  const driverName = typeof body.driverName === 'string' ? body.driverName.trim() : '';
+  const driverIdentifier = typeof body.driverIdentifier === 'string' ? body.driverIdentifier.trim() : '';
+  if (!driverName || !driverIdentifier) {
+    return c.json({ error: 'Driver name and ID or driving licence number are required' }, 400);
+  }
   if (offenceType === 'other' && !notes) {
     return c.json({ error: 'Notes are required for other road offences' }, 400);
   }
@@ -88,8 +94,8 @@ router.post('/', requireAuth, async (c) => {
     officerName: `${actor.profile.name} ${actor.profile.surname}`.trim(),
     badgeNumber: actor.profile.badgeNumber,
     offenceType,
-    driverName: typeof body.driverName === 'string' ? body.driverName.trim() : '',
-    driverIdentifier: typeof body.driverIdentifier === 'string' ? body.driverIdentifier.trim() : '',
+    driverName,
+    driverIdentifier,
     vehicleRegistration: typeof body.vehicleRegistration === 'string' ? body.vehicleRegistration.trim() : '',
     vehicleDescription: typeof body.vehicleDescription === 'string' ? body.vehicleDescription.trim() : '',
     notes,

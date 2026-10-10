@@ -87,17 +87,30 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
+    // Windows MAX_PATH workaround: stage the CMake build outside the project
+    // tree. With the default <module>/.cxx staging dir, new-arch codegen object
+    // paths embed the full absolute source path twice (~378 chars) and ninja
+    // fails with Stat(...) "Filename longer than 260 characters" in
+    // buildCMakeRelWithDebInfo. Staging at C:\cxx keeps the longest generated
+    // object path at ~248 chars. Also requires running the build via the C:\M
+    // junction instead of the real project path.
+    externalNativeBuild {
+        cmake {
+            buildStagingDirectory = file('C:/cxx')
+        }
+    }
+
     namespace 'com.thabza102.integrisolutionsmobile'
     defaultConfig {
         applicationId 'com.thabza102.integrisolutionsmobile'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        // 9 > the versionCode 8 shipped as v1.0.7. Android refuses an
+        // 11 > the versionCode 10 shipped as v1.0.9. Android refuses an
         // update-install unless the versionCode is strictly greater, and an
         // equal versionCode would force testers to uninstall first, wiping any
         // locally queued records and evidence.
-        versionCode 9
-        versionName "1.0.8"
+        versionCode 11
+        versionName "1.0.10"
 
         // Restrict the native libraries that get packaged at all. The splits
         // block below only decides which per-ABI APKs are emitted; it does not

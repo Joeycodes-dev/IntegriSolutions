@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity, Image, ScrollView, Linking } from 'react-native';
 import { markAttachmentOpened } from '../services/api';
+import { formatDayAwareDateTime } from '../lib/dateTime';
 import type { ChatAttachment } from '../types';
 
 interface Props {
@@ -91,7 +92,7 @@ export function ChatAttachmentsDisplay({ attachments, onAttachmentOpen }: Props)
                       {viewer.badgeNumber && <Text> ({viewer.badgeNumber})</Text>}
                       {' '}
                       <Text style={{ color: '#94a3b8', fontSize: 10 }}>
-                        {new Date(viewer.openedAt).toLocaleTimeString()}
+                        {formatDayAwareDateTime(viewer.openedAt)}
                       </Text>
                     </Text>
                   ))}

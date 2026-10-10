@@ -1,0 +1,249 @@
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: internal error; reference = okoau6ssodlgraq7hbbq9lsb [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = dv70sonkq5u4efmsjil4oddl] {[0m
+
+    remote: true
+  }
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mNOSENTRY reporting trace with exceptions, but no exception outcome; trace->eventInfo = FetchEventInfo: POST, http://192.168.8.4:8787/api/auth/login[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mNOSENTRY reporting trace with exception outcome, but no actual exceptions; trace->eventInfo = FetchEventInfo: GET, http://192.168.8.4:8787/api/tests/stream?access_token=eyJhbGciOiJFUzI1NiIsImtpZCI6IjRhZTU2YjY2LWE4YjgtNDBlNy1iOTBhLTYxMDBhZDQxMmRlNCIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2xsZG5seWNiZ2l0eGR1cGlreWtjLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJlYWMxNGZkYS1lNzk5LTRkZDMtOTdlNC02NTAyOGE3NzhiZGMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzkxNjM3MTg4LCJpYXQiOjE3OTE2MzM1ODgsImVtYWlsIjoidGVzdDAxQHRlc3QuY29tIiwicGhvbmUiOiIiLCJhcHBfbWV0YWRhdGEiOnsicHJvdmlkZXIiOiJlbWFpbCIsInByb3ZpZGVycyI6WyJlbWFpbCJdfSwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbF92ZXJpZmllZCI6dHJ1ZX0sInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiYWFsIjoiYWFsMSIsImFtciI6W3sibWV0aG9kIjoicGFzc3dvcmQiLCJ0aW1lc3RhbXAiOjE3OTE2MzM1ODh9XSwic2Vzc2lvbl9pZCI6IjkxOTYyZmI4LTkwOWUtNGRiNi04YzNiLTUxM2ZkN2UzOGZkZSIsImlzX2Fub255bW91cyI6ZmFsc2V9.ShHI8v1pQxHKSOnUH7PrPDukkd2fy7AewEhtNyTHMJewMyR5vjoF1g6oAtoxNc0gu56ItOJ8yyrLJVlO2gA3TQ[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: Network connection lost.] { remote: true, retryable: true }[0m
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mProxyWorker: GET http://192.168.8.4:8787/api/tests recovered on attempt 2 after a dropped connection to the UserWorker[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = 0nl85l0hiht0fembt7t9qns5] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = 1r1r96c7l8gebdl9pheknobd] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: internal error; reference = 04ivngbvb1sb3m7rc9cav8eg [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = h4lf76boei4jjg7ktr38tcr9] {[0m
+
+    remote: true
+  }
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mNOSENTRY reporting trace with exceptions, but no exception outcome; trace->eventInfo = FetchEventInfo: POST, http://192.168.8.4:8787/api/auth/login[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: internal error; reference = 9sh01pl82f2vsl7l5vbupjjn [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = v90h597m1ksi4jhsak1f40a0] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mNOSENTRY reporting trace with exception outcome, but no actual exceptions; trace->eventInfo = FetchEventInfo: GET, http://192.168.8.4:8787/api/tests/stream?access_token=eyJhbGciOiJFUzI1NiIsImtpZCI6IjRhZTU2YjY2LWE4YjgtNDBlNy1iOTBhLTYxMDBhZDQxMmRlNCIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2xsZG5seWNiZ2l0eGR1cGlreWtjLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJlYWMxNGZkYS1lNzk5LTRkZDMtOTdlNC02NTAyOGE3NzhiZGMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzkxNjQxNjcyLCJpYXQiOjE3OTE2MzgwNzIsImVtYWlsIjoidGVzdDAxQHRlc3QuY29tIiwicGhvbmUiOiIiLCJhcHBfbWV0YWRhdGEiOnsicHJvdmlkZXIiOiJlbWFpbCIsInByb3ZpZGVycyI6WyJlbWFpbCJdfSwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbF92ZXJpZmllZCI6dHJ1ZX0sInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiYWFsIjoiYWFsMSIsImFtciI6W3sibWV0aG9kIjoicGFzc3dvcmQiLCJ0aW1lc3RhbXAiOjE3OTE2MzgwNzJ9XSwic2Vzc2lvbl9pZCI6ImRhYzA2MDNmLWFmYjAtNDI4Yi1hOTYzLTk5NWZmMWZjYjNlMSIsImlzX2Fub255bW91cyI6ZmFsc2V9.29W9o6OC4ENrWl7vx7_pVMDqk6-Z1u6s6zg86NnopmbxC0WzWQOglvvSiGkD1y2c1I6Av8ai6Z5FkFqsB60QKA[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: Network connection lost.] { remote: true, retryable: true }[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: Network connection lost.] { remote: true, retryable: true }[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: Network connection lost.] { remote: true, retryable: true }[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: Network connection lost.] { remote: true, retryable: true }[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: Network connection lost.] { remote: true, retryable: true }[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = t2veeob2nil6iqsc76obijls] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = vp188p5rmg1pf0beagq0kcrv] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = b8ada22q40er0qhq387hgciu] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = 46u7pf76gsap0a75herubjoe] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = 3sg5joaf3st3s0893u9q4852] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = 6a1p6f47132atevqr84m5bm6] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: Network connection lost.] { remote: true, retryable: true }[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = sjiei5jqqm7k2fp8uk62md0m] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = sasjrvavd4d4ju108ekmd5b5] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = ck5arnbd4h7otv6el8lkr09b] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = cc1b80ggie9cq99gfdt2rg0i] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = huqrnqr4llrvm8v5uh55qvs2] {[0m
+
+    remote: true
+  }
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mNOSENTRY reporting trace with exception outcome, but no actual exceptions; trace->eventInfo = FetchEventInfo: GET, http://192.168.8.4:8787/api/tests/stream?access_token=eyJhbGciOiJFUzI1NiIsImtpZCI6IjRhZTU2YjY2LWE4YjgtNDBlNy1iOTBhLTYxMDBhZDQxMmRlNCIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2xsZG5seWNiZ2l0eGR1cGlreWtjLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJlYWMxNGZkYS1lNzk5LTRkZDMtOTdlNC02NTAyOGE3NzhiZGMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzkxNjUwMDkzLCJpYXQiOjE3OTE2NDY0OTMsImVtYWlsIjoidGVzdDAxQHRlc3QuY29tIiwicGhvbmUiOiIiLCJhcHBfbWV0YWRhdGEiOnsicHJvdmlkZXIiOiJlbWFpbCIsInByb3ZpZGVycyI6WyJlbWFpbCJdfSwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbF92ZXJpZmllZCI6dHJ1ZX0sInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiYWFsIjoiYWFsMSIsImFtciI6W3sibWV0aG9kIjoicGFzc3dvcmQiLCJ0aW1lc3RhbXAiOjE3OTE2NDY0OTN9XSwic2Vzc2lvbl9pZCI6IjBmOTRjMTU4LTg5NjctNGVkZC04ZGE3LTgzMjA0YWQ3NmZlNCIsImlzX2Fub255bW91cyI6ZmFsc2V9.UZAUEtrUI2IEtcYVUHX8eJIJd8WPpqJ__nKcK93ISn2orag4yIHBd-vtRuUpVFRle454bNmLXp01fiFeRBk2yg[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = ckek926mvg17c6mh02rgenl9] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = 3hkj28070vhfcjhe435u2ss3] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: internal error; reference = sg08rspggivnd6397sfuv886 [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = 9620d0nnsqhi5ku4h45odrk1] {[0m
+
+    remote: true
+  }
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mNOSENTRY reporting trace with exceptions, but no exception outcome; trace->eventInfo = FetchEventInfo: POST, http://192.168.8.4:8787/api/auth/login[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: Network connection lost.] { remote: true, retryable: true }[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: Network connection lost.] { remote: true, retryable: true }[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mProxyWorker: GET http://192.168.8.4:8787/api/tests recovered on attempt 2 after a dropped connection to the UserWorker[0m
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mProxyWorker: GET http://192.168.8.4:8787/api/tests recovered on attempt 2 after a dropped connection to the UserWorker[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = 2vmrjrqcledm5lb688858i5g] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = go183ernjmvahh02epfntej7] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1m[Error: internal error; reference = fab41i6pqp23gk8s0api10uj] {[0m
+
+    remote: true
+  }
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Network connection lost. [0m
+
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mNOSENTRY reporting trace with exception outcome, but no actual exceptions; trace->eventInfo = FetchEventInfo: GET, http://192.168.8.4:8787/api/tests/stream?access_token=eyJhbGciOiJFUzI1NiIsImtpZCI6IjRhZTU2YjY2LWE4YjgtNDBlNy1iOTBhLTYxMDBhZDQxMmRlNCIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2xsZG5seWNiZ2l0eGR1cGlreWtjLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJlYWMxNGZkYS1lNzk5LTRkZDMtOTdlNC02NTAyOGE3NzhiZGMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzkxNjYwNzc4LCJpYXQiOjE3OTE2NTcxNzgsImVtYWlsIjoidGVzdDAxQHRlc3QuY29tIiwicGhvbmUiOiIiLCJhcHBfbWV0YWRhdGEiOnsicHJvdmlkZXIiOiJlbWFpbCIsInByb3ZpZGVycyI6WyJlbWFpbCJdfSwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbF92ZXJpZmllZCI6dHJ1ZX0sInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiYWFsIjoiYWFsMSIsImFtciI6W3sibWV0aG9kIjoicGFzc3dvcmQiLCJ0aW1lc3RhbXAiOjE3OTE2NTcxNzh9XSwic2Vzc2lvbl9pZCI6IjJkMjMxZjVjLWMwYzAtNDBiNy1hODVkLWMyNTk2N2M4MTI0NyIsImlzX2Fub255bW91cyI6ZmFsc2V9.bSnDBKBlgyjRa-JLlZgyOmCNwgcJW138TrrwYEW9ukavcb1BuBwQS2IBUcn_ZG4H7rtiNzULSkuR-1Di6NKu1w[0m
+
+
+[31mX [41;31m[[41;97mERROR[41;31m][0m [1mError inside ProxyWorker (the affected request failed; the dev server continues): OPTIONS http://192.168.8.4:8787/api/chat/threads (failed after 1 attempt): Network connection lost.[0m
+
+

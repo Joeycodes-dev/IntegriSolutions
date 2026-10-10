@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Download, Eye, FileText } from 'lucide-react';
 import { markAttachmentOpened } from '../../services/api';
+import { formatDayAwareDateTime } from '../../lib/dateTime';
 import type { ChatAttachment } from '../../types';
 
 interface Props {
@@ -106,7 +107,7 @@ export function ChatAttachmentsDisplay({ attachments, onAttachmentOpen }: Props)
                       <span className="font-medium">{viewer.name}</span>
                       {viewer.badgeNumber && <span className="text-slate-500"> ({viewer.badgeNumber})</span>}
                       <span className="text-slate-400 text-xs ml-1">
-                        {new Date(viewer.openedAt).toLocaleTimeString()}
+                        {formatDayAwareDateTime(viewer.openedAt)}
                       </span>
                     </div>
                   ))}

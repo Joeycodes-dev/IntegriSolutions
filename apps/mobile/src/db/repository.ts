@@ -22,7 +22,8 @@ export type AuditAction =
   | 'alert.received'
   | 'alert.acknowledged.queued'
   | 'alert.acknowledged.synced'
-  | 'alert.acknowledged.failed';
+  | 'alert.acknowledged.failed'
+  | 'test.session.interrupted';
 
 export type AuditOutcome = 'success' | 'failure';
 export type AuditSeverity = 'info' | 'warning' | 'critical';
@@ -702,6 +703,81 @@ export async function removeAlertAckFromQueue(alertId: string): Promise<void> {
 export async function incrementAlertAckRetry(alertId: string): Promise<void> {
   const db = await getDB();
   await db.runAsync(`UPDATE alert_ack_queue SET retryCount = retryCount + 1 WHERE alertId = ?`, [alertId]);
+}
+
+export type SessionInterruptionKind = 'cancelled' | 'navigated_away' | 'app_closed';
+
+export interface SessionInterruptionRecord {
+  id: string;
+  draftId: string;
+  plannedTestId: string | null;
+  step: 'scan' | 'reading';
+  kind: SessionInterruptionKind;
+  reason: string | null;
+  officerId: number | null;
+  occurredAt: string;
+  syncStatus: SyncStatus;
+  lastError: string | null;
+}
+
+function toSessionInterruptionRecord(row: Record<string, unknown>): SessionInterruptionRecord {
+  return {
+    id: String(row.id),
+    draftId: String(row.draftId),
+    plannedTestId: row.plannedTestId == null ? null : String(row.plannedTestId),
+    step: row.step === 'reading' ? 'reading' : 'scan',
+    kind: String(row.kind) as SessionInterruptionKind,
+    reason: row.reason == null ? null : String(row.reason),
+    officerId: row.officerId == null ? null : Number(row.officerId),
+    occurredAt: String(row.occurredAt),
+    syncStatus: String(row.syncStatus) as SyncStatus,
+    lastError: row.lastError == null ? null : String(row.lastError)
+  };
+}
+
+export async function insertSessionInterruption(
+  record: Omit<SessionInterruptionRecord, 'syncStatus' | 'lastError'>
+): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `INSERT INTO session_interruptions (id, draftId, plannedTestId, step, kind, reason, officerId, occurredAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [record.id, record.draftId, record.plannedTestId, record.step, record.kind, record.reason, record.officerId, record.occurredAt]
+  );
+}
+
+/** Backgrounding produces one app_closed row per draft — the officer reopening
+ * and backgrounding again must not spam the supervisor list. */
+export async function hasAppClosedInterruption(draftId: string): Promise<boolean> {
+  const db = await getDB();
+  const row = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM session_interruptions WHERE draftId = ? AND kind = 'app_closed'`,
+    [draftId]
+  );
+  return (row?.count ?? 0) > 0;
+}
+
+export async function getPendingSessionInterruptions(): Promise<SessionInterruptionRecord[]> {
+  const db = await getDB();
+  const rows = await db.getAllAsync<Record<string, unknown>>(
+    `SELECT * FROM session_interruptions WHERE syncStatus = 'pending_sync' ORDER BY occurredAt ASC`
+  );
+  return rows.map(toSessionInterruptionRecord);
+}
+
+export async function markSessionInterruptionSynced(id: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `UPDATE session_interruptions SET syncStatus = 'synced', lastError = NULL WHERE id = ?`,
+    [id]
+  );
+}
+
+export async function markSessionInterruptionFailed(id: string, error: string): Promise<void> {
+  const db = await getDB();
+  await db.runAsync(
+    `UPDATE session_interruptions SET lastError = ? WHERE id = ?`,
+    [error.slice(0, 500), id]
+  );
 }
 
 export async function insertDraft(draft: LocalDraft): Promise<void> {

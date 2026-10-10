@@ -11,16 +11,45 @@ function javaExecutable(javaHome) {
   return path.join(javaHome, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
 }
 
-function isUsableJavaHome(candidate) {
-  if (!candidate) return false;
+function javaMajorVersion(candidate) {
+  if (!candidate) return null;
   const java = javaExecutable(candidate);
-  if (!fs.existsSync(java)) return false;
-  const probe = spawnSync(java, ['-version'], { stdio: 'ignore' });
-  return probe.status === 0;
+  if (!fs.existsSync(java)) return null;
+  const probe = spawnSync(java, ['-version'], { encoding: 'utf8' });
+  if (probe.status !== 0) return null;
+  // `java -version` prints to stderr, e.g. openjdk version "17.0.20.1" or "1.8.0_x".
+  const text = `${probe.stderr ?? ''}${probe.stdout ?? ''}`;
+  const match = /version "(1\.8|\d+)/.exec(text);
+  if (!match) return null;
+  return match[1] === '1.8' ? 8 : Number.parseInt(match[1], 10);
+}
+
+// Gradle 8.14.3 + AGP require JDK 17-21:
+//  - JDK 23+ prints the JEP 472 "restricted method" warning to stderr when AGP
+//    shells out to the prefab CLI (JNA), and AGP treats any prefab stderr as
+//    fatal -> all configureCMakeRelWithDebInfo[*] tasks fail.
+//  - The Android Studio JBR is JDK 25, which Gradle 8.14.3 cannot run on at all.
+//  JDK_JAVA_OPTIONS/JAVA_TOOL_OPTIONS are NOT a workaround: the java launcher
+//  prints "Picked up ..." to stderr, which AGP also treats as failure.
+function isUsableJavaHome(candidate) {
+  const major = javaMajorVersion(candidate);
+  return major !== null && major >= 17 && major <= 21;
 }
 
 function findJavaHome() {
+  // Prefer the portable Temurin JDKs under C:\Tools (jdk-17* first) so a
+  // machine-wide JAVA_HOME pointing at a newer JDK cannot poison the build.
+  const toolsRoot = 'C:\\Tools';
+  const toolsJdks = fs.existsSync(toolsRoot)
+    ? fs.readdirSync(toolsRoot)
+        .filter((name) => /^jdk-(1[7-9]|2[01])(\D|$)/i.test(name))
+        .sort()
+        .reverse()
+        .map((name) => path.join(toolsRoot, name))
+    : [];
+
   const candidates = [
+    ...toolsJdks,
     process.env.JAVA_HOME,
     'C:\\Program Files\\Android\\openjdk\\jdk-21.0.8',
     'C:\\Program Files\\Android\\openjdk\\jdk-17.0.12',
@@ -40,7 +69,7 @@ function findAndroidSdk() {
 
 const javaHome = findJavaHome();
 if (!javaHome) {
-  console.error('No usable JDK was found. Set JAVA_HOME to a JDK 17+ installation and retry.');
+  console.error('No usable JDK was found. Set JAVA_HOME to a JDK 17-21 installation and retry.');
   process.exit(1);
 }
 

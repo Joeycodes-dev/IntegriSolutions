@@ -3,6 +3,7 @@ import type { AppEnv } from '../env';
 import { requireAuth } from '../middleware/auth';
 import { resolveProfileByEmail } from '../utilities/resolveProfile';
 import { serviceSupabase } from '../serviceSupabase';
+import { effectiveShiftStatus } from '../utilities/shiftStatus';
 
 const router = new Hono<AppEnv>();
 
@@ -19,7 +20,7 @@ function toRoadblockShift(row: Record<string, unknown>, assignmentStatus: string
     supervisorName: row.supervisor_name ? String(row.supervisor_name) : null,
     startsAt: String(row.starts_at ?? ''),
     endsAt: String(row.ends_at ?? ''),
-    status: String(row.status ?? 'active'),
+    status: effectiveShiftStatus(String(row.status ?? 'active'), String(row.starts_at ?? ''), String(row.ends_at ?? '')),
     centerLat: row.center_lat == null ? null : Number(row.center_lat),
     centerLng: row.center_lng == null ? null : Number(row.center_lng),
     radiusMeters: row.radius_meters == null ? null : Number(row.radius_meters),

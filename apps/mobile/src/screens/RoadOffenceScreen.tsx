@@ -108,8 +108,8 @@ export function RoadOffenceScreen({ navigation }: Props) {
   };
 
   const submit = async () => {
-    if (!offenceType || !actionTaken || !notes.trim()) {
-      Alert.alert('Details required', 'Select an offence, select the action taken, and enter the observed facts.');
+    if (!offenceType || !actionTaken || !driverName.trim() || !driverIdentifier.trim() || !notes.trim()) {
+      Alert.alert('Details required', 'Select an offence, select the action taken, enter the driver name and ID or driving licence number, and enter the observed facts.');
       return;
     }
     setSaving(true);
@@ -156,12 +156,17 @@ export function RoadOffenceScreen({ navigation }: Props) {
           <Text style={styles.label}>ACTION TAKEN *</Text>
           <Pressable style={styles.select} onPress={() => setPicker('action')}><Text style={styles.selectText}>{actionLabel}</Text><Feather name="chevron-down" size={18} color="#475569" /></Pressable>
           <Text style={styles.section}>Driver and vehicle</Text>
-          <TextInput value={driverName} onChangeText={setDriverName} placeholder="Driver name (if available)" style={styles.input} />
-          <TextInput value={driverIdentifier} onChangeText={setDriverIdentifier} placeholder="ID or driving licence number (if available)" style={styles.input} />
+          <Text style={styles.label}>DRIVER NAME *</Text>
+          <TextInput value={driverName} onChangeText={setDriverName} placeholder="Driver name" style={styles.input} />
+          <Text style={styles.label}>ID OR DRIVING LICENCE NUMBER *</Text>
+          <TextInput value={driverIdentifier} onChangeText={setDriverIdentifier} placeholder="ID or driving licence number" style={styles.input} />
+          <Text style={styles.label}>VEHICLE REGISTRATION (OPTIONAL)</Text>
           <TextInput value={vehicleRegistration} onChangeText={setVehicleRegistration} placeholder="Vehicle registration (if available)" autoCapitalize="characters" style={styles.input} />
+          <Text style={styles.label}>VEHICLE DESCRIPTION (OPTIONAL)</Text>
           <TextInput value={vehicleDescription} onChangeText={setVehicleDescription} placeholder="Vehicle description (make, model, colour)" style={styles.input} />
           <Text style={styles.label}>OBSERVED FACTS *</Text>
           <TextInput value={notes} onChangeText={setNotes} placeholder={offenceType === 'other' ? 'Describe the other road offence clearly' : 'Record the observed facts'} multiline style={[styles.input, styles.notes]} />
+          <Text style={styles.label}>FINE, NOTICE, OR REFERENCE NUMBER (OPTIONAL)</Text>
           <TextInput value={referenceNumber} onChangeText={setReferenceNumber} placeholder="Fine, notice, or reference number (if issued)" style={styles.input} />
           <Text style={styles.section}>Supporting photos</Text>
           <Text style={styles.evidenceHint}>Optional. Attach up to five photos before the record is locked.</Text>

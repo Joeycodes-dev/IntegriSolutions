@@ -9,6 +9,7 @@ import {
   Megaphone,
   Shield,
   ShieldAlert,
+  TimerOff,
   User
 } from 'lucide-react';
 import type { SupervisorNavItem } from '../../types';
@@ -26,6 +27,7 @@ const NAV_ITEMS: { id: SupervisorNavItem; label: string; icon: typeof LayoutDash
   { id: 'alerts', label: 'Alerts', icon: Megaphone },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
   { id: 'roadOffences', label: 'Road Offences', icon: ShieldAlert },
+  { id: 'interruptions', label: 'Interruptions', icon: TimerOff },
   { id: 'chat', label: 'Emergency Chat', icon: MessageSquareWarning }
 ];
 

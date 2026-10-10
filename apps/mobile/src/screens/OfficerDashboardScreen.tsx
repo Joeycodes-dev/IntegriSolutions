@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Image,
   Platform,
   Pressable,
@@ -44,6 +45,14 @@ import { evaluateNearbyWithCooldown, type ProximityCooldownMap } from "../lib/al
 import { LOCATION_ACCURACY_THRESHOLD_METERS } from "../lib/geo";
 import type { RuntimeConfig } from "../types";
 import { logAuditEvent } from "../services/audit";
+import {
+  flushSessionInterruptions,
+  recordSessionInterruption,
+} from "../lib/sessionInterruptions";
+import {
+  SessionInterruptionPrompt,
+  type SessionInterruptionPromptKind,
+} from "../components/SessionInterruptionPrompt";
 import {
   breathalyzerSession,
   formatBacGdl,
@@ -979,6 +988,106 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     onStorageError: setDraftWarning,
   });
 
+  // --- Session interruption tracking --------------------------------------
+  // While a test session is active (scan/reading), leaving it — via the
+  // Cancel/Abort buttons, bottom-nav/hardware navigation, or closing the app —
+  // is recorded with a mandatory officer reason (except app-close, where no
+  // prompt is possible) and synced to the supervisor portal.
+  const [interruptionPrompt, setInterruptionPrompt] = useState<{
+    kind: SessionInterruptionPromptKind;
+    pendingAction?: Parameters<typeof navigation.dispatch>[0];
+    discardDraft?: NonNullable<typeof recoverableDraft>;
+    startNewAfterDiscard?: boolean;
+  } | null>(null);
+  const [savingInterruption, setSavingInterruption] = useState(false);
+  const allowLeaveRef = useRef(false);
+  const stepRef = useRef(step);
+  useEffect(() => {
+    stepRef.current = step;
+    if (step === "idle") {
+      // Session fully closed — the next session must pass the guard again.
+      allowLeaveRef.current = false;
+    }
+  }, [step]);
+  const profileRef = useRef(profile);
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
+  const handleInterruptionSubmit = async (reason: string) => {
+    const prompt = interruptionPrompt;
+    if (!prompt) return;
+    setSavingInterruption(true);
+    try {
+      const discarded = prompt.kind === "discarded" ? prompt.discardDraft : undefined;
+      const identity = discarded
+        ? { draftId: discarded.draftId, plannedTestId: discarded.plannedTestId }
+        : getDraftIdentity();
+      if (identity) {
+        await recordSessionInterruption({
+          draftId: identity.draftId,
+          plannedTestId: identity.plannedTestId,
+          step: (discarded ? discarded.step : step) === "reading" ? "reading" : "scan",
+          kind: prompt.kind === "discarded" ? "cancelled" : prompt.kind,
+          reason,
+          profile,
+        });
+      }
+    } catch (error) {
+      console.warn("Failed to record session interruption:", error);
+    } finally {
+      setSavingInterruption(false);
+      setInterruptionPrompt(null);
+    }
+
+    if (prompt.kind === "discarded") {
+      await discardDraft();
+      if (prompt.startNewAfterDiscard) await beginFreshScan();
+    } else if (prompt.kind === "cancelled") {
+      if (step === "reading") {
+        await abortSession();
+      } else {
+        await cancelScan();
+      }
+    } else if (prompt.pendingAction) {
+      allowLeaveRef.current = true;
+      navigation.dispatch(prompt.pendingAction);
+    }
+  };
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("beforeRemove", (e) => {
+      const active = stepRef.current === "scan" || stepRef.current === "reading";
+      if (!active || allowLeaveRef.current) return;
+      e.preventDefault();
+      setInterruptionPrompt({ kind: "navigated_away", pendingAction: e.data.action });
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "background") {
+        const active = stepRef.current === "scan" || stepRef.current === "reading";
+        if (!active) return;
+        const identity = getDraftIdentity();
+        if (!identity) return;
+        void recordSessionInterruption({
+          draftId: identity.draftId,
+          plannedTestId: identity.plannedTestId,
+          step: stepRef.current === "reading" ? "reading" : "scan",
+          kind: "app_closed",
+          reason: null,
+          profile: profileRef.current,
+        }).catch((error) => console.warn("Failed to log app-close interruption:", error));
+      }
+      if (state === "active") {
+        void flushSessionInterruptions().catch(() => undefined);
+      }
+    });
+    return () => subscription.remove();
+  }, [getDraftIdentity]);
+
   useEffect(() => {
     if (step === "scan" || step === "reading") {
       scheduleDraftPersist();
@@ -1100,6 +1209,14 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         text: "Discard & start new",
         style: "destructive" as const,
         onPress: () => {
+          if (recoverableDraft) {
+            setInterruptionPrompt({
+              kind: "discarded",
+              discardDraft: recoverableDraft,
+              startNewAfterDiscard: true,
+            });
+            return;
+          }
           void (async () => {
             await discardDraft();
             await beginFreshScan();
@@ -1941,7 +2058,11 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               void resumeCurrentTest();
             }}
             onDiscardDraft={() => {
-              void discardDraft();
+              if (recoverableDraft) {
+                setInterruptionPrompt({ kind: "discarded", discardDraft: recoverableDraft });
+              } else {
+                void discardDraft();
+              }
             }}
           />
         )}
@@ -2070,7 +2191,10 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                   Photograph Front of Licence
                 </Text>
               </Pressable>
-              <Pressable style={styles.secondaryButton} onPress={cancelScan}>
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() => setInterruptionPrompt({ kind: "cancelled" })}
+              >
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
               </Pressable>
             </View>
@@ -2534,7 +2658,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                 )}
               </Pressable>
               <Pressable
-                onPress={abortSession}
+                onPress={() => setInterruptionPrompt({ kind: "cancelled" })}
                 disabled={isSaving}
                 accessibilityRole="button"
                 accessibilityState={{ disabled: isSaving }}
@@ -2547,7 +2671,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
             {isRetest && (
               <View style={styles.actionRow}>
-                <Pressable onPress={handleFinishSession}>
+                <Pressable onPress={() => setInterruptionPrompt({ kind: "cancelled" })}>
                   <Text style={styles.abortText}>Back to Main Menu</Text>
                 </Pressable>
               </View>
@@ -2665,6 +2789,14 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       </ScrollView>
 
       <OfficerBottomNav active="OfficerDashboard" />
+
+      <SessionInterruptionPrompt
+        visible={interruptionPrompt !== null}
+        kind={interruptionPrompt?.kind ?? "cancelled"}
+        saving={savingInterruption}
+        onSubmit={(reason) => void handleInterruptionSubmit(reason)}
+        onStay={() => setInterruptionPrompt(null)}
+      />
 
       <SyncCentreModal
         visible={syncModalVisible}

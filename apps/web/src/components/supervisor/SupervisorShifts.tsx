@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarClock, CheckCircle2, Loader2, MapPinned, RefreshCw, XCircle } from 'lucide-react';
+import { CalendarClock, CheckCircle2, Loader2, MapPinned, Pencil, RefreshCw, XCircle } from 'lucide-react';
 import type { FieldOfficer, RoadblockShift, RoadblockShiftStatus } from '../../types';
 import {
   createRoadblockShift,
@@ -67,6 +67,7 @@ function statusStyles(status: RoadblockShiftStatus): string {
   if (status === 'active') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
   if (status === 'scheduled') return 'border-sky-200 bg-sky-50 text-sky-700';
   if (status === 'closed') return 'border-slate-200 bg-slate-50 text-slate-600';
+  if (status === 'ended') return 'border-amber-200 bg-amber-50 text-amber-700';
   return 'border-rose-200 bg-rose-50 text-rose-700';
 }
 
@@ -74,7 +75,7 @@ function isShiftCurrentlyLive(shift: RoadblockShift): boolean {
   const now = Date.now();
   const starts = new Date(shift.startsAt).getTime();
   const ends = new Date(shift.endsAt).getTime();
-  return shift.status !== 'closed' && shift.status !== 'cancelled' && starts <= now && now <= ends;
+  return shift.status !== 'closed' && shift.status !== 'cancelled' && shift.status !== 'ended' && starts <= now && now <= ends;
 }
 
 export function SupervisorShifts() {
@@ -82,6 +83,7 @@ export function SupervisorShifts() {
   const [officers, setOfficers] = useState<FieldOfficer[]>([]);
   const [selectedOfficerIds, setSelectedOfficerIds] = useState<number[]>([]);
   const [form, setForm] = useState<ShiftFormState>(() => defaultForm());
+  const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -131,28 +133,59 @@ export function SupervisorShifts() {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  const handleCreate = async () => {
+  const startEdit = (shift: RoadblockShift) => {
+    setEditingShiftId(shift.id);
+    setForm({
+      roadblockName: shift.roadblockName,
+      station: shift.station,
+      startsAt: toDatetimeLocal(new Date(shift.startsAt)),
+      endsAt: toDatetimeLocal(new Date(shift.endsAt)),
+      centerLat: shift.centerLat == null ? '' : String(shift.centerLat),
+      centerLng: shift.centerLng == null ? '' : String(shift.centerLng),
+      radiusMeters: shift.radiusMeters == null ? '' : String(shift.radiusMeters),
+      notes: shift.notes ?? ''
+    });
+    setSelectedOfficerIds(shift.assignedOfficerIds);
+    setError(null);
+    setSuccess(null);
+  };
+
+  const cancelEdit = () => {
+    setEditingShiftId(null);
+    setForm(defaultForm());
+    setSelectedOfficerIds([]);
+  };
+
+  const handleSubmit = async () => {
     setSaving(true);
     setError(null);
     setSuccess(null);
+    const payload = {
+      roadblockName: form.roadblockName.trim(),
+      station: form.station.trim(),
+      startsAt: toIso(form.startsAt),
+      endsAt: toIso(form.endsAt),
+      centerLat: optionalNumber(form.centerLat),
+      centerLng: optionalNumber(form.centerLng),
+      radiusMeters: optionalNumber(form.radiusMeters),
+      notes: form.notes.trim() || null,
+      assignedOfficerIds: selectedOfficerIds
+    };
     try {
-      const created = await createRoadblockShift({
-        roadblockName: form.roadblockName.trim(),
-        station: form.station.trim(),
-        startsAt: toIso(form.startsAt),
-        endsAt: toIso(form.endsAt),
-        centerLat: optionalNumber(form.centerLat),
-        centerLng: optionalNumber(form.centerLng),
-        radiusMeters: optionalNumber(form.radiusMeters),
-        notes: form.notes.trim() || null,
-        assignedOfficerIds: selectedOfficerIds
-      });
-      setShifts((prev) => [created, ...prev]);
-      setForm(defaultForm());
-      setSelectedOfficerIds([]);
-      setSuccess(`Created shift for ${created.roadblockName}`);
+      if (editingShiftId) {
+        const updated = await updateRoadblockShift(editingShiftId, payload);
+        setShifts((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+        setSuccess(`Updated shift ${updated.roadblockName}`);
+        cancelEdit();
+      } else {
+        const created = await createRoadblockShift(payload);
+        setShifts((prev) => [created, ...prev]);
+        setForm(defaultForm());
+        setSelectedOfficerIds([]);
+        setSuccess(`Created shift for ${created.roadblockName}`);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create roadblock shift');
+      setError(err instanceof Error ? err.message : 'Failed to save roadblock shift');
     } finally {
       setSaving(false);
     }
@@ -208,10 +241,12 @@ export function SupervisorShifts() {
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-[0.875rem] font-bold" style={{ color: NAVY }}>
-                New Shift Assignment
+                {editingShiftId ? 'Edit Scheduled Shift' : 'New Shift Assignment'}
               </h2>
               <p className="mt-0.5 text-[0.6875rem] text-slate-500">
-                Officers only see assigned shifts that are inside the active time window.
+                {editingShiftId
+                  ? 'Correct the details below. Only shifts that have not started yet can be edited.'
+                  : 'Officers only see assigned shifts that are inside the active time window.'}
               </p>
             </div>
             <span className="rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-[0.6875rem] font-bold text-sky-700">
@@ -327,16 +362,27 @@ export function SupervisorShifts() {
             </div>
           </div>
 
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 flex justify-end gap-2">
+            {editingShiftId && (
+              <button
+                type="button"
+                onClick={cancelEdit}
+                disabled={saving}
+                className="inline-flex h-[36px] items-center gap-2 rounded-lg border bg-white px-4 text-[0.75rem] font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                style={{ borderColor: BORDER }}
+              >
+                Cancel
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => void handleCreate()}
+              onClick={() => void handleSubmit()}
               disabled={saving}
               className="inline-flex h-[36px] items-center gap-2 rounded-lg px-4 text-[0.75rem] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
               style={{ backgroundColor: NAVY }}
             >
               {saving ? <Loader2 size={14} className="animate-spin" /> : <MapPinned size={14} />}
-              Create Shift
+              {editingShiftId ? 'Save Changes' : 'Create Shift'}
             </button>
           </div>
         </section>
@@ -378,16 +424,28 @@ export function SupervisorShifts() {
                       <p className="mt-1 text-[0.6875rem] text-slate-500">Assigned: {assigned || 'None'}</p>
                       {shift.notes && <p className="mt-1 text-[0.6875rem] text-slate-500">Notes: {shift.notes}</p>}
                     </div>
-                    {(shift.status === 'active' || shift.status === 'scheduled') && (
-                      <button
-                        type="button"
-                        onClick={() => void handleStatus(shift, 'closed')}
-                        className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 text-[0.6875rem] font-bold text-slate-700 transition hover:bg-slate-100"
-                      >
-                        <XCircle size={13} />
-                        Close
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {shift.status === 'scheduled' && (
+                        <button
+                          type="button"
+                          onClick={() => startEdit(shift)}
+                          className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-[0.6875rem] font-bold text-slate-700 transition hover:bg-slate-50"
+                        >
+                          <Pencil size={13} />
+                          Edit
+                        </button>
+                      )}
+                      {(shift.status === 'active' || shift.status === 'scheduled') && (
+                        <button
+                          type="button"
+                          onClick={() => void handleStatus(shift, 'closed')}
+                          className="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 text-[0.6875rem] font-bold text-slate-700 transition hover:bg-slate-100"
+                        >
+                          <XCircle size={13} />
+                          Close
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </article>
               );

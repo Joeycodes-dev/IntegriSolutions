@@ -257,11 +257,22 @@ jest.mock('../../src/db/repository', () => ({
   saveActiveTestDraft: jest.fn().mockResolvedValue(undefined),
   deleteActiveTestDraft: jest.fn().mockResolvedValue(undefined),
   getTestById: jest.fn().mockResolvedValue(null),
+  // Session-interruption outbox: resolve cleanly so the prompt submit path
+  // completes inside act() instead of hitting the real SQLite driver.
+  insertSessionInterruption: jest.fn().mockResolvedValue(undefined),
+  hasAppClosedForDraft: jest.fn().mockResolvedValue(false),
+  getPendingSessionInterruptions: jest.fn().mockResolvedValue([]),
+  markSessionInterruptionSynced: jest.fn().mockResolvedValue(undefined),
+  markSessionInterruptionFailed: jest.fn().mockResolvedValue(undefined),
 }));
 
 const navigation = {
   navigate: jest.fn(),
   goBack: jest.fn(),
+  // The screen guards mid-session exits via beforeRemove; the mock never
+  // fires it, it just needs to exist and return an unsubscribe function.
+  addListener: jest.fn(() => () => undefined),
+  dispatch: jest.fn(),
 } as never;
 
 let OfficerDashboardScreen: React.ComponentType<{
@@ -320,7 +331,13 @@ describe('OfficerDashboardScreen subject-state isolation', () => {
     const firstNotes = await screen.findByPlaceholderText('Optional notes for court evidence');
     fireEvent.changeText(firstNotes, 'Notes belonging to the first subject');
 
+    // Aborting now requires a reason (session-interruption guard).
     fireEvent.press(screen.getByText('Abort Session'));
+    fireEvent.changeText(
+      await screen.findByPlaceholderText('e.g., Driver refused the test, equipment fault, safety concern...'),
+      'Aborting to switch subjects'
+    );
+    fireEvent.press(screen.getByText('Submit reason & cancel session'));
     fireEvent.press(await screen.findByText('Start Test'));
 
     const nextNotes = await screen.findByPlaceholderText('Optional notes for court evidence') as TextInput;

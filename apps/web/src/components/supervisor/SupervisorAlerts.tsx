@@ -30,6 +30,7 @@ import {
 } from '../../services/api';
 import { filterSightings } from '../../lib/alertSightings';
 import { effectiveAlertStatus, isAlertEffectivelyActive } from '../../lib/operationalAlerts';
+import { formatDayAwareDateTimeNumeric } from '../../lib/dateTime';
 import { isValidLatitude, isValidLongitude } from '../../lib/geo';
 import { LocationInput } from '../LocationInput';
 import { SupervisorAlertsMap } from './SupervisorAlertsMap';
@@ -205,10 +206,9 @@ function editFormFromAlert(alert: OperationalAlert): EditFormState {
 
 function formatDateTime(iso: string | null): string {
   if (!iso) return '—';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  // Today/yesterday are named explicitly ("Today, 14:32"); older timestamps
+  // keep this panel's established YYYY-MM-DD HH:mm shape.
+  return formatDayAwareDateTimeNumeric(iso);
 }
 
 function statusStyles(status: OperationalAlertStatus): string {

@@ -10,17 +10,12 @@ import {
 import type { ChatMessage, ChatOfficerContact, ChatThreadSummary, UserProfile } from '../../types';
 import { hasSupabaseRealtimeConfig, supabaseRealtime } from '../../lib/supabaseRealtime';
 import { isAdmin } from '../../lib/roles';
+import { formatDayAwareDateTime } from '../../lib/dateTime';
 import { ChatAttachmentUpload } from './ChatAttachmentUpload';
 import { ChatAttachmentsDisplay } from './ChatAttachmentsDisplay';
 
 interface Props {
   profile: UserProfile | null;
-}
-
-function formatTime(iso: string): string {
-  const value = new Date(iso);
-  if (Number.isNaN(value.getTime())) return iso;
-  return value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 export function roleLabel(roleId: number): string {
@@ -480,7 +475,7 @@ export function EmergencyChatPanel({ profile }: Props) {
                     <p className="truncate text-xs text-slate-600">{thread.latestMessage?.body ?? 'No messages yet'}</p>
                     <div className="mt-1 flex items-center justify-between">
                       <span className="text-xs text-slate-400">
-                        {thread.latestMessage ? formatTime(thread.latestMessage.createdAt) : '--:--'}
+                        {thread.latestMessage ? formatDayAwareDateTime(thread.latestMessage.createdAt) : '--:--'}
                       </span>
                       {thread.unreadCount > 0 && (
                         <span className="rounded-full bg-rose-600 px-2 py-0.5 text-xs font-semibold text-white">
@@ -583,12 +578,12 @@ export function EmergencyChatPanel({ profile }: Props) {
                       <div className="mt-2 rounded border border-slate-300 bg-white/80 px-2 py-1.5">
                         {seenBy.map((viewer) => (
                           <p key={`${message.id}-${viewer.source}-${viewer.participantId}`} className="text-[11px] text-slate-700">
-                            {viewer.name} · {roleLabel(viewer.roleId)} · {formatTime(viewer.readAt)}
+                            {viewer.name} · {roleLabel(viewer.roleId)} · {formatDayAwareDateTime(viewer.readAt)}
                           </p>
                         ))}
                       </div>
                     )}
-                    <p className="mt-1 text-right text-[11px] text-slate-500">{formatTime(message.createdAt)}</p>
+                    <p className="mt-1 text-right text-[11px] text-slate-500">{formatDayAwareDateTime(message.createdAt)}</p>
                   </div>
                 );
               })}

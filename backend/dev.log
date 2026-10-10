@@ -1,0 +1,1514 @@
+
+> backend@1.0.0 dev
+> wrangler dev --ip 0.0.0.0
+
+
+ ⛅️ wrangler 4.136.1
+────────────────────
+Using secrets defined in .env.local
+Your Worker has access to the following bindings:
+Binding                                                               Resource                  Mode
+env.SSE_HUB (SseHub)                                                  Durable Object            local
+env.GEOCODE_CACHE (f90525fb01e849b7985131ec93a4ffba)                  KV Namespace              local
+env.AUTH_RATE_LIMITER (10 requests/60s)                               Rate Limit                local
+env.API_RATE_LIMITER (120 requests/60s)                               Rate Limit                local
+env.SYNC_RATE_LIMITER (60 requests/60s)                               Rate Limit                local
+env.VERIFY_RATE_LIMITER (20 requests/60s)                             Rate Limit                local
+env.GEOCODE_RATE_LIMITER (20 requests/60s)                            Rate Limit                local
+env.IP_RATE_LIMITER (600 requests/60s)                                Rate Limit                local
+env.PORT ("(hidden)")                                                 Environment Variable      local
+env.FRONTEND_URL ("(hidden)")                                         Environment Variable      local
+env.SUPABASE_URL ("(hidden)")                                         Environment Variable      local
+env.SUPABASE_SERVICE_ROLE_KEY ("(hidden)")                            Environment Variable      local
+
+Wrangler detected this dev session is running in an AI agent.
+The Local Explorer API is available at http://127.0.0.1:8787/cdn-cgi/local/explorer/api
+Useful routes:
+  GET http://127.0.0.1:8787/cdn-cgi/local/explorer/api/local/workers - local Workers and bindings
+  GET http://127.0.0.1:8787/cdn-cgi/local/explorer/api/storage/kv/namespaces - KV namespaces
+  GET http://127.0.0.1:8787/cdn-cgi/local/explorer/api/d1/database - D1 databases
+  GET http://127.0.0.1:8787/cdn-cgi/local/explorer/api/r2/buckets - R2 buckets
+  GET http://127.0.0.1:8787/cdn-cgi/local/explorer/api/workers/durable_objects/namespaces - Durable Object namespaces
+  GET http://127.0.0.1:8787/cdn-cgi/local/explorer/api/workflows - Workflows
+  POST http://127.0.0.1:8787/cdn-cgi/local/explorer/api/local/observability/query - run a read-only SQL query (SELECT/WITH only) over captured request traces and console logs. Tables: spans, logs (read attributes via json(attributes)). Example:
+    curl -X POST http://127.0.0.1:8787/cdn-cgi/local/explorer/api/local/observability/query -H 'Content-Type: application/json' -d '{"sql":"SELECT service, name, outcome, duration_ms FROM spans WHERE parent_id IS NULL LIMIT 20"}'
+  POST http://127.0.0.1:8787/cdn-cgi/local/explorer/api/local/observability/clear - clear all captured traces and logs
+If the routes above don't cover what you need, fetch the full OpenAPI schema (large - use only as a last resort):
+  GET http://127.0.0.1:8787/cdn-cgi/local/explorer/api - OpenAPI schema
+⎔ Starting local server...
+[wrangler:info] Ready on http://0.0.0.0:8787
+[wrangler:info] - http://192.168.8.4:8787
+[wrangler:info] - http://127.0.0.1:8787
+[req] GET /api/health
+[req] GET /api/health
+[wrangler:info] GET /api/health 200 OK (38ms)
+[wrangler:info] GET /api/health 200 OK (322ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (53ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 401 Unauthorized (3722ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (37ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (4239ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (113ms)
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (889ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (888ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (886ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (887ms)
+[req] GET /api/chat/threads
+[req] GET /api/tests
+[req] GET /api/config/runtime
+[req] GET /api/road-offences
+[req] GET /api/supervisor/alerts
+[wrangler:info] GET /api/tests/stream 200 OK (7538ms)
+[wrangler:info] GET /api/config/runtime 200 OK (7227ms)
+[wrangler:info] GET /api/road-offences 200 OK (9270ms)
+[wrangler:info] GET /api/tests 200 OK (10799ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (1983ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/threads 200 OK (13767ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (13031ms)
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (3481ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (38ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (461ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2699ms)
+[wrangler:info] GET /api/chat/threads 200 OK (5094ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (6180ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (93ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (4707ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (54ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (390ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (388ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2626ms)
+[wrangler:info] GET /api/chat/threads 200 OK (5523ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (64ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (7288ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (4622ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (42ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (2668ms)
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (561ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (564ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (567ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (565ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (569ms)
+[req] GET /api/supervisor/alerts
+[req] GET /api/road-offences
+[req] GET /api/tests
+[req] GET /api/config/runtime
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/tests/stream 200 OK (3995ms)
+[wrangler:info] GET /api/config/runtime 200 OK (4149ms)
+[wrangler:info] GET /api/road-offences 200 OK (5575ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (5734ms)
+[wrangler:info] GET /api/tests 200 OK (6080ms)
+[wrangler:info] GET /api/chat/threads 200 OK (7289ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (52ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4682ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (43ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3823ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (59ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3253ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (76ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3510ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (36ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3207ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (31ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (9885ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (62ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (43ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3426ms)
+[wrangler:info] GET /api/chat/threads 401 Unauthorized (19840ms)
+[wrangler:info] OPTIONS /api/profile 204 No Content (131ms)
+[req] GET /api/profile
+[wrangler:info] GET /api/profile 200 OK (1898ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (47ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3313ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (37ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3833ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (51ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3571ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (108ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (3884ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/tests 200 OK (7924ms)
+[wrangler:info] GET /api/chat/threads 200 OK (6462ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (197ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (5599ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (119ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3937ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (182ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4324ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (36ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3508ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (36ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (35ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/tests 200 OK (2558ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4115ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (36ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3287ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (83ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (326ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (6943ms)
+[wrangler:info] GET /api/chat/threads 200 OK (22155ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (64ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4842ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (5083ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (4071ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (52ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (5738ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (20120ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (12293ms)
+[req] GET /api/chat/threads
+[req] GET /api/tests
+[wrangler:info] GET /api/chat/threads 401 Unauthorized (22298ms)
+[wrangler:info] GET /api/tests 401 Unauthorized (22401ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (862ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 401 Unauthorized (13258ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (240ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 401 Unauthorized (12297ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (687ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (7537ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (433ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (469ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (470ms)
+[req] GET /api/road-offences
+[req] GET /api/supervisor/alerts
+[req] GET /api/tests
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (3125ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (3126ms)
+[req] GET /api/config/runtime
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/config/runtime 200 OK (4956ms)
+[wrangler:info] GET /api/tests/stream 200 OK (10356ms)
+[wrangler:info] GET /api/tests 200 OK (10840ms)
+[wrangler:info] GET /api/road-offences 200 OK (11226ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (12293ms)
+[wrangler:info] GET /api/chat/threads 200 OK (15033ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (47ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (15563ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (49ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (13228ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (98ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (11645ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (46ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (5216ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (77ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (12701ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (77ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (39242ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (82ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4719ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (62ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (12204ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (87ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (78ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (85910ms)
+[wrangler:info] GET /api/chat/threads 200 OK (127116ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (67ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (41355ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (805ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (9801ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (53ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (76ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/tests 200 OK (30085ms)
+[wrangler:info] GET /api/chat/threads 200 OK (13619ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (43ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (1305ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (10598ms)
+[wrangler:info] GET /api/chat/threads 200 OK (12978ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (80ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (334ms)
+[req] GET /api/tests
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (108ms)
+[req] POST /api/auth/login
+[wrangler:info] GET /api/tests 200 OK (15097ms)
+[wrangler:info] POST /api/auth/login 200 OK (3941ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (101ms)
+[req] GET /api/chat/threads
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (1592ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (1597ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (1597ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (1597ms)
+[req] GET /api/supervisor/alerts
+[req] GET /api/config/runtime
+[req] GET /api/road-offences
+[req] GET /api/tests
+[wrangler:info] GET /api/tests/stream 200 OK (5900ms)
+[wrangler:info] GET /api/config/runtime 200 OK (5278ms)
+[wrangler:info] GET /api/road-offences 200 OK (7902ms)
+[wrangler:info] GET /api/tests 200 OK (8169ms)
+[wrangler:info] GET /api/chat/threads 200 OK (34595ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (53ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/supervisor/alerts 200 OK (18807ms)
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (3972ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (46ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (13142ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (44ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2746ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (51ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (16126ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (68ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] OPTIONS /api/tests 204 No Content (108ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (17902ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (264ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (4203ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (45ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (4628ms)
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (372ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (383ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (387ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (386ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (387ms)
+[req] GET /api/supervisor/alerts
+[req] GET /api/road-offences
+[req] GET /api/tests
+[req] GET /api/config/runtime
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/tests/stream 200 OK (4403ms)
+[wrangler:info] GET /api/config/runtime 200 OK (4836ms)
+[wrangler:info] GET /api/tests 200 OK (7162ms)
+[wrangler:info] GET /api/road-offences 200 OK (7395ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (8732ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (46ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/threads 200 OK (252769ms)
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (163667ms)
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (5298ms)
+[wrangler:info] GET /api/chat/threads 200 OK (34231ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (219ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (218ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (220ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (3841ms)
+[wrangler:info] GET /api/chat/threads 200 OK (6117ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (35ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (7945ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (4965ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (64ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (572ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (572ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2117ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4320ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (4997ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (50ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (139ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (917ms)
+[wrangler:info] OPTIONS /api/supervisor/officers 204 No Content (923ms)
+[wrangler:info] OPTIONS /api/supervisor/shifts 204 No Content (924ms)
+[req] GET /api/supervisor/shifts
+[req] GET /api/supervisor/officers
+[req] GET /api/supervisor/alerts
+[wrangler:info] GET /api/supervisor/officers 200 OK (7006ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (10445ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (421ms)
+[wrangler:info] GET /api/supervisor/shifts 200 OK (7528ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/supervisor/alerts 200 OK (9903ms)
+[wrangler:info] GET /api/chat/threads 200 OK (22806ms)
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (17129ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (103ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (416ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (422ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2495ms)
+[wrangler:info] GET /api/chat/threads 200 OK (5055ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (6111ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (34ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (106ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (828ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (830ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] OPTIONS /api/tests 204 No Content (364ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2970ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (7999ms)
+[wrangler:info] GET /api/chat/threads 200 OK (5982ms)
+[wrangler:info] GET /api/tests 200 OK (4464ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (50ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (7473ms)
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (4204ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (50ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (579ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (581ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (1936ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4327ms)
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (5074ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (50ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (5715ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (48ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (532ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (527ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (1938ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4617ms)
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (4659ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (47ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (4222ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (42ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (589ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (587ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2036ms)
+[wrangler:info] GET /api/chat/threads 200 OK (3992ms)
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (5150ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (51ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (4523ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (58ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (77ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (487ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (1964ms)
+[wrangler:info] GET /api/chat/threads 200 OK (3857ms)
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (4868ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (55ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (4395ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (33ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (408ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (409ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2077ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4934ms)
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (4952ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (57ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (4571ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (59ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (579ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (582ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2393ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4066ms)
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (5494ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (48ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] OPTIONS /api/tests 204 No Content (29ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (2716ms)
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (4683ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (32ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (4153ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (56ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (876ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (874ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (9031ms)
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (31838ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (61ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (5405ms)
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (37ms)
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 200 OK (18096ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (34ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 204 No Content (887ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (889ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages
+[wrangler:info] GET /api/tests 401 Unauthorized (1404ms)
+[wrangler:info] GET /api/chat/contacts/officers 401 Unauthorized (1698ms)
+[wrangler:info] GET /api/chat/threads/748b9cfa-8df4-48f2-ad90-0a32482af6fa/messages 401 Unauthorized (1700ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (72ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 401 Unauthorized (607ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (56ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (4726ms)
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (800ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (797ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (792ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (793ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (782ms)
+[req] GET /api/tests
+[req] GET /api/road-offences
+[req] GET /api/config/runtime
+[req] GET /api/chat/threads
+[req] GET /api/supervisor/alerts
+[wrangler:info] GET /api/config/runtime 200 OK (4271ms)
+[wrangler:info] GET /api/tests/stream 200 OK (5243ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (294ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/tests 200 OK (5677ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (6257ms)
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (1673ms)
+[wrangler:info] GET /api/road-offences 200 OK (12259ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (217ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/threads 200 OK (32552ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (78ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (76ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (59ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (39ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (41849ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (71ms)
+[req] GET /api/road-offences
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (14278ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (88ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/road-offences 200 OK (2475ms)
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (1498ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 401 Unauthorized (31924ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (123ms)
+[req] POST /api/auth/login
+[wrangler:info] GET /api/chat/threads 200 OK (42070ms)
+[wrangler:info] POST /api/auth/login 200 OK (3186ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (143ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (139ms)
+[req] GET /api/supervisor/alerts
+[req] GET /api/chat/threads
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (1358ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (1361ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (1354ms)
+[req] GET /api/config/runtime
+[req] GET /api/road-offences
+[req] GET /api/tests
+[wrangler:info] GET /api/chat/threads 200 OK (197267ms)
+[wrangler:info] GET /api/config/runtime 200 OK (3980ms)
+[wrangler:info] GET /api/tests/stream 200 OK (5809ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (6672ms)
+[wrangler:info] GET /api/road-offences 200 OK (5810ms)
+[wrangler:info] GET /api/tests 200 OK (6037ms)
+[wrangler:info] GET /api/chat/threads 200 OK (7878ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (116ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (115ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2391ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (58107ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4280ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (74ms)
+[req] GET /api/chat/threads
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2468ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4441ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (5981ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (85ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (5439ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (43ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (489ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (491ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2389ms)
+[wrangler:info] GET /api/chat/threads 200 OK (5542ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (50ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (6719ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (5522ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (36ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (351ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (353ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2407ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4870ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (6150ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (60ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (5093ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (63ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (560ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (560ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2436ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4835ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (5891ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (94ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (4824ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (52ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (590ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (587ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2471ms)
+[wrangler:info] GET /api/chat/threads 200 OK (5725ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (6311ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (256ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (4449ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (50ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (729ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (731ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2890ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4497ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (5670ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (145ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] OPTIONS /api/tests 204 No Content (134ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3009ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (5754ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (124ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (654ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (3490ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (107ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (8159ms)
+[wrangler:info] GET /api/chat/threads 200 OK (10466ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (9122ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (6014ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (80ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (379ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (380ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (2536ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4829ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (5581ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (60ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (4436ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (265ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (820ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (821ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (3798ms)
+[wrangler:info] GET /api/chat/threads 200 OK (5425ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (6711ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (78ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] OPTIONS /api/tests 204 No Content (42ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3339ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (26131ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (31ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (691ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (694ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/threads 401 Unauthorized (11708ms)
+[wrangler:info] GET /api/chat/contacts/officers 401 Unauthorized (11028ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 401 Unauthorized (11034ms)
+[wrangler:info] OPTIONS /api/profile 204 No Content (456ms)
+[req] GET /api/profile
+[wrangler:info] GET /api/profile 200 OK (4661ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (96ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (1459ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (249ms)
+[req] POST /api/auth/login
+[wrangler:info] GET /api/tests 200 OK (7805ms)
+[wrangler:info] POST /api/auth/login 200 OK (3600ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (704ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (702ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (699ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (700ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (694ms)
+[req] GET /api/tests
+[req] GET /api/road-offences
+[req] GET /api/config/runtime
+[req] GET /api/chat/threads
+[req] GET /api/supervisor/alerts
+[req] GET /api/tests/stream
+[wrangler:info] GET /api/config/runtime 200 OK (4547ms)
+[wrangler:info] GET /api/tests/stream 200 OK (6177ms)
+[wrangler:info] GET /api/road-offences 200 OK (5649ms)
+[wrangler:info] GET /api/tests 200 OK (7193ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (7382ms)
+[wrangler:info] GET /api/chat/threads 200 OK (9153ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (45ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (27449ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (48ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (35ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (4864ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (104ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3154ms)
+[wrangler:info] GET /api/chat/threads 200 OK (227392ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (31ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3574ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (55ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 401 Unauthorized (11641ms)
+[wrangler:info] OPTIONS /api/profile 204 No Content (73ms)
+[req] GET /api/profile
+[wrangler:info] OPTIONS /api/tests 204 No Content (146ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (132ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (8487ms)
+[wrangler:info] GET /api/profile 200 OK (109648ms)
+[wrangler:info] GET /api/tests 200 OK (90688ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (101ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (190ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (28937ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (68ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (3950ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (777ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (779ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (778ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (778ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (780ms)
+[req] GET /api/config/runtime
+[req] GET /api/chat/threads
+[req] GET /api/tests
+[req] GET /api/supervisor/alerts
+[req] GET /api/road-offences
+[req] GET /api/tests/stream
+[wrangler:info] GET /api/config/runtime 200 OK (4542ms)
+[wrangler:info] GET /api/chat/threads 200 OK (57107ms)
+[wrangler:info] OPTIONS /api/supervisor/officers 204 No Content (1365ms)
+[wrangler:info] OPTIONS /api/supervisor/shifts 204 No Content (757ms)
+[req] GET /api/supervisor/officers
+[wrangler:info] GET /api/tests/stream 200 OK (10049ms)
+[wrangler:info] GET /api/tests 200 OK (9969ms)
+[req] GET /api/supervisor/shifts
+[wrangler:info] GET /api/road-offences 200 OK (11200ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (11874ms)
+[wrangler:info] GET /api/chat/threads 200 OK (13510ms)
+[wrangler:info] GET /api/supervisor/officers 200 OK (7420ms)
+[wrangler:info] GET /api/supervisor/shifts 200 OK (6902ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (78ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 401 Unauthorized (11681ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (169ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/profile 204 No Content (1749ms)
+[wrangler:info] GET /api/chat/threads 401 Unauthorized (1733ms)
+[req] GET /api/profile
+[wrangler:info] GET /api/profile 200 OK (3444ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (98ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (94ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/tests 200 OK (23098ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (57ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (21647ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (158ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 401 Unauthorized (742ms)
+[wrangler:info] OPTIONS /api/profile 204 No Content (89ms)
+[req] GET /api/profile
+[wrangler:info] GET /api/profile 200 OK (4067ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (79ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/chat/threads 200 OK (236522ms)
+[wrangler:info] GET /api/tests 200 OK (5092ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (96ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (7132ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (144ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (12211ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (140ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (42ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (10252ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (46ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3148ms)
+⎔ Reloading local server...
+⎔ Local server updated and ready
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/supervisor/shifts 204 No Content (5002ms)
+[wrangler:info] OPTIONS /api/supervisor/officers 204 No Content (5002ms)
+[req] GET /api/supervisor/officers
+[req] GET /api/supervisor/shifts
+[req] GET /api/tests/stream
+[wrangler:info] GET /api/tests/stream 200 OK (19077ms)
+[wrangler:info] GET /api/supervisor/officers 200 OK (18917ms)
+[wrangler:info] GET /api/supervisor/shifts 200 OK (19372ms)
+[wrangler:info] GET /api/chat/threads 200 OK (216383ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (85ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 401 Unauthorized (1025ms)
+[wrangler:info] OPTIONS /api/profile 204 No Content (157ms)
+[req] GET /api/profile
+[wrangler:info] GET /api/profile 401 Unauthorized (523ms)
+⎔ Reloading local server...
+⎔ Local server updated and ready
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (142ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (2441ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (104ms)
+[req] GET /api/chat/threads
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (980ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (979ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (981ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (983ms)
+[req] GET /api/config/runtime
+[req] GET /api/road-offences
+[req] GET /api/tests
+[req] GET /api/supervisor/alerts
+[wrangler:info] GET /api/config/runtime 200 OK (1873ms)
+[wrangler:info] GET /api/tests/stream 200 OK (3522ms)
+[wrangler:info] GET /api/tests 200 OK (3276ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4325ms)
+[wrangler:info] GET /api/road-offences 200 OK (3638ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (3993ms)
+[wrangler:info] OPTIONS /api/supervisor/shifts 204 No Content (59ms)
+[req] GET /api/supervisor/shifts
+[wrangler:info] OPTIONS /api/supervisor/officers 204 No Content (258ms)
+[req] GET /api/supervisor/officers
+[wrangler:info] GET /api/supervisor/officers 200 OK (2839ms)
+[wrangler:info] GET /api/supervisor/shifts 200 OK (3359ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (151ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (108ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (8132ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (67ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (2896ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (234ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (4776ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (145ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/chat/threads 200 OK (271738ms)
+[wrangler:info] GET /api/tests 200 OK (18686ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (41ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 401 Unauthorized (364ms)
+[wrangler:info] OPTIONS /api/profile 204 No Content (140ms)
+[req] GET /api/profile
+[wrangler:info] GET /api/profile 200 OK (2124ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (71ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (6570ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (34ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (2702ms)
+⎔ Reloading local server...
+⎔ Local server updated and ready
+⎔ Reloading local server...
+⎔ Local server updated and ready
+⎔ Reloading local server...
+⎔ Local server updated and ready
+⎔ Reloading local server...
+⎔ Local server updated and ready
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (1707ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (4924ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (1111ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (1045ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (1047ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (1009ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (915ms)
+[req] GET /api/tests/stream
+[req] GET /api/chat/threads
+[req] GET /api/supervisor/alerts
+[req] GET /api/road-offences
+[req] GET /api/tests
+[req] GET /api/config/runtime
+[wrangler:info] GET /api/tests/stream 200 OK (4008ms)
+[wrangler:info] GET /api/config/runtime 200 OK (6516ms)
+[wrangler:info] GET /api/tests 200 OK (6934ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (7730ms)
+[wrangler:info] GET /api/chat/threads 200 OK (8308ms)
+[wrangler:info] GET /api/road-offences 200 OK (8669ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (58ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (62ms)
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (3134ms)
+[wrangler:info] GET /api/chat/threads 200 OK (8256ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (98ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (14672ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (63ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (11583ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (61ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (20158ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (60ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4535ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (34ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (50ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/tests 200 OK (4704ms)
+[wrangler:info] GET /api/chat/threads 200 OK (17745ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (50ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 401 Unauthorized (11592ms)
+[wrangler:info] OPTIONS /api/profile 204 No Content (41ms)
+[req] GET /api/profile
+[wrangler:info] GET /api/profile 200 OK (2410ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (70ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (5052ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (299ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (6630ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (447ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (8381ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (7267ms)
+[wrangler:info] GET /api/tests 401 Unauthorized (20282ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (53ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (2751ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (838ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (625ms)
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (1189ms)
+[req] GET /api/supervisor/alerts
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (1305ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (1391ms)
+[req] GET /api/tests
+[req] GET /api/config/runtime
+[req] GET /api/road-offences
+[wrangler:info] GET /api/tests/stream 200 OK (4089ms)
+[wrangler:info] GET /api/config/runtime 200 OK (3339ms)
+[wrangler:info] GET /api/road-offences 200 OK (5363ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (6762ms)
+[wrangler:info] GET /api/tests 200 OK (6578ms)
+[wrangler:info] GET /api/chat/threads 200 OK (7953ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (91ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (67ms)
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] GET /api/chat/threads 200 OK (7725ms)
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (5077ms)
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (49ms)
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (155ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (3389ms)
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (43ms)
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] GET /api/chat/threads 200 OK (4678ms)
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (4710ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (27ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (30083ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (31ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 401 Unauthorized (11689ms)
+[wrangler:info] OPTIONS /api/profile 204 No Content (62ms)
+[req] GET /api/profile
+[wrangler:info] GET /api/profile 401 Unauthorized (1295ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (223ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (8900ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (562ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (375ms)
+[req] GET /api/tests/stream
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (1109ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (1151ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (1110ms)
+[req] GET /api/supervisor/alerts
+[req] GET /api/road-offences
+[req] GET /api/config/runtime
+[req] GET /api/tests
+[wrangler:info] GET /api/tests/stream 200 OK (5418ms)
+[wrangler:info] GET /api/config/runtime 200 OK (5272ms)
+[wrangler:info] GET /api/road-offences 200 OK (6652ms)
+[wrangler:info] GET /api/tests 200 OK (5713ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (7103ms)
+[wrangler:info] GET /api/chat/threads 200 OK (9605ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (52ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (8645ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (75ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (7220ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (85ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 401 Unauthorized (11689ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (81ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (3417ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (124ms)
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (551ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (553ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (553ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (593ms)
+[req] GET /api/chat/threads
+[req] GET /api/config/runtime
+[req] GET /api/supervisor/alerts
+[req] GET /api/tests
+[req] GET /api/road-offences
+[wrangler:info] GET /api/config/runtime 200 OK (3607ms)
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (370ms)
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] GET /api/tests/stream 200 OK (5336ms)
+[wrangler:info] GET /api/road-offences 200 OK (5928ms)
+[wrangler:info] GET /api/tests 200 OK (6880ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (7722ms)
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (4661ms)
+[wrangler:info] GET /api/chat/threads 200 OK (9287ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (50ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (11877ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (83ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (25962ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (40ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (11455ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (34ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (12070ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (70ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 401 Unauthorized (45777ms)
+[wrangler:info] OPTIONS /api/profile 204 No Content (122ms)
+[req] GET /api/profile
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (41ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (30035ms)
+[wrangler:info] GET /api/profile 401 Unauthorized (35573ms)
+[req] GET /api/health
+[wrangler:info] GET /api/health 200 OK (7ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (161ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (60462ms)
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (1803ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (1798ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (1796ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (1803ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (1801ms)
+[req] GET /api/config/runtime
+[req] GET /api/road-offences
+[req] GET /api/supervisor/alerts
+[req] GET /api/chat/threads
+[req] GET /api/tests
+[wrangler:info] GET /api/config/runtime 200 OK (6072ms)
+[wrangler:info] GET /api/tests/stream 200 OK (9470ms)
+[wrangler:info] GET /api/road-offences 200 OK (8512ms)
+[wrangler:info] GET /api/tests 200 OK (8938ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (9481ms)
+[wrangler:info] GET /api/chat/threads 200 OK (34455ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (224ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (20743ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (113ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (115ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (9891ms)
+[wrangler:info] GET /api/chat/threads 200 OK (71944ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (97ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (35905ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (77ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3574ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (69ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4039ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (75ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (92ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (10151ms)
+[wrangler:info] GET /api/chat/threads 200 OK (32692ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (109ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4827ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (130ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (5240ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (568ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (9278ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (26051ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (18196ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (11510ms)
+[req] GET /api/chat/threads
+[req] GET /api/tests
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 401 Unauthorized (51187ms)
+[wrangler:info] GET /api/tests 200 OK (68695ms)
+[wrangler:info] GET /api/chat/threads 200 OK (68215ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (382ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (5617ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (787ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (999ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (2811ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (2812ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (2763ms)
+[req] GET /api/tests/stream
+[req] GET /api/supervisor/alerts
+[req] GET /api/config/runtime
+[req] GET /api/road-offences
+[req] GET /api/tests
+[wrangler:info] GET /api/config/runtime 200 OK (7035ms)
+[wrangler:info] GET /api/tests/stream 200 OK (9237ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (8915ms)
+[wrangler:info] GET /api/road-offences 200 OK (8926ms)
+[wrangler:info] GET /api/tests 200 OK (10009ms)
+[wrangler:info] GET /api/chat/threads 200 OK (13788ms)
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (54ms)
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (2717ms)
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (62ms)
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (443ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (4547ms)
+[wrangler:info] GET /api/chat/threads 200 OK (6783ms)
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (168ms)
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (3725ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (63ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (6166ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (412ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (27498ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (56ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (11186ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (290ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (64ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/chat/threads 200 OK (11966ms)
+[wrangler:info] GET /api/tests 200 OK (29655ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (63ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (212ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (5589ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (92ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (10714ms)
+[wrangler:info] GET /api/chat/threads 200 OK (180220ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (44ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 401 Unauthorized (1100ms)
+[wrangler:info] OPTIONS /api/profile 204 No Content (43ms)
+[req] GET /api/profile
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (93ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/profile 200 OK (4733ms)
+[wrangler:info] GET /api/chat/threads 200 OK (19280ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (70ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 401 Unauthorized (11985ms)
+[wrangler:info] OPTIONS /api/profile 204 No Content (121ms)
+[req] GET /api/profile
+[wrangler:info] GET /api/profile 401 Unauthorized (499ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (370ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (3688ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (692ms)
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (810ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (886ms)
+[req] GET /api/tests/stream
+[req] GET /api/chat/threads
+[req] GET /api/supervisor/alerts
+[wrangler:info] OPTIONS /api/tests 204 No Content (2130ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (2131ms)
+[req] GET /api/tests
+[req] GET /api/config/runtime
+[req] GET /api/road-offences
+[wrangler:info] GET /api/tests/stream 200 OK (4405ms)
+[wrangler:info] GET /api/config/runtime 200 OK (3918ms)
+[wrangler:info] GET /api/road-offences 200 OK (5860ms)
+[wrangler:info] GET /api/tests 200 OK (5296ms)
+[wrangler:info] GET /api/chat/threads 200 OK (7791ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (7675ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (56ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3619ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (44ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (5458ms)
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (51ms)
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (94ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (3140ms)
+[wrangler:info] GET /api/chat/threads 200 OK (9063ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (159ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4568ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (33ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4276ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (57ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4141ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (85ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3448ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (89ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (77ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/tests 200 OK (3269ms)
+[wrangler:info] GET /api/chat/threads 200 OK (3001ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (36ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3083ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (31ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3610ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (83ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3762ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (38ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3195ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (58ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3329ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (84ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3132ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (62ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (2994ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (175ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3212ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (84ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3654ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (63ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3348ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (66ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (2955ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (75ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3476ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (35ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (2515ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (56ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3722ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (92ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (2724ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (47ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4133ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (142ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (57ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/chat/threads 200 OK (4579ms)
+[wrangler:info] GET /api/tests 200 OK (2694ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (83ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4310ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (71ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (752ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (2690ms)
+[wrangler:info] GET /api/chat/threads 200 OK (3869ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (104ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (651ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/tests 200 OK (3205ms)
+[wrangler:info] GET /api/chat/threads 200 OK (3286ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3827ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (87ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (992ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/tests 200 OK (5315ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4686ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (52ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3999ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (83ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3452ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (83ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4597ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (170ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (20280ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (451ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (1497ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3675ms)
+[wrangler:info] GET /api/chat/threads 200 OK (5058ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (125ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (1316ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/chat/threads 200 OK (4834ms)
+[wrangler:info] GET /api/tests 200 OK (3805ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (72ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4625ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (179ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (1082ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3678ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4886ms)
+[wrangler:info] OPTIONS /api/auth/login 204 No Content (202ms)
+[req] POST /api/auth/login
+[wrangler:info] POST /api/auth/login 200 OK (2648ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (181ms)
+[req] GET /api/chat/threads
+[req] GET /api/tests/stream
+[wrangler:info] OPTIONS /api/supervisor/alerts 204 No Content (1794ms)
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (1793ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (1793ms)
+[wrangler:info] OPTIONS /api/config/runtime 204 No Content (1786ms)
+[req] GET /api/config/runtime
+[req] GET /api/road-offences
+[req] GET /api/supervisor/alerts
+[req] GET /api/tests
+[wrangler:info] GET /api/config/runtime 200 OK (2460ms)
+[wrangler:info] GET /api/tests/stream 200 OK (4570ms)
+[wrangler:info] GET /api/road-offences 200 OK (3928ms)
+[wrangler:info] GET /api/supervisor/alerts 200 OK (5142ms)
+[wrangler:info] GET /api/tests 200 OK (5427ms)
+[wrangler:info] GET /api/chat/threads 200 OK (9320ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (49ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (276ms)
+[req] GET /api/chat/contacts/officers
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (1694ms)
+[wrangler:info] GET /api/chat/threads 200 OK (3358ms)
+[req] GET /api/chat/threads
+[req] GET /api/chat/contacts/officers
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (3799ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (5694ms)
+[wrangler:info] GET /api/chat/threads 200 OK (7339ms)
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (342ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (5470ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (4543ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (42ms)
+[wrangler:info] OPTIONS /api/chat/contacts/officers 204 No Content (156ms)
+[req] GET /api/chat/contacts/officers
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 204 No Content (344ms)
+[req] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages
+[wrangler:info] OPTIONS /api/road-offences 204 No Content (38ms)
+[req] GET /api/road-offences
+[wrangler:info] GET /api/chat/contacts/officers 200 OK (1952ms)
+[wrangler:info] GET /api/chat/threads 200 OK (3934ms)
+[wrangler:info] GET /api/road-offences 200 OK (2258ms)
+[wrangler:info] GET /api/chat/threads/58562709-00ba-4d25-9db9-d4797767eef0/messages 200 OK (4782ms)
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (39ms)
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (37ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (2772ms)
+[wrangler:info] GET /api/chat/threads 200 OK (2846ms)
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (76ms)
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (1854ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (64ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (2762ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (107ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (5238ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (68ms)
+[req] GET /api/chat/threads
+[wrangler:info] OPTIONS /api/tests 204 No Content (95ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/chat/threads 200 OK (4066ms)
+[wrangler:info] GET /api/tests 200 OK (2835ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (112ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3473ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (142ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (2512ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (160ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (2986ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (67ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3495ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (79ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3063ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (36ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (2969ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (115ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3497ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (94ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (2510ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (53ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3527ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (57ms)
+[req] GET /api/tests
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (60ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/tests 200 OK (4338ms)
+[wrangler:info] GET /api/chat/threads 200 OK (4158ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (2289ms)
+[req] GET /api/tests
+[req] GET /api/supervisor/session-interruptions
+[wrangler:info] OPTIONS /api/supervisor/session-interruptions 204 No Content (80ms)
+[wrangler:info] GET /api/tests 200 OK (3558ms)
+[wrangler:info] GET /api/supervisor/session-interruptions 200 OK (3128ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (265ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4328ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (200ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (4103ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (128ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (2901ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (45ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3401ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (102ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3861ms)
+[wrangler:info] OPTIONS /api/tests 204 No Content (38ms)
+[req] GET /api/tests
+[wrangler:info] GET /api/tests 200 OK (3556ms)
+[wrangler:info] OPTIONS /api/chat/threads 204 No Content (310ms)
+[req] GET /api/chat/threads
+[wrangler:info] GET /api/chat/threads 200 OK (3065ms)

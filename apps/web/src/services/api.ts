@@ -463,12 +463,19 @@ export async function createRoadblockShift(payload: import('../types').CreateRoa
 
 export async function updateRoadblockShift(
   shiftId: string,
-  payload: { status?: import('../types').RoadblockShiftStatus; assignedOfficerIds?: number[] }
+  payload: import('../types').UpdateRoadblockShiftPayload
 ) {
   return request<import('../types').RoadblockShift>(`/api/supervisor/shifts/${shiftId}`, {
     method: 'PATCH',
     headers: authHeaders(),
     body: JSON.stringify(payload)
+  });
+}
+
+export async function getSessionInterruptions(kind?: string) {
+  const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+  return request<import('../types').SessionInterruption[]>(`/api/supervisor/session-interruptions${query}`, {
+    headers: authHeaders()
   });
 }
 

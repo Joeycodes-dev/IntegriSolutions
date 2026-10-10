@@ -42,6 +42,8 @@ Admins are stored in `admin_users`. Supervisors are stored in `supervisor_users`
        (creates supervisor roadblock shifts and officer assignments)
    - `migrations/20260925_sync_evidence_integrity.sql`
      (adds the tracked device-custody columns, local receipt metadata, and evidence idempotency/content-hash fields; run after the base schema)
+   - `migrations/20261010_test_session_interruptions.sql`
+     (creates `test_session_interruptions` — officer-abandoned scan/reading sessions, written by the mobile outbox and read by the supervisor web portal)
 
 Note: **Test records cannot be updated or deleted** (WORM triggers). Account status is updated via:
 - `PATCH /api/admin/users/:id` (activate/deactivate supervisors & admins)

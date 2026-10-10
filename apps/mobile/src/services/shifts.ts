@@ -4,7 +4,7 @@ import { getAccessToken } from './auth';
 
 const SELECTED_SHIFT_KEY = 'integiscan_selected_roadblock_shift';
 
-export type RoadblockShiftStatus = 'scheduled' | 'active' | 'closed' | 'cancelled';
+export type RoadblockShiftStatus = 'scheduled' | 'active' | 'closed' | 'cancelled' | 'ended';
 
 export interface RoadblockShift {
   id: string;
@@ -30,7 +30,7 @@ function extractErrorMessage(payload: unknown): string {
 }
 
 export function isRoadblockShiftActive(shift: RoadblockShift | null): shift is RoadblockShift {
-  if (!shift || shift.status === 'closed' || shift.status === 'cancelled') return false;
+  if (!shift || shift.status === 'closed' || shift.status === 'cancelled' || shift.status === 'ended') return false;
   const now = Date.now();
   const startsAt = new Date(shift.startsAt).getTime();
   const endsAt = new Date(shift.endsAt).getTime();

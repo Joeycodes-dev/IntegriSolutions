@@ -108,6 +108,21 @@ const SCHEMA = `
     retryCount INTEGER NOT NULL DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS session_interruptions (
+    id TEXT PRIMARY KEY NOT NULL,
+    draftId TEXT NOT NULL,
+    plannedTestId TEXT,
+    step TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    reason TEXT,
+    officerId INTEGER,
+    occurredAt TEXT NOT NULL,
+    syncStatus TEXT NOT NULL DEFAULT 'pending_sync',
+    lastError TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_session_interruptions_sync ON session_interruptions(syncStatus);
+
   CREATE TRIGGER IF NOT EXISTS audit_no_update
   BEFORE UPDATE ON audit_events
   BEGIN

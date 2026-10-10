@@ -5,6 +5,9 @@ import { serviceSupabase } from '../../serviceSupabase';
 import { requireSupervisor } from '../../middleware/requireSupervisor';
 import { writeAuditLog } from '../../utilities/auditLog';
 import { readJson } from '../../utilities/jsonBody';
+// 'ended' is a *derived* status (window passed) computed by
+// effectiveShiftStatus — it is intentionally not writable via the API.
+import { effectiveShiftStatus } from '../../utilities/shiftStatus';
 
 const router = new Hono<AppEnv>();
 
@@ -40,11 +43,12 @@ function supervisorNameFromEmail(email: string | null | undefined): string {
   return local || 'Supervisor';
 }
 
-function initialStatus(startsAt: Date, endsAt: Date): ShiftStatus {
-  const now = Date.now();
-  if (startsAt.getTime() > now) return 'scheduled';
-  if (endsAt.getTime() < now) return 'closed';
-  return 'active';
+function initialStatus(startsAt: Date): ShiftStatus {
+  // Raw status only records where the shift starts. The effective status sent
+  // to clients is derived per response (see effectiveShiftStatus), so a shift
+  // whose window has passed reads 'ended' without any manual transition — do
+  // not write 'closed' for a shift that was simply created in the past.
+  return startsAt.getTime() > Date.now() ? 'scheduled' : 'active';
 }
 
 function toRoadblockShift(row: Record<string, unknown>, assignedOfficerIds: number[] = []) {
@@ -56,7 +60,7 @@ function toRoadblockShift(row: Record<string, unknown>, assignedOfficerIds: numb
     supervisorName: row.supervisor_name ? String(row.supervisor_name) : null,
     startsAt: String(row.starts_at ?? ''),
     endsAt: String(row.ends_at ?? ''),
-    status: String(row.status ?? 'active') as ShiftStatus,
+    status: effectiveShiftStatus(String(row.status ?? 'active'), String(row.starts_at ?? ''), String(row.ends_at ?? '')),
     centerLat: row.center_lat == null ? null : Number(row.center_lat),
     centerLng: row.center_lng == null ? null : Number(row.center_lng),
     radiusMeters: row.radius_meters == null ? null : Number(row.radius_meters),
@@ -130,7 +134,7 @@ router.post('/', async (c) => {
     return c.json({ error: 'Assign at least one officer to the roadblock shift' }, 400);
   }
 
-  const status = initialStatus(startsAt, endsAt);
+  const status = initialStatus(startsAt);
   const id = randomUUID();
   const supervisorEmail = c.get('userEmail') ?? 'unknown';
   const insertPayload = {
@@ -186,8 +190,14 @@ router.patch('/:shiftId', async (c) => {
   const hasAssignmentPatch = Object.prototype.hasOwnProperty.call(body, 'assignedOfficerIds');
   const assignedOfficerIds = sanitizeAssignedOfficerIds(body.assignedOfficerIds);
 
-  if (!status && !hasAssignmentPatch) {
-    return c.json({ error: 'Provide status and/or assignedOfficerIds to update' }, 400);
+  // Detail fields are editable for mistake correction, but only while the
+  // shift's effective status is still 'scheduled' (not yet active). Status
+  // transitions and officer assignments stay available in any state.
+  const hasDetailPatch = ['roadblockName', 'station', 'startsAt', 'endsAt', 'centerLat', 'centerLng', 'radiusMeters', 'notes']
+    .some((key) => Object.prototype.hasOwnProperty.call(body, key));
+
+  if (!status && !hasAssignmentPatch && !hasDetailPatch) {
+    return c.json({ error: 'Provide status, assignedOfficerIds, and/or shift details to update' }, 400);
   }
 
   if (status && !(SHIFT_STATUSES as readonly string[]).includes(status)) {
@@ -198,10 +208,69 @@ router.patch('/:shiftId', async (c) => {
     return c.json({ error: 'Assign at least one officer to the roadblock shift' }, 400);
   }
 
+  // Load the current row up front: the lifecycle guard needs it, and it gives
+  // a clean 404 before anything mutates.
+  const { data: currentRows, error: currentError } = await serviceSupabase
+    .from('roadblock_shifts')
+    .select('*')
+    .eq('id', shiftId)
+    .limit(1);
+
+  if (currentError) return c.json({ error: currentError.message }, 500);
+  const current = currentRows?.[0] as Record<string, unknown> | undefined;
+  if (!current) return c.json({ error: 'Roadblock shift not found' }, 404);
+
+  const updates: Record<string, unknown> = {};
+
+  if (hasDetailPatch) {
+    const effective = effectiveShiftStatus(
+      String(current.status ?? 'active'),
+      String(current.starts_at ?? ''),
+      String(current.ends_at ?? '')
+    );
+    if (effective !== 'scheduled') {
+      return c.json({ error: 'Only scheduled shifts (not yet active) can be edited' }, 409);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, 'roadblockName')) {
+      const value = String(body.roadblockName ?? '').trim();
+      if (!value) return c.json({ error: 'Roadblock name cannot be empty' }, 400);
+      updates.roadblock_name = value;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'station')) {
+      const value = String(body.station ?? '').trim();
+      if (!value) return c.json({ error: 'Station cannot be empty' }, 400);
+      updates.station = value;
+    }
+
+    // undefined = key absent, null = key present but unparseable.
+    const startsAtInput = Object.prototype.hasOwnProperty.call(body, 'startsAt') ? parseDate(body.startsAt) : undefined;
+    if (startsAtInput === null) return c.json({ error: 'Invalid shift start time' }, 400);
+    const endsAtInput = Object.prototype.hasOwnProperty.call(body, 'endsAt') ? parseDate(body.endsAt) : undefined;
+    if (endsAtInput === null) return c.json({ error: 'Invalid shift end time' }, 400);
+
+    const finalStarts = startsAtInput ?? new Date(String(current.starts_at));
+    const finalEnds = endsAtInput ?? new Date(String(current.ends_at));
+    if (finalEnds.getTime() <= finalStarts.getTime()) {
+      return c.json({ error: 'Shift end time must be after the start time' }, 400);
+    }
+    if (startsAtInput) updates.starts_at = startsAtInput.toISOString();
+    if (endsAtInput) updates.ends_at = endsAtInput.toISOString();
+
+    if (Object.prototype.hasOwnProperty.call(body, 'centerLat')) updates.center_lat = parseOptionalNumber(body.centerLat);
+    if (Object.prototype.hasOwnProperty.call(body, 'centerLng')) updates.center_lng = parseOptionalNumber(body.centerLng);
+    if (Object.prototype.hasOwnProperty.call(body, 'radiusMeters')) updates.radius_meters = parseOptionalNumber(body.radiusMeters);
+    if (Object.prototype.hasOwnProperty.call(body, 'notes')) updates.notes = String(body.notes ?? '').trim() || null;
+  }
+
   if (status) {
+    updates.status = status;
+  }
+
+  if (Object.keys(updates).length > 0) {
     const { error } = await serviceSupabase
       .from('roadblock_shifts')
-      .update({ status })
+      .update(updates)
       .eq('id', shiftId);
 
     if (error) return c.json({ error: error.message }, 500);

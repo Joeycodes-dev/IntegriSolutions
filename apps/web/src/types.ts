@@ -2,7 +2,7 @@ export type UserRole = 'officer' | 'supervisor' | 'admin';
 
 export type AdminNavItem = 'users' | 'audit' | 'config' | 'roadOffences' | 'chat';
 
-export type SupervisorNavItem = 'dashboard' | 'logs' | 'cases' | 'officers' | 'shifts' | 'alerts' | 'reports' | 'roadOffences' | 'chat';
+export type SupervisorNavItem = 'dashboard' | 'logs' | 'cases' | 'officers' | 'shifts' | 'alerts' | 'reports' | 'roadOffences' | 'interruptions' | 'chat';
 
 export type PdfAccessPolicy = 'admin_only' | 'admin_supervisor' | 'disabled';
 
@@ -422,7 +422,7 @@ export interface FieldOfficer {
   emailWarning?: string;
 }
 
-export type RoadblockShiftStatus = 'scheduled' | 'active' | 'closed' | 'cancelled';
+export type RoadblockShiftStatus = 'scheduled' | 'active' | 'closed' | 'cancelled' | 'ended';
 
 export interface RoadblockShift {
   id: string;
@@ -455,6 +455,21 @@ export interface CreateRoadblockShiftPayload {
   assignedOfficerIds: number[];
 }
 
+/** Detail fields are only accepted by the backend while the shift is still
+ * 'scheduled' (not yet active); status/assignedOfficerIds work in any state. */
+export interface UpdateRoadblockShiftPayload {
+  roadblockName?: string;
+  station?: string;
+  startsAt?: string;
+  endsAt?: string;
+  centerLat?: number | null;
+  centerLng?: number | null;
+  radiusMeters?: number | null;
+  notes?: string | null;
+  status?: RoadblockShiftStatus;
+  assignedOfficerIds?: number[];
+}
+
 /** Live duty/employment badge shown on the Officers roster. */
 export type OfficerDutyStatus =
   | 'Invited'
@@ -466,6 +481,23 @@ export type OfficerDutyStatus =
 
 /** @deprecated Prefer OfficerDutyStatus */
 export type OfficerShiftStatus = OfficerDutyStatus;
+
+/** An officer abandoned an in-progress test session without saving. */
+export type SessionInterruptionKind = 'cancelled' | 'navigated_away' | 'app_closed';
+
+export interface SessionInterruption {
+  id: string;
+  officerId: number;
+  officerName: string;
+  badgeNumber: string;
+  draftId: string;
+  plannedTestId: string | null;
+  step: 'scan' | 'reading';
+  kind: SessionInterruptionKind;
+  reason: string | null;
+  occurredAt: string;
+  createdAt: string;
+}
 
 export interface TestEvidence {
   referenceId: string;

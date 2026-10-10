@@ -10,6 +10,7 @@ import { reportAlertMatchWithEscalation } from '../services/api';
 import type { OperationalAlert } from '../types';
 import { colors } from '../styles/colors';
 import { alertPriorityStyle } from '../lib/alertPriorityStyle';
+import { formatDayAwareDateTimeNumeric } from '../lib/dateTime';
 import { LocationInput, EMPTY_LOCATION_VALUE, type LocationInputValue } from '../components/LocationInput';
 import { isValidLatitude, isValidLongitude } from '../lib/geo';
 import { styles } from './AlertsScreen.styles';
@@ -159,7 +160,10 @@ export function AlertsScreen({ navigation: _navigation }: Props) {
         {item.personName && <Text style={styles.detailRow}>Person: {item.personName} — {item.personDescription ?? 'no description'}</Text>}
         {item.personReference && <Text style={styles.detailRow}>Reference: {item.personReference}</Text>}
         {item.locationLabel && <Text style={styles.detailRow}>Location: {item.locationLabel}</Text>}
-        <Text style={styles.detailRow}>Issued by {item.issuedByName}</Text>
+        <Text style={styles.detailRow}>
+          Issued by {item.issuedByName} · {formatDayAwareDateTimeNumeric(item.createdAt)}
+          {item.expiresAt ? ` · Expires ${formatDayAwareDateTimeNumeric(item.expiresAt)}` : ''}
+        </Text>
 
         {item.photoUrl && <Image source={{ uri: item.photoUrl }} style={styles.photo} resizeMode="cover" />}
 

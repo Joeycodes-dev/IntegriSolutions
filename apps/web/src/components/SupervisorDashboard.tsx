@@ -9,6 +9,7 @@ import { SupervisorOfficers } from './supervisor/SupervisorOfficers';
 import { SupervisorReports } from './supervisor/SupervisorReports';
 import { SupervisorShifts } from './supervisor/SupervisorShifts';
 import { SupervisorAlerts } from './supervisor/SupervisorAlerts';
+import { SupervisorInterruptions } from './supervisor/SupervisorInterruptions';
 import { SupervisorCases } from './supervisor/SupervisorCases';
 import { EmergencyChatPanel } from './chat/EmergencyChatPanel';
 import { RoadOffenceReview } from './RoadOffenceReview';
@@ -56,6 +57,7 @@ export function SupervisorDashboard() {
         <SupervisorReports tests={tests} loading={loading} error={error} />
       )}
       {activeNav === 'roadOffences' && <RoadOffenceReview />}
+      {activeNav === 'interruptions' && <SupervisorInterruptions />}
       {activeNav === 'chat' && <EmergencyChatPanel profile={profile} />}
       </main>
     </div>

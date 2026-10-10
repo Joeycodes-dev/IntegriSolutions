@@ -18,6 +18,7 @@ import chatRoutes from './routes/chat';
 import roadOffenceRoutes from './routes/roadOffences';
 import alertsRoutes from './routes/alerts';
 import geocodeRoutes from './routes/geocode';
+import sessionInterruptionRoutes from './routes/sessionInterruptions';
 
 export function createApp(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -56,6 +57,7 @@ export function createApp(): Hono<AppEnv> {
   app.route('/api/alerts', alertsRoutes);
   app.use('/api/geocode/*', geocodeLimiter);
   app.route('/api/geocode', geocodeRoutes);
+  app.route('/api', sessionInterruptionRoutes);
 
   app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
