@@ -6,6 +6,21 @@ IntegriScan is a tamper-proof, offline-first digital DUI enforcement system buil
 
 ---
 
+## Platform Support
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| **Android** | **Supported** | Current development target. Includes the native Bluetooth Classic (SPP) bridge that connects to the HC-06 field device. |
+| iOS | Roadmap | Not a supported target. See the note below. |
+| Web | Supervisor dashboard only | Read/review/export. Officer capture is mobile-only. |
+
+> **iOS is a future roadmap item.** The field device uses an HC-06, which speaks Bluetooth
+> Classic SPP over RFCOMM. iOS apps cannot open arbitrary Bluetooth Classic SPP links, so the
+> device transport is Android-only today. Supporting iOS would require either different radio
+> hardware (Bluetooth Low Energy) or an MFi-licensed accessory, plus a matching change in the
+> firmware. `apps/mobile` is an Expo app and can target iOS for the non-device features, but the
+> breathalyser path will not work there.
+
 ## What's in This Repo
 
 This is a **monorepo** containing all three components of the IntegriScan platform:
@@ -13,9 +28,11 @@ This is a **monorepo** containing all three components of the IntegriScan platfo
 ```
 IntegriSolutions/
 ├── apps/
-│   ├── mobile/       # React Native (Expo) — Traffic Officer mobile app
+│   ├── mobile/       # React Native (Expo) — Traffic Officer mobile app (Android)
 │   └── web/          # React + Vite — Supervisor web dashboard
 ├── backend/          # Cloudflare Workers (Hono) — REST API
+└── firmware/
+    └── breathalyzer/ # Arduino firmware for the MQ-3 + HC-06 field device
 ```
 
 | Package | Description | Tech |
@@ -23,6 +40,10 @@ IntegriSolutions/
 | `apps/mobile` | Roadside app used by traffic officers to scan IDs, capture breathalyser readings, and store records offline | React Native, Expo, TypeScript, expo-ai-kit (on-device OCR) |
 | `apps/web` | Supervisor dashboard for reviewing records, annotating cases, and exporting court-ready reports | React, Vite, TypeScript |
 | `backend` | REST API handling authentication, enforcement records, offline sync, and audit logging | Cloudflare Workers, Hono, TypeScript, Supabase |
+| `firmware/breathalyzer` | Field-device firmware: MQ-3 sampling, alarm latch, and one-way JSON telemetry over HC-06 Bluetooth Classic SPP | Arduino C++, ATmega328P |
+
+The field device is documented separately in
+[`firmware/breathalyzer/docs/TECHNICAL_SPECIFICATION.md`](firmware/breathalyzer/docs/TECHNICAL_SPECIFICATION.md).
 
 ---
 
@@ -39,6 +60,22 @@ IntegriSolutions/
 - **Full audit trail** — every access and action is logged with user ID and timestamp
 
 ---
+
+## Field Device (Breathalyser)
+
+The officer app reads BAC from a small Arduino-based device rather than generating values. Full
+documentation — wiring, protocol, timing, bench tests and known issues — is in
+[`firmware/breathalyzer/`](firmware/breathalyzer/README.md):
+
+- **`breathalyzer.ino`** — MQTT-free, one-way telemetry. MQ-3 on `A0`, passive buzzer on `D8`,
+  HC-06 Bluetooth Classic SPP on `D3` (RX) and `D4` (TX, through a 1 kΩ / 2 kΩ divider).
+- Emits one CRLF-terminated JSON line per sample (~0.37–0.44 s apart) to both USB serial and the HC-06.
+- **`docs/TECHNICAL_SPECIFICATION.md`** — the reference document.
+- **`diagrams/`** and **`wireframes/`** — editable draw.io sources with PNG previews.
+
+> The MQ-3 output is an **uncalibrated screening estimate**, not an evidential measurement. The
+> conversion constants are unvalidated defaults, and the device ships one shared serial. See the
+> specification's known-issues section before any enforcement use.
 
 ## Deployments
 
@@ -77,7 +114,8 @@ rejected by CORS. Deployment steps live in [`backend/README.md`](backend/README.
 
 - [Node.js](https://nodejs.org/) v20 or higher
 - [npm](https://npmjs.com/) v10 or higher
-- [Expo Go](https://expo.dev/go) on your phone or emulator, or an Expo dev build / [EAS build](https://docs.expo.dev/build/introduction/) for the mobile app (front-photo OCR uses `expo-ai-kit`, which does not run in Expo Go)
+- An **Android** phone or emulator, plus an Expo dev build or [EAS build](https://docs.expo.dev/build/introduction/) of the mobile app. Expo Go is not enough: front-photo OCR uses `expo-ai-kit` and the HC-06 transport is native Java, so both require a rebuilt development app.
+- (Breathalyser hardware only) Arduino Uno/Nano, MQ-3 module, HC-06, passive buzzer — see [`firmware/breathalyzer/README.md`](firmware/breathalyzer/README.md)
 - A [Supabase](https://supabase.com/) account with a project created (can skip for now — auth is toggleable)
 
 ### 1. Clone the repo
@@ -139,10 +177,15 @@ In your Supabase project, open the **SQL Editor** and run these files **in order
 5. `backend/migrations/20260728_evidence_annotations_audit.sql` — `audit_logs`, `annotations`, `evidence` + storage bucket
 6. `backend/migrations/20260731_shift_roadblock_operations.sql` — supervisor roadblock shifts + officer assignments
 7. `backend/migrations/20260801_case_lifecycle.sql` — case lifecycle queues (`case_records`)
-8. `backend/migrations/20260802_evidence_categories.sql` — evidence photo categories
-9. `backend/migrations/20260802_court_verification.sql` — court verification tokens for PDF QR codes
-10. `backend/migrations/20260803_admin_configuration.sql` — editable admin configuration registry (session timeout, export governance, alert thresholds, BAC limits)
-11. `backend/migrations/20260925_sync_evidence_integrity.sql` — additive receipt, device-custody, evidence idempotency, and content-hash metadata
+8. `backend/migrations/20260801_officer_duty_status.sql` — officer on/off duty status
+9. `backend/migrations/20260802_evidence_categories.sql` — evidence photo categories
+10. `backend/migrations/20260802_court_verification.sql` — court verification tokens for PDF QR codes
+11. `backend/migrations/20260803_admin_configuration.sql` — editable admin configuration registry (session timeout, export governance, alert thresholds, BAC limits)
+12. `backend/migrations/20260830_chat_message_reads.sql`, `20260830_chat_message_replies.sql`, `20260830_chat_message_priority.sql`, `20260830_emergency_chat.sql`, `20260831_chat_file_attachments.sql` — chat read state, threaded replies, priority, emergency channel, attachments
+13. `backend/migrations/20260901_road_offences.sql` — road-offence records
+14. `backend/migrations/20260910_operational_alerts.sql`, then `20260911_operational_alert_location.sql`, `20260912_operational_alert_priority_critical.sql`, `20260913_operational_alert_lifecycle.sql`, `20260914_operational_alert_coverage_lifecycle.sql` — operational alerts
+15. `backend/migrations/20260925_sync_evidence_integrity.sql` — additive receipt, device-custody, evidence idempotency, and content-hash metadata
+16. `backend/migrations/20261010_test_session_interruptions.sql` — abandoned officer scan/reading sessions for supervisor review
 
 **Important:** DUI test records cannot be edited or deleted (WORM). Status updates use account APIs instead (`PATCH` portal users / field officers).
 
@@ -155,7 +198,7 @@ cd backend && npm run dev
 # Terminal 2 — Web dashboard (runs on http://localhost:3000)
 cd apps/web && npm run dev
 
-# Terminal 3 — Mobile app (dev build; on-device OCR needs expo-ai-kit, so not Expo Go)
+# Terminal 3 — Mobile app (Android dev build; on-device OCR and the HC-06 bridge are native, so not Expo Go)
 cd apps/mobile && npx expo start
 ```
 

@@ -40,10 +40,21 @@ Admins are stored in `admin_users`. Supervisors are stored in `supervisor_users`
      (creates `audit_logs`, `annotations`, `evidence`, and the `evidence` storage bucket)
     - `migrations/20260731_shift_roadblock_operations.sql`  
        (creates supervisor roadblock shifts and officer assignments)
+   - `migrations/20260801_officer_duty_status.sql` (officer on/off duty status)
+   - `migrations/20260830_chat_message_reads.sql`, `20260830_chat_message_replies.sql`,
+     `20260830_chat_message_priority.sql`, `20260830_emergency_chat.sql`,
+     `20260831_chat_file_attachments.sql` (chat read state, threaded replies, priority,
+     emergency channel, attachments)
+   - `migrations/20260901_road_offences.sql` (road-offence records)
+   - `migrations/20260910_operational_alerts.sql`, then `20260911_operational_alert_location.sql`,
+     `20260912_operational_alert_priority_critical.sql`, `20260913_operational_alert_lifecycle.sql`,
+     `20260914_operational_alert_coverage_lifecycle.sql`
    - `migrations/20260925_sync_evidence_integrity.sql`
      (adds the tracked device-custody columns, local receipt metadata, and evidence idempotency/content-hash fields; run after the base schema)
    - `migrations/20261010_test_session_interruptions.sql`
      (creates `test_session_interruptions` — officer-abandoned scan/reading sessions, written by the mobile outbox and read by the supervisor web portal)
+
+Full ordered list (16 files) is in the [root README](../README.md#4-run-the-database-schema).
 
 Note: **Test records cannot be updated or deleted** (WORM triggers). Account status is updated via:
 - `PATCH /api/admin/users/:id` (activate/deactivate supervisors & admins)
@@ -98,8 +109,8 @@ If Resend is not configured or email delivery fails, the account profile + invit
 ## OCR
 
 `POST /api/scan` does **not** run OCR on the server. The mobile app runs OCR on-device
-(`expo-ai-kit` — ML Kit Text Recognition v2 on Android, Apple Vision on iOS) and posts the
-recognized text:
+(`expo-ai-kit` — ML Kit Text Recognition v2 on Android; Apple Vision is the iOS path, but iOS is
+not a supported target today) and posts the recognized text:
 
 ```json
 { "text": "REPUBLIC OF SOUTH AFRICA\nDRIVING LICENCE\n...", "retry": false }

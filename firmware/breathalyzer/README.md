@@ -5,13 +5,19 @@ buzzer on `D8`, and a six-pin ZS-040/FC-114 HC-06 Bluetooth Classic module.
 
 **Official project UART mapping:** HC-06 `TXD` connects to Arduino `D3`
 (SoftwareSerial RX), while Arduino `D4` (SoftwareSerial TX) drives HC-06 `RXD`
-through the required 1 kΩ / 2 kΩ divider. Do not use the former `D10` / `D11`
-mapping for new connections.
+through the required 1 kΩ / 2 kΩ divider.
+
+> The earlier `D10` / `D11` mapping is **retired**. If you encounter a diagram showing the
+> divider fed from `D11`, that is an old document — the 1 kΩ / 2 kΩ values in it are still
+> correct, but it is the pin that changed. `D3` / `D4` is the only supported mapping.
 
 The sketch stores these pins as the portable numeric values `3` and `4`.
 Some Arduino board cores do not expose the `D3` and `D4` symbol aliases even
 though those physical header pins are present; the numeric constants compile
 across those cores without changing the Uno/Nano pin assignment.
+
+Avoid `D3` for the buzzer if you ever rework this: `D3` is also a Timer2 PWM pin, and
+`tone()` claims Timer2. The buzzer is on `D8` for that reason.
 
 The sketch sends the same CRLF-delimited JSON telemetry to:
 
@@ -19,8 +25,34 @@ The sketch sends the same CRLF-delimited JSON telemetry to:
 - HC-06 SPP at `9600` baud using `SoftwareSerial`.
 
 USB serial remains separate, so the HC-06 does not have to be disconnected to
-flash the Arduino. Mirroring the roughly 120-byte record at 9600 baud produces
-about two readings per second on an Uno/Nano.
+flash the Arduino. A record is about 110 bytes plus CRLF. Mirroring it at 9600 baud
+gives a record period of roughly 0.37–0.44 s on an Uno/Nano — **about two readings
+per second**. The 200 ms `delay()` is only one of four contributors to that period
+(the 25-sample average, the `delay()`, the blocking SoftwareSerial write, and USB
+back-pressure); see the timing budget in the specification.
+
+## Documentation
+
+- [Technical specification](docs/TECHNICAL_SPECIFICATION.md): hardware, firmware, telemetry protocol, app integration, bench tests and known issues. Start here.
+- Diagrams (PNG preview; the `.drawio` source embeds the XML and stays editable):
+
+  | Diagram | PNG | Source |
+  | --- | --- | --- |
+  | 01 System architecture | [png](diagrams/01-system-architecture.drawio.png) | [drawio](diagrams/01-system-architecture.drawio) |
+  | 02 Hardware wiring | [png](diagrams/02-hardware-wiring.drawio.png) | [drawio](diagrams/02-hardware-wiring.drawio) |
+  | 03 Firmware state machine | [png](diagrams/03-firmware-state-machine.drawio.png) | [drawio](diagrams/03-firmware-state-machine.drawio) |
+  | 04 Firmware loop and timing | [png](diagrams/04-firmware-loop-timing.drawio.png) | [drawio](diagrams/04-firmware-loop-timing.drawio) |
+  | 05 Telemetry and capture sequence | [png](diagrams/05-telemetry-and-capture-sequence.drawio.png) | [drawio](diagrams/05-telemetry-and-capture-sequence.drawio) |
+  | 06 Measurement pipeline | [png](diagrams/06-measurement-pipeline.drawio.png) | [drawio](diagrams/06-measurement-pipeline.drawio) |
+
+- Wireframes of the console in the officer app:
+
+  | Wireframe | PNG | Source |
+  | --- | --- | --- |
+  | 01 Console tabs | [png](wireframes/01-console-tabs.drawio.png) | [drawio](wireframes/01-console-tabs.drawio) |
+  | 02 Console states and capture gates | [png](wireframes/02-console-states-and-gates.drawio.png) | [drawio](wireframes/02-console-states-and-gates.drawio) |
+
+The prototype is not evidential. Section 11 of the specification lists the blocking items.
 
 ## HC-06 wiring
 
@@ -97,34 +129,69 @@ Arduino browns out, fix the power supply and decoupling first.
 
 ## Before enforcement use
 
-The Bluetooth transport is suitable for bench testing, but the following existing safety gaps must be resolved and validated before roadside or legal use:
+The Bluetooth transport is suitable for bench testing. The gaps below must be resolved and
+validated before roadside or legal use.
 
-1. The current app excludes readings marked `warm` from the subject peak, but
-   the 60-second firmware warm-up flag is not a validated stabilization test.
-2. The app rejects captures when the latest valid reading is more than three
-   seconds old. Remaining gaps are the no-first-data connected-socket case and
-   incomplete clearing of previously captured dashboard state after a disconnect
-   or asynchronous device error.
-3. `DEVICE_SERIAL` is currently `MQ3-0001`; every physical unit needs a unique, controlled identifier.
-4. The factory Bluetooth PIN and plain serial payload do not provide strong device authenticity or non-repudiation.
-5. `ALARM_THRESHOLD` is an ADC threshold, not a statutory BAC limit. The app's configured BAC calculation is an uncalibrated screening estimate until fitted and validated against an approved reference procedure.
-6. Characterize the mirrored stream's roughly 2 Hz sample rate against the intended breath peak before relying on peak capture.
+The full list, with severities and evidence, is in
+[`docs/TECHNICAL_SPECIFICATION.md`](docs/TECHNICAL_SPECIFICATION.md) §11 (KI-01 … KI-18).
+The items that block enforcement use:
+
+1. **Not evidential.** The conversion constants (`R0`, `0.45 mg/L` at ratio 1, slope `-0.7`,
+   clean-air ratio `60`) are unvalidated defaults. The console copy also calls its
+   readiness checks a gate on "an evidential reading", which overstates what they prove.
+2. **Simulator in production builds.** `apps/mobile/eas.json` sets
+   `EXPO_PUBLIC_BREATHALYZER_SIMULATION=1` for `preview` **and** `production`, so a store
+   build lets an officer capture a synthetic reading. Remove it from `production`.
+3. **`DEVICE_SERIAL` is `MQ3-0001`** for every unit built from this sketch. Each physical
+   unit needs a unique, controlled identifier, and the Bluetooth MAC is not a
+   cryptographic identity.
+4. **Load resistor assumption.** The firmware models `RL = 1 kΩ`, but the MQ-3 datasheet
+   specifies 200 kΩ as the standard load resistance. The default `R0` is only meaningful
+   if your module actually has a 1 kΩ load resistor — measure it, then take a clean-air
+   baseline per unit.
+5. **Warm-up is a UI gate, not stabilisation.** The 60 s flag is far shorter than the
+   datasheet preheat of over 24 hours. The firmware does not check the heater.
+6. **The 60 s `warm` flag is not the only warm-up gate the app needs.** The app excludes
+   `warm` records from the subject peak and rejects captures older than three seconds.
+   The remaining gaps are the no-first-data connected-socket case and incomplete clearing
+   of previously captured dashboard state after a disconnect or asynchronous device error.
+7. **The factory Bluetooth PIN and plain serial payload** do not provide strong device
+   authenticity or non-repudiation.
+8. **`ALARM_THRESHOLD` (350) is an ADC count**, not a statutory BAC limit. It maps to about
+   0.014 g/100ml under the default profile. Legal classification is done separately in
+   `driverPolicy.ts`.
+9. **Clean air does not read zero.** The default model gives about 0.0054 g/100ml for a
+   clean-air sensor, and the MQ-3's documented detecting range starts at about 0.0105
+   g/100ml. Do not report readings below that as measurements.
+10. **Characterize the sample rate and peak response** against the intended breath peak
+    before relying on peak capture. The record period is roughly 0.4 s and the EMA has a
+    time constant of about 1.3–1.5 s, so short peaks are attenuated and delayed.
 
 Do not use human breath, automotive exhaust, methanol, or improvised flammable
 substances for calibration. Use an approved calibrated reference system.
 
 ## Current mobile-app integration
 
-The current Android working tree contains a native Bluetooth Classic RFCOMM/SPP
-implementation for this HC-06. Pair the module in Android Settings, then select
-it from the in-app `CONNECT HC-06` picker. The physical path requires a native
-development/EAS APK and does not run in Expo Go. It is Android-only and is not
-yet committed/deployed with the rest of the release candidate.
+The Android app contains a native Bluetooth Classic RFCOMM/SPP implementation for
+this HC-06 (`apps/mobile/android/.../Hc06BluetoothModule.java`, plus the
+`breathalyzerBluetooth.ts` transport). Pair the module in Android Settings, then
+select it from the in-app **Connect an HC-06** picker. The physical path requires a
+native development/EAS APK and does not run in Expo Go. This code is committed
+(`1d86a91` for the bridge, `f6c4ff7` for the services); deployment status is tracked
+separately.
 
-The simulator remains a separate, explicitly labelled transport and is not an
-automatic fallback after an HC-06 connection failure. `react-native-ble-plx`
-cannot connect to this Classic SPP module, and normal iOS apps do not support
-arbitrary Bluetooth Classic peripherals.
+**Android is the only supported platform.** iOS is a future roadmap item, not a
+current target: iOS apps cannot open arbitrary Bluetooth Classic SPP peripherals, so
+the device transport is Android-only. Supporting iOS would require BLE hardware with
+matching firmware, or an MFi-licensed accessory.
+
+The simulator is a separate, explicitly labelled transport. It is never selected
+automatically after an HC-06 failure — a failed connection surfaces an error that the
+officer must resolve.
 
 This MQ-3 prototype and its uncalibrated output are for development/testing, not
-an evidential or legally certified breathalyzer measurement.
+an evidential or legally certified breathalyzer measurement. The conversion constants
+are unvalidated defaults, and the device ships one shared serial
+(`DEVICE_SERIAL = "MQ3-0001"`) that every unit built from this sketch will report.
+Both issues, and the rest, are tracked in
+[`docs/TECHNICAL_SPECIFICATION.md`](docs/TECHNICAL_SPECIFICATION.md) §11.
