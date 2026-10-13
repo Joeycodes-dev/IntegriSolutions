@@ -11,7 +11,7 @@ const LABEL = '#4B5563';
 const BORDER = '#D1D5DB';
 const PAGE_BG = '#EEF1F5';
 
-type AuthMode = 'login' | 'admin-register' | 'supervisor-invite';
+type AuthMode = 'login' | 'admin-register' | 'supervisor-invite' | 'privacy-policy';
 
 function initialAuthMode(): AuthMode {
   const params = new URLSearchParams(window.location.search);
@@ -158,13 +158,17 @@ export function Login() {
       ? 'Register Admin'
       : mode === 'supervisor-invite'
         ? 'Supervisor Invite'
-        : 'IntegriScan';
+        : mode === 'privacy-policy'
+          ? 'Privacy Policy'
+          : 'IntegriScan';
   const subtitle =
     mode === 'admin-register'
       ? 'Create an administrator account'
       : mode === 'supervisor-invite'
         ? 'Create your supervisor password'
-        : 'Welcome Back !!';
+        : mode === 'privacy-policy'
+          ? 'Review our privacy notice'
+          : 'Welcome Back !!';
   const submitLabel =
     mode === 'admin-register'
       ? 'Register Admin'
@@ -196,192 +200,283 @@ export function Login() {
           </p>
         </header>
 
-        <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-[10px]">
-          {mode === 'supervisor-invite' && (
-            <AuthField label="Invite Link">
-              <textarea
-                value={inviteLink}
-                onChange={(e) => setInviteLink(e.target.value)}
-                placeholder="Paste supervisor invite link"
-                className={`${fieldClassName} min-h-[68px] resize-y py-2`}
-                aria-label="Invite Link"
-                required
-              />
-            </AuthField>
-          )}
+        {mode === 'privacy-policy' ? (
+          <div className="mt-5 space-y-4">
+            <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-left">
+              <p className="text-[11px] leading-relaxed text-slate-600">
+                IntegriScan processes personal information to support compliance, safety, and the
+                operational management of breathalyser testing and associated reporting. This policy
+                explains how we collect, use, store, share, and protect your personal information in
+                terms of the Protection of Personal Information Act (POPIA) and our internal
+                operational requirements.
+              </p>
 
-          {mode === 'admin-register' && (
-            <div className="grid grid-cols-2 gap-2">
-              <AuthField label="First Name">
-                <input
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  placeholder="Admin"
-                  className={fieldClassName}
-                  aria-label="First Name"
-                  required
-                />
-              </AuthField>
-              <AuthField label="Last Name">
-                <input
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  placeholder="User"
-                  className={fieldClassName}
-                  aria-label="Last Name"
-                  required
-                />
-              </AuthField>
+              <div className="mt-3 space-y-3 text-[11px] leading-relaxed text-slate-600">
+                <div>
+                  <h3 className="mb-1 font-semibold text-slate-700">1. Information we collect</h3>
+                  <p>
+                    We may collect personal information including your name, surname, ID number,
+                    employment details, contact information, badge number, province, region, test
+                    records, incident data, and related evidence required for compliance and
+                    operational administration.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="mb-1 font-semibold text-slate-700">2. How we use it</h3>
+                  <p>
+                    Information is used to create and manage user accounts, verify identities,
+                    monitor testing activities, coordinate supervision, investigate incidents, meet
+                    legal reporting obligations, manage access to the platform, and improve the
+                    security and reliability of our services.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="mb-1 font-semibold text-slate-700">3. Sharing and disclosure</h3>
+                  <p>
+                    We only share personal information with authorised administrators, supervisors,
+                    legal or regulatory bodies, and service providers where necessary to provide the
+                    service or comply with lawful requirements. We do not sell personal information.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="mb-1 font-semibold text-slate-700">4. Security and retention</h3>
+                  <p>
+                    We apply reasonable technical and organisational safeguards to protect personal
+                    information against loss, misuse, unauthorised access, and disclosure. Information
+                    is retained only for as long as required by law, operational need, or contractual
+                    obligations, after which it is securely deleted or anonymised where appropriate.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="mb-1 font-semibold text-slate-700">5. Your rights</h3>
+                  <p>
+                    Subject to applicable law, you may request access to your personal information,
+                    correction of inaccurate data, restriction of processing, objection to processing,
+                    and confirmation of whether your information is being processed. Where lawful and
+                    feasible, we will respond to such requests promptly and in accordance with POPIA.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="mb-1 font-semibold text-slate-700">6. Contact</h3>
+                  <p>
+                    If you have questions, concerns, or wish to exercise a privacy right, please
+                    contact the responsible administrator or the designated privacy contact for the
+                    organisation. We will review requests and respond in line with applicable legal
+                    requirements.
+                  </p>
+                </div>
+              </div>
             </div>
-          )}
-
-          {mode !== 'supervisor-invite' && (
-            <AuthField label="Work Email">
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="supervisor@integriscan.co.za"
-                className={fieldClassName}
-                autoComplete="username"
-                aria-label="Work Email"
-                required
-              />
-            </AuthField>
-          )}
-
-          {mode === 'admin-register' && (
-            <div className="grid grid-cols-2 gap-2">
-              <AuthField label="Badge Number">
-                <input
-                  value={badgeNumber}
-                  onChange={(e) => setBadgeNumber(e.target.value)}
-                  placeholder="ADM-001"
-                  className={fieldClassName}
-                  aria-label="Badge Number"
-                  required
-                />
-              </AuthField>
-              <AuthField label="ID Number">
-                <input
-                  value={idNumber}
-                  onChange={(e) => setIdNumber(e.target.value)}
-                  placeholder="9001015009087"
-                  className={fieldClassName}
-                  aria-label="ID Number"
-                  required
-                />
-              </AuthField>
-            </div>
-          )}
-
-          {mode === 'admin-register' && (
-            <div className="grid grid-cols-2 gap-2">
-              <AuthField label="Province">
-                <input
-                  value={province}
-                  onChange={(e) => setProvince(e.target.value)}
-                  placeholder="Gauteng"
-                  className={fieldClassName}
-                  aria-label="Province"
-                  required
-                />
-              </AuthField>
-              <AuthField label="Region">
-                <input
-                  value={region}
-                  onChange={(e) => setRegion(e.target.value)}
-                  placeholder="Johannesburg"
-                  className={fieldClassName}
-                  aria-label="Region"
-                  required
-                />
-              </AuthField>
-            </div>
-          )}
-
-          <PasswordField
-            label={mode === 'login' ? 'Password' : 'New Password'}
-            value={password}
-            onChange={setPassword}
-            show={showPassword}
-            onToggle={() => setShowPassword((v) => !v)}
-            placeholder={mode === 'login' ? 'Enter password' : 'Create password'}
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-          />
-
-          {mode !== 'login' && (
-            <PasswordField
-              label="Confirm Password"
-              value={confirmPassword}
-              onChange={setConfirmPassword}
-              show={showConfirmPassword}
-              onToggle={() => setShowConfirmPassword((v) => !v)}
-              placeholder="Confirm password"
-              autoComplete="new-password"
-            />
-          )}
-
-          {mode === 'login' && import.meta.env.DEV && (
-            <label className="flex items-center gap-2 pt-0.5 text-[11px] text-slate-500">
-              <input
-                type="checkbox"
-                checked={devMode}
-                onChange={(e) => setDevMode(e.target.checked)}
-                className="h-3 w-3 rounded border-slate-300"
-                style={{ accentColor: NAVY }}
-              />
-              Developer bypass login
-            </label>
-          )}
-
-          {mode === 'login' && (
-            <p className="pt-0.5 text-center text-[10px] leading-relaxed text-slate-500">
-              Admins can register here. Admins add supervisors. Supervisors add officers.
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="mt-4 w-full rounded-full py-2.5 text-[0.8125rem] font-bold text-white transition hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
-            style={{ backgroundColor: NAVY }}
-          >
-            {isLoading ? 'Please wait…' : submitLabel}
-          </button>
-
-          <div className="mt-1 flex flex-wrap justify-center gap-x-3 gap-y-1 text-center text-[10px] leading-[1.45] text-slate-500">
-            {mode !== 'login' ? (
-              <button
-                type="button"
-                className="underline"
-                style={{ color: ACCENT }}
-                onClick={() => switchMode('login')}
-              >
-                Back to login
-              </button>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="underline"
-                  style={{ color: ACCENT }}
-                  onClick={() => switchMode('admin-register')}
-                >
-                  Register admin
-                </button>
-                <button
-                  type="button"
-                  className="underline"
-                  style={{ color: ACCENT }}
-                  onClick={() => switchMode('supervisor-invite')}
-                >
-                  Use supervisor invite
-                </button>
-              </>
-            )}
+            <button
+              type="button"
+              className="w-full rounded-full border border-slate-200 px-3 py-2 text-[0.75rem] font-semibold transition hover:bg-slate-50"
+              style={{ color: NAVY }}
+              onClick={() => switchMode('login')}
+            >
+              Back to login
+            </button>
           </div>
-        </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-[10px]">
+            {mode === 'supervisor-invite' && (
+              <AuthField label="Invite Link">
+                <textarea
+                  value={inviteLink}
+                  onChange={(e) => setInviteLink(e.target.value)}
+                  placeholder="Paste supervisor invite link"
+                  className={`${fieldClassName} min-h-[68px] resize-y py-2`}
+                  aria-label="Invite Link"
+                  required
+                />
+              </AuthField>
+            )}
+
+            {mode === 'admin-register' && (
+              <div className="grid grid-cols-2 gap-2">
+                <AuthField label="First Name">
+                  <input
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="Admin"
+                    className={fieldClassName}
+                    aria-label="First Name"
+                    required
+                  />
+                </AuthField>
+                <AuthField label="Last Name">
+                  <input
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    placeholder="User"
+                    className={fieldClassName}
+                    aria-label="Last Name"
+                    required
+                  />
+                </AuthField>
+              </div>
+            )}
+
+            {mode !== 'supervisor-invite' && (
+              <AuthField label="Work Email">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="supervisor@integriscan.co.za"
+                  className={fieldClassName}
+                  autoComplete="username"
+                  aria-label="Work Email"
+                  required
+                />
+              </AuthField>
+            )}
+
+            {mode === 'admin-register' && (
+              <div className="grid grid-cols-2 gap-2">
+                <AuthField label="Badge Number">
+                  <input
+                    value={badgeNumber}
+                    onChange={(e) => setBadgeNumber(e.target.value)}
+                    placeholder="ADM-001"
+                    className={fieldClassName}
+                    aria-label="Badge Number"
+                    required
+                  />
+                </AuthField>
+                <AuthField label="ID Number">
+                  <input
+                    value={idNumber}
+                    onChange={(e) => setIdNumber(e.target.value)}
+                    placeholder="9001015009087"
+                    className={fieldClassName}
+                    aria-label="ID Number"
+                    required
+                  />
+                </AuthField>
+              </div>
+            )}
+
+            {mode === 'admin-register' && (
+              <div className="grid grid-cols-2 gap-2">
+                <AuthField label="Province">
+                  <input
+                    value={province}
+                    onChange={(e) => setProvince(e.target.value)}
+                    placeholder="Gauteng"
+                    className={fieldClassName}
+                    aria-label="Province"
+                    required
+                  />
+                </AuthField>
+                <AuthField label="Region">
+                  <input
+                    value={region}
+                    onChange={(e) => setRegion(e.target.value)}
+                    placeholder="Johannesburg"
+                    className={fieldClassName}
+                    aria-label="Region"
+                    required
+                  />
+                </AuthField>
+              </div>
+            )}
+
+            <PasswordField
+              label={mode === 'login' ? 'Password' : 'New Password'}
+              value={password}
+              onChange={setPassword}
+              show={showPassword}
+              onToggle={() => setShowPassword((v) => !v)}
+              placeholder={mode === 'login' ? 'Enter password' : 'Create password'}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+            />
+
+            {mode !== 'login' && (
+              <PasswordField
+                label="Confirm Password"
+                value={confirmPassword}
+                onChange={setConfirmPassword}
+                show={showConfirmPassword}
+                onToggle={() => setShowConfirmPassword((v) => !v)}
+                placeholder="Confirm password"
+                autoComplete="new-password"
+              />
+            )}
+
+            {mode === 'login' && import.meta.env.DEV && (
+              <label className="flex items-center gap-2 pt-0.5 text-[11px] text-slate-500">
+                <input
+                  type="checkbox"
+                  checked={devMode}
+                  onChange={(e) => setDevMode(e.target.checked)}
+                  className="h-3 w-3 rounded border-slate-300"
+                  style={{ accentColor: NAVY }}
+                />
+                Developer bypass login
+              </label>
+            )}
+
+            {mode === 'login' && (
+              <p className="pt-0.5 text-center text-[10px] leading-relaxed text-slate-500">
+                Admins can register here. Admins add supervisors. Supervisors add officers.
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="mt-4 w-full rounded-full py-2.5 text-[0.8125rem] font-bold text-white transition hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+              style={{ backgroundColor: NAVY }}
+            >
+              {isLoading ? 'Please wait…' : submitLabel}
+            </button>
+
+            <div className="mt-1 flex flex-wrap justify-center gap-x-3 gap-y-1 text-center text-[10px] leading-[1.45] text-slate-500">
+              {mode !== 'login' ? (
+                <button
+                  type="button"
+                  className="underline"
+                  style={{ color: ACCENT }}
+                  onClick={() => switchMode('login')}
+                >
+                  Back to login
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="underline"
+                    style={{ color: ACCENT }}
+                    onClick={() => switchMode('admin-register')}
+                  >
+                    Register admin
+                  </button>
+                  <button
+                    type="button"
+                    className="underline"
+                    style={{ color: ACCENT }}
+                    onClick={() => switchMode('supervisor-invite')}
+                  >
+                    Use supervisor invite
+                  </button>
+                  <button
+                    type="button"
+                    className="underline"
+                    style={{ color: ACCENT }}
+                    onClick={() => switchMode('privacy-policy')}
+                  >
+                    Privacy policy
+                  </button>
+                </>
+              )}
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );
