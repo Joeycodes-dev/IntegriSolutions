@@ -1,10 +1,12 @@
 import {
   BluetoothLineAssembler,
   createHc06BluetoothTransport,
+  getPairedHc06Devices,
   isLikelyHc06Name,
   type Hc06BluetoothRuntime,
   type PairedBluetoothDevice,
 } from '../../src/services/breathalyzerBluetooth';
+import { BreathalyzerSession } from '../../src/services/breathalyzer';
 
 const device: PairedBluetoothDevice = {
   id: 'AA:BB:CC:DD:EE:FF',
@@ -14,7 +16,7 @@ const device: PairedBluetoothDevice = {
   bonded: true,
 };
 
-function createRuntime() {
+function createRuntime(devices: PairedBluetoothDevice[] = [device]) {
   const listeners = new Map<
     string,
     Set<(event: Record<string, unknown>) => void>
@@ -22,9 +24,10 @@ function createRuntime() {
   const nativeModule = {
     isBluetoothAvailable: jest.fn().mockResolvedValue(true),
     isBluetoothEnabled: jest.fn().mockResolvedValue(true),
-    getBondedDevices: jest.fn().mockResolvedValue([device]),
+    getBondedDevices: jest.fn().mockResolvedValue(devices),
     connect: jest.fn().mockResolvedValue(device),
     disconnect: jest.fn().mockResolvedValue(true),
+    sendCommand: jest.fn().mockResolvedValue(undefined),
     openBluetoothSettings: jest.fn().mockResolvedValue(true),
     addListener: jest.fn(),
     removeListeners: jest.fn(),
@@ -47,6 +50,7 @@ function createRuntime() {
 
   return {
     runtime,
+    nativeModule,
     emit(eventName: string, event: Record<string, unknown>) {
       for (const listener of listeners.get(eventName) ?? []) listener(event);
     },
@@ -140,5 +144,159 @@ describe('HC-06 Bluetooth transport', () => {
 
     await transport.disconnect();
     expect(runtime.nativeModule.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes the device address so readings can be bound to the radio', async () => {
+    const { runtime } = createRuntime();
+    const transport = createHc06BluetoothTransport(device, runtime);
+
+    expect(transport.address).toBe(device.address);
+
+    const session = new BreathalyzerSession();
+    await session.connect(transport);
+
+    expect(session.getSnapshot().deviceAddress).toBe(device.address);
+    await session.disconnect();
+  });
+
+  it('forwards firmware commands to the native module', async () => {
+    const { runtime, nativeModule } = createRuntime();
+    const transport = createHc06BluetoothTransport(device, runtime);
+
+    await transport.connect();
+    await (
+      transport as { sendCommand(command: string): Promise<void> }
+    ).sendCommand('RST');
+
+    expect(nativeModule.sendCommand).toHaveBeenCalledWith('RST');
+
+    await transport.disconnect();
+  });
+
+  it('refuses to forward an empty command', async () => {
+    const { runtime, nativeModule } = createRuntime();
+    const transport = createHc06BluetoothTransport(device, runtime);
+
+    await expect(
+      (transport as { sendCommand(command: string): Promise<void> }).sendCommand('  ')
+    ).rejects.toThrow();
+    expect(nativeModule.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it('tolerates a native module without a command channel', async () => {
+    const { runtime } = createRuntime();
+    const nativeModule = { ...runtime.nativeModule };
+    delete (nativeModule as { sendCommand?: unknown }).sendCommand;
+    const transport = createHc06BluetoothTransport(device, {
+      ...runtime,
+      nativeModule,
+    });
+
+    await transport.connect();
+    await expect(
+      (transport as { sendCommand(command: string): Promise<void> }).sendCommand('PING')
+    ).resolves.toBeUndefined();
+
+    await transport.disconnect();
+  });
+
+  it('releases every native listener count it registered', async () => {
+    const { runtime, nativeModule } = createRuntime();
+    const transport = createHc06BluetoothTransport(device, runtime);
+
+    await transport.connect();
+    // A fresh transport has nothing to release yet beyond what connect added.
+    expect(nativeModule.removeListeners).not.toHaveBeenCalled();
+
+    // Connecting again replaces the three subscriptions from the first attempt.
+    await transport.connect();
+    expect(nativeModule.removeListeners).toHaveBeenCalledWith(3);
+
+    await transport.disconnect();
+    expect(nativeModule.removeListeners).toHaveBeenCalledTimes(2);
+    expect(nativeModule.removeListeners).toHaveBeenLastCalledWith(3);
+
+    // A second teardown must not release listeners twice.
+    await transport.disconnect();
+    expect(nativeModule.removeListeners).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases the native listeners when the socket fails to open', async () => {
+    const { runtime, nativeModule } = createRuntime();
+    nativeModule.connect = jest.fn().mockRejectedValue(new Error('nope'));
+    const transport = createHc06BluetoothTransport(device, runtime);
+
+    await expect(transport.connect()).rejects.toThrow('nope');
+
+    expect(nativeModule.removeListeners).toHaveBeenCalledWith(3);
+  });
+});
+
+describe('HC-06 paired device listing', () => {
+  const bonded: PairedBluetoothDevice[] = [
+    {
+      id: 'AA:BB:CC:DD:EE:FF',
+      address: 'AA:BB:CC:DD:EE:FF',
+      name: 'HC-06',
+      type: 'CLASSIC',
+      bonded: true,
+    },
+    {
+      id: '11:22:33:44:55:66',
+      address: '11:22:33:44:55:66',
+      name: 'Officer Radio',
+      type: 'CLASSIC',
+      bonded: true,
+    },
+    {
+      id: 'AA:11:BB:22:CC:33',
+      address: 'AA:11:BB:22:CC:33',
+      name: 'ZS-040',
+      type: 'DUAL',
+      bonded: true,
+    },
+    {
+      id: '99:88:77:66:55:44',
+      address: '99:88:77:66:55:44',
+      name: 'Anchor 7675',
+      type: 'LOW_ENERGY',
+      bonded: true,
+    },
+  ];
+
+  it('lists only likely HC-06 carriers by default', async () => {
+    const { runtime } = createRuntime(bonded);
+
+    const devices = await getPairedHc06Devices(runtime);
+
+    expect(devices.map((entry) => entry.name)).toEqual(['HC-06', 'ZS-040']);
+    // The filtered listing stays untouched for backwards compatibility.
+    expect(devices.every((entry) => entry.isLikelyHc06 === undefined)).toBe(true);
+  });
+
+  it('can list every non-LE bonded device with the carriers first', async () => {
+    const { runtime } = createRuntime(bonded);
+
+    const devices = await getPairedHc06Devices(runtime, { includeAllClassic: true });
+
+    expect(devices.map((entry) => entry.name)).toEqual([
+      'HC-06',
+      'ZS-040',
+      'Officer Radio',
+    ]);
+    expect(devices.map((entry) => entry.isLikelyHc06)).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect(devices.every((entry) => entry.type !== 'LOW_ENERGY')).toBe(true);
+  });
+
+  it('keeps the filtered listing when includeAllClassic is false', async () => {
+    const { runtime } = createRuntime(bonded);
+
+    const devices = await getPairedHc06Devices(runtime, { includeAllClassic: false });
+
+    expect(devices.map((entry) => entry.name)).toEqual(['HC-06', 'ZS-040']);
   });
 });

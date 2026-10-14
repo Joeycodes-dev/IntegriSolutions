@@ -25,11 +25,16 @@ The sketch sends the same CRLF-delimited JSON telemetry to:
 - HC-06 SPP at `9600` baud using `SoftwareSerial`.
 
 USB serial remains separate, so the HC-06 does not have to be disconnected to
-flash the Arduino. A record is about 110 bytes plus CRLF. Mirroring it at 9600 baud
-gives a record period of roughly 0.37–0.44 s on an Uno/Nano — **about two readings
-per second**. The 200 ms `delay()` is only one of four contributors to that period
-(the 25-sample average, the `delay()`, the blocking SoftwareSerial write, and USB
-back-pressure); see the timing budget in the specification.
+flash the Arduino. The first nine JSON fields (`raw`, `avg`, `peak`, `sn`,
+`vout`, `rs`, `over`, `alarm`, `warm`) are unchanged in name, order and units,
+so an existing app build keeps parsing the stream. This revision appends `seq`,
+`up`, `vcc`, `spread`, `r0`, `fault`, `state` and a `crc` checksum (see
+[Verify Bluetooth output](#verify-bluetooth-output) below). A record is now
+about 200–230 bytes plus CRLF, so the blocking RFCOMM write of the longer line
+is the dominant cost and the record period is roughly 0.5–0.7 s on an Uno/Nano
+(**about one to two readings per second**). The old 200 ms `delay()` is gone: it
+is now a non-blocking `millis()` wait that keeps servicing commands and the
+watchdog; see the timing budget in the specification.
 
 ## Documentation
 
@@ -51,6 +56,8 @@ back-pressure); see the timing budget in the specification.
   | --- | --- | --- |
   | 01 Console tabs | [png](wireframes/01-console-tabs.drawio.png) | [drawio](wireframes/01-console-tabs.drawio) |
   | 02 Console states and capture gates | [png](wireframes/02-console-states-and-gates.drawio.png) | [drawio](wireframes/02-console-states-and-gates.drawio) |
+
+  Both wireframes cover the current three-tab console — Connect, Calibrate and Live — with the status hero and setup stepper shown on every tab. Wireframe 02 also lists the exact capture and calibration gate messages.
 
 The prototype is not evidential. Section 11 of the specification lists the blocking items.
 
@@ -98,8 +105,9 @@ Arduino IDE:
    port.
 5. Upload the sketch. The HC-06 can remain connected because the firmware does
    not use `D0`/`D1` for Bluetooth.
-6. Open the serial monitor at `9600` baud. The MQ-3 warm-up flag is expected to
-   remain `true` for the first 60 seconds.
+6. Open the serial monitor at `9600` baud. The MQ-3 warm-up flag (`warm`) is
+   expected to stay `true` for at least the first 60 seconds, and up to 90 s if
+   the reading is still settling.
 
 Command-line equivalent when the Arduino CLI is installed:
 
@@ -110,6 +118,12 @@ arduino-cli upload -p <COM_PORT> --fqbn arduino:avr:uno firmware/breathalyzer
 
 Use `--fqbn arduino:avr:nano` instead when compiling/uploading to a Nano.
 
+Continuous integration compiles this sketch for both Arduino Uno and the
+ATmega328P Nano with all warnings enabled
+([`.github/workflows/firmware.yml`](../.github/workflows/firmware.yml)), so the
+two supported boards cannot silently drift apart. The AVR core is installed with
+`arduino-cli core install arduino:avr`.
+
 ## Verify Bluetooth output
 
 1. Pair the module from Android Bluetooth settings. Common default names are
@@ -119,13 +133,67 @@ Use `--fqbn arduino:avr:nano` instead when compiling/uploading to a Nano.
 4. Confirm that complete JSON lines arrive, for example:
 
 ```json
-{"raw":120,"avg":118,"peak":120,"sn":"MQ3-0001","vout":0.587,"rs":7525,"over":false,"alarm":false,"warm":true}
+{"raw":120,"avg":118,"peak":120,"sn":"MQ3-0001","vout":0.587,"rs":7525,"over":false,"alarm":false,"warm":false,"seq":42,"up":96500,"vcc":4990,"spread":2,"r0":7532,"fault":"ok","state":"IDLE","crc":"63"}
 ```
+
+The first nine fields are the original ones and are unchanged. The fields this
+revision adds (all optional to an old parser):
+
+- `seq` — record counter since boot.
+- `up` — uptime in milliseconds since boot.
+- `vcc` — measured supply rail in mV, from the internal 1.1 V bandgap reference. `5000` on a non-AVR board or when the reading is implausible.
+- `spread` — max minus min ADC counts inside the 25-sample burst. `0` on a steady signal; large values mean noise or an unsettled sensor.
+- `r0` — the clean-air reference resistance (ohms) the device is using, from EEPROM.
+- `fault` — `ok`, `short` (AO near 0), `rail` (AO near 1023), `vcc` (rail outside 4.5-5.5 V), or `stuck` (identical readings for 25+ records outside warm-up).
+- `state` — on-device breath state: `WARM`, `IDLE`, `BLOW` or `PEAK`.
+- `crc` — 2-digit uppercase hex XOR of every byte after the opening `{` up to `"state":"..."`. Recompute it to detect a truncated or corrupted line.
+
+`vout` and `rs` are now computed from the measured `vcc` and the configured load
+resistance rather than a fixed 5.000 V, so they track the real rail.
 
 If USB serial works but Bluetooth does not, check `TXD`/`RXD`, the divider,
 pairing, and the `9600` setting. If the exact carrier requires `EN`, verify its
 normal-mode level before connecting it. If the module repeatedly resets or the
 Arduino browns out, fix the power supply and decoupling first.
+
+## Device configuration and serial commands
+
+The sketch accepts newline-terminated (`\r` or `\n`) ASCII commands on both the
+USB port and the HC-06 link. Polling is non-blocking, so telemetry keeps
+flowing while commands are serviced. Commands are sent **to** the device (for
+example from a serial terminal or the Bluetooth SPP terminal); the mobile app
+does not send any.
+
+- `RST` — reset runtime state: `peak`, `alarm`, the clean-air baseline and the
+  breath state to `IDLE`, and clear the stuck-sensor counter. Config is kept.
+- `CAL AIR` — once warm-up is complete and in clean air, set `R0` to the current
+  sensor resistance (`rs`) and save to EEPROM.
+- `CAL <ohms>` — set `R0` directly (`100`–`500000` ohms) and save to EEPROM.
+- `RL <ohms>` — set the load resistance `RL` (`100`–`500000` ohms) and save to
+  EEPROM.
+- `ALM <adc>` — set the alarm threshold in ADC counts (`50`–`1000`) and save to
+  EEPROM.
+- `BEEP <0|1>` — enable (`1`) or disable (`0`) the buzzer and save to EEPROM.
+- `SN <serial>` — set the device serial (1–15 chars of `[A-Za-z0-9-]`) and save
+  to EEPROM.
+- `FACTORY` — restore the default configuration (`MQ3-0001`, `RL = 1000`,
+  `R0 = 7532`, threshold `350`, buzzer on) and save to EEPROM.
+- `PING` — no-op health check.
+
+Configuration lives in a versioned, CRC-16-protected `DeviceConfig` struct in
+EEPROM (load resistance, clean-air `R0`, alarm threshold, buzzer enable, device
+serial). It is read and validated on every boot. If the magic, version or
+checksum is wrong the firmware falls back to defaults **without rewriting
+EEPROM**, so boot does not consume write cycles. EEPROM is written only when a
+command actually changes a value — the ATmega328P/168 budget is about 100 000
+writes per cell.
+
+`vout` and `rs` now use the measured supply rail (internal 1.1 V bandgap) and
+the configured `RL`, so conversions track the real rail instead of a fixed
+5.000 V. The alarm buzzer is edge-triggered: `tone()` and `noTone()` are only
+called when the buzzer's desired state changes, which keeps the tone phase
+stable across telemetry bursts. A 2 s hardware watchdog is enabled after boot
+and reset each loop, so a hung sketch reboots instead of freezing the stream.
 
 ## Before enforcement use
 
@@ -137,14 +205,16 @@ The full list, with severities and evidence, is in
 The items that block enforcement use:
 
 1. **Not evidential.** The conversion constants (`R0`, `0.45 mg/L` at ratio 1, slope `-0.7`,
-   clean-air ratio `60`) are unvalidated defaults. The console copy also calls its
-   readiness checks a gate on "an evidential reading", which overstates what they prove.
+   clean-air ratio `60`) are unvalidated defaults. The console now says so on the Live tab:
+   "Screening estimate only. This is not an evidential measurement."
 2. **Simulator in production builds.** `apps/mobile/eas.json` sets
    `EXPO_PUBLIC_BREATHALYZER_SIMULATION=1` for `preview` **and** `production`, so a store
    build lets an officer capture a synthetic reading. Remove it from `production`.
-3. **`DEVICE_SERIAL` is `MQ3-0001`** for every unit built from this sketch. Each physical
-   unit needs a unique, controlled identifier, and the Bluetooth MAC is not a
-   cryptographic identity.
+3. **`MQ3-0001` is the default serial** for every unit built from this sketch. Each
+   physical unit needs a unique, controlled identifier, and the Bluetooth MAC is
+   not a cryptographic identity. The serial is now settable per unit with the
+   `SN` command (above), but an unconfigured unit still reports `MQ3-0001` and the
+   number is not authenticated.
 4. **Load resistor assumption.** The firmware models `RL = 1 kΩ`, but the MQ-3 datasheet
    specifies 200 kΩ as the standard load resistance. The default `R0` is only meaningful
    if your module actually has a 1 kΩ load resistor — measure it, then take a clean-air
@@ -164,8 +234,14 @@ The items that block enforcement use:
    clean-air sensor, and the MQ-3's documented detecting range starts at about 0.0105
    g/100ml. Do not report readings below that as measurements.
 10. **Characterize the sample rate and peak response** against the intended breath peak
-    before relying on peak capture. The record period is roughly 0.4 s and the EMA has a
-    time constant of about 1.3–1.5 s, so short peaks are attenuated and delayed.
+    before relying on peak capture. The record period is now roughly 0.5–0.7 s and the EMA
+    has a time constant of about 1.3–1.5 s, so short peaks are attenuated and delayed.
+
+The firmware now ships enabling controls — EEPROM-persisted `RL`/`R0`/threshold,
+measured `VCC`, a measured warm-up (60–90 s), sensor `fault` flags and an
+edge-triggered buzzer. These make items 3–6 instrumentable but do **not** by
+themselves close them: the blockers still require per-unit calibration against a
+reference, a stronger device identity, and a validated stabilisation test.
 
 Do not use human breath, automotive exhaust, methanol, or improvised flammable
 substances for calibration. Use an approved calibrated reference system.
@@ -190,8 +266,8 @@ automatically after an HC-06 failure — a failed connection surfaces an error t
 officer must resolve.
 
 This MQ-3 prototype and its uncalibrated output are for development/testing, not
-an evidential or legally certified breathalyzer measurement. The conversion constants
-are unvalidated defaults, and the device ships one shared serial
-(`DEVICE_SERIAL = "MQ3-0001"`) that every unit built from this sketch will report.
-Both issues, and the rest, are tracked in
+an evidential or legally certified breathalyzer measurement. The conversion
+constants are unvalidated defaults, and a freshly flashed unit falls back to one
+shared serial (`MQ3-0001`) until it is renumbered with the `SN` command. Both
+issues, and the rest, are tracked in
 [`docs/TECHNICAL_SPECIFICATION.md`](docs/TECHNICAL_SPECIFICATION.md) §11.

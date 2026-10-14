@@ -4,6 +4,7 @@ import type {
   CalibrationHistoryEntry
 } from '../services/breathalyzerDeviceStorage';
 import {
+  BREATHALYZER_WARMUP_MS,
   formatBacGdl,
   isBreathalyzerReadingFresh,
   bacGdlToRaw,
@@ -11,6 +12,7 @@ import {
   rawToMgPerL,
   rawToRs,
   type BreathalyzerCalibration,
+  type BreathalyzerFault,
   type BreathalyzerSnapshot
 } from '../services/breathalyzer';
 
@@ -268,6 +270,316 @@ export function summarizeDeviceHistory(
   };
 }
 
+export type DeviceStatusTone = 'success' | 'warning' | 'danger' | 'neutral';
+
+export interface DeviceStatusSummary {
+  label: string;
+  tone: DeviceStatusTone;
+  detail: string;
+}
+
+/** True when the firmware reports a hardware fault code other than `ok`. */
+export function hasSensorFault(snapshot: BreathalyzerSnapshot): boolean {
+  // `fault` is null (or absent on legacy firmware lines) when the device never
+  // reported one, so only an actual code that is not `ok` counts as a fault.
+  const { fault } = snapshot;
+  return typeof fault === 'string' && fault !== 'ok';
+}
+
+/**
+ * Presentation-friendly device status. A connected socket that has not yet
+ * delivered a sample is *not* the same state as a sensor that is still warming
+ * up, and neither is a firmware-reported hardware fault.
+ */
+export function statusFromSnapshot(snapshot: BreathalyzerSnapshot): DeviceStatusSummary {
+  if (snapshot.connection === 'connecting') {
+    return {
+      label: 'Connecting',
+      tone: 'warning',
+      detail: 'Opening the Bluetooth connection to the breathalyser…'
+    };
+  }
+  if (snapshot.connection === 'connected') {
+    if (hasSensorFault(snapshot)) {
+      return {
+        label: 'Sensor fault',
+        tone: 'danger',
+        detail: sensorFaultMessage(snapshot.fault)
+      };
+    }
+    if (snapshot.readings === 0) {
+      return {
+        label: 'Waiting for data',
+        tone: 'warning',
+        detail:
+          'Connected, but no readings have arrived yet. Check the breathalyser is switched on and in range.'
+      };
+    }
+    if (snapshot.warm === true) {
+      const seconds = warmupSecondsRemaining(snapshot);
+      return {
+        label: 'Warming up',
+        tone: 'warning',
+        detail:
+          seconds === null
+            ? 'Sensor warming up. Readings are not reliable until it finishes.'
+            : `Sensor warming up, about ${seconds} s left. Readings are not reliable until it finishes.`
+      };
+    }
+    if (snapshot.sampleStable === false) {
+      return {
+        label: 'Settling',
+        tone: 'warning',
+        detail: 'The signal is still settling. Keep the sensor still and in clean air.'
+      };
+    }
+    return {
+      label: 'Ready',
+      tone: 'success',
+      detail: `Connected to ${snapshot.transportLabel ?? 'the breathalyser'}. Warm-up finished and the signal is steady.`
+    };
+  }
+  if (snapshot.connection === 'error') {
+    return {
+      label: 'Connection problem',
+      tone: 'danger',
+      detail: snapshot.error ?? 'Reconnect the breathalyser and try again.'
+    };
+  }
+  return {
+    label: 'Not connected',
+    tone: 'neutral',
+    detail: 'Connect a breathalyser to start live readings.'
+  };
+}
+
+/**
+ * Seconds of firmware warm-up still to run, or null when nothing is counting
+ * down. The firmware clears its own `warm` flag after `BREATHALYZER_WARMUP_MS`,
+ * so the remaining budget is measured from the reported device uptime.
+ */
+export function warmupSecondsRemaining(snapshot: BreathalyzerSnapshot): number | null {
+  if (snapshot.warm !== true) return null;
+  const uptimeMs = snapshot.uptimeMs;
+  if (typeof uptimeMs !== 'number' || !Number.isFinite(uptimeMs)) return null;
+  if (uptimeMs >= BREATHALYZER_WARMUP_MS) return null;
+  const remaining = Math.ceil((BREATHALYZER_WARMUP_MS - uptimeMs) / 1_000);
+  return remaining > 0 ? remaining : null;
+}
+
+/** Plain-language explanation for a firmware fault code. */
+export function sensorFaultMessage(fault: BreathalyzerFault | null | undefined): string {
+  switch (fault) {
+    case 'short':
+      return 'The sensor reads zero. Check the sensor wiring to A0 and GND.';
+    case 'rail':
+      return 'The sensor reads at its maximum. Check the sensor wiring and supply.';
+    case 'vcc':
+      return 'The supply voltage is outside the safe range. Check the 5 V power supply.';
+    case 'stuck':
+      return 'The sensor value is not changing. Check the sensor and its wiring.';
+    default:
+      // `ok`, absent (legacy firmware), or not reported at all.
+      return 'No sensor fault.';
+  }
+}
+
+/** True once a clean-air baseline has been captured on this phone. */
+export function isBaselineSet(calibration: BreathalyzerCalibration): boolean {
+  return calibration.version.includes('+clean-air');
+}
+
+/** Console tab a piece of setup guidance lives behind. */
+export type ConsoleTab = 'connect' | 'calibrate' | 'live';
+
+export type SetupStepKey = 'connect' | 'warmup' | 'sensor' | 'baseline';
+
+export type SetupStepState = 'done' | 'current' | 'waiting' | 'attention' | 'optional';
+
+export interface SetupStep {
+  key: SetupStepKey;
+  label: string;
+  state: SetupStepState;
+  detail: string;
+  tab: ConsoleTab;
+}
+
+/**
+ * The four setup steps shown in the console's connect sequence, in the order
+ * the officer has to satisfy them.
+ */
+export function buildSetupSteps(snapshot: BreathalyzerSnapshot): SetupStep[] {
+  const connected = snapshot.connection === 'connected';
+  const hasReadings = snapshot.readings > 0;
+  const transport = snapshot.transportLabel ?? 'the breathalyser';
+  const seconds = warmupSecondsRemaining(snapshot);
+
+  const streaming = connected && hasReadings;
+  const connectState: SetupStepState = streaming
+    ? 'done'
+    : snapshot.connection === 'error'
+      ? 'attention'
+      : 'current';
+  const connectDetail = streaming
+    ? `Receiving readings from ${transport}`
+    : snapshot.connection === 'error'
+      ? snapshot.error ?? 'Connection problem. Tap to reconnect.'
+      : snapshot.connection === 'connecting'
+        ? 'Connecting…'
+        : connected
+          ? 'Connected. Waiting for the first reading.'
+          : 'Not connected. Tap to connect.';
+
+  const warmupState: SetupStepState = !streaming
+    ? 'waiting'
+    : snapshot.warm === true
+      ? 'current'
+      : 'done';
+  const warmupDetail = !streaming
+    ? 'Starts once the breathalyser is connected.'
+    : snapshot.warm === true
+      ? seconds === null
+        ? 'Warming up.'
+        : `Warming up, ${seconds} s left.`
+      : 'Warm-up finished.';
+
+  const sensorState: SetupStepState = !streaming
+    ? 'waiting'
+    : snapshot.warm === true
+      ? 'waiting'
+      : hasSensorFault(snapshot)
+        ? 'attention'
+        : snapshot.sampleStable === false
+          ? 'current'
+          : 'done';
+  const sensorDetail = !streaming
+    ? 'Checked once readings arrive.'
+    : snapshot.warm === true
+      ? 'Checked after warm-up.'
+      : hasSensorFault(snapshot)
+        ? sensorFaultMessage(snapshot.fault)
+        : snapshot.sampleStable === false
+          ? 'Signal settling. Keep the sensor still in clean air.'
+          : 'Sensor healthy and signal steady.';
+
+  const baselineSet = isBaselineSet(snapshot.calibration);
+
+  return [
+    {
+      key: 'connect',
+      label: 'Connect',
+      state: connectState,
+      detail: connectDetail,
+      tab: 'connect'
+    },
+    {
+      key: 'warmup',
+      label: 'Warm up',
+      state: warmupState,
+      detail: warmupDetail,
+      tab: 'live'
+    },
+    {
+      key: 'sensor',
+      label: 'Sensor',
+      state: sensorState,
+      detail: sensorDetail,
+      tab: 'live'
+    },
+    {
+      key: 'baseline',
+      label: 'Baseline',
+      state: baselineSet ? 'done' : 'optional',
+      detail: baselineSet
+        ? 'Clean-air baseline set on this phone.'
+        : 'Recommended. Using factory defaults until you set a clean-air baseline.',
+      tab: 'calibrate'
+    }
+  ];
+}
+
+/**
+ * Why calibration is blocked right now, or null when it is allowed. Mirrors the
+ * guards in `BreathalyzerSession.calibrateFromCleanAir()` so the button is
+ * disabled for exactly the reasons the session itself would refuse.
+ */
+export function calibrationBlockReason(
+  snapshot: BreathalyzerSnapshot,
+  options: { locked: boolean },
+): string | null {
+  if (options.locked) return 'Locked while a roadside test is active.';
+  if (snapshot.connection !== 'connected') return 'Connect the breathalyser first.';
+  if (snapshot.readings === 0) return 'Waiting for the first reading.';
+  if (snapshot.warm === true) {
+    const seconds = warmupSecondsRemaining(snapshot);
+    return seconds === null
+      ? 'Warming up. Wait for the sensor to finish.'
+      : `Warming up. Wait for the sensor to finish. About ${seconds} s left.`;
+  }
+  if (hasSensorFault(snapshot)) return 'Fix the sensor fault before setting a baseline.';
+  if (snapshot.sampleStable === false) {
+    return 'The signal is still settling. Keep the sensor still in clean air.';
+  }
+  if (snapshot.over === true || snapshot.alarm === true) {
+    return 'Move the sensor away from alcohol vapour and wait for the reading to fall.';
+  }
+  return null;
+}
+
+/** Roadside copy for the current firmware blow state. */
+export function blowStateGuidance(snapshot: BreathalyzerSnapshot): {
+  title: string;
+  detail: string;
+  tone: DeviceStatusTone;
+} {
+  if (snapshot.connection !== 'connected') {
+    return {
+      title: 'No breathalyser connected',
+      detail: 'Connect a breathalyser to start live readings.',
+      tone: 'neutral'
+    };
+  }
+
+  switch (snapshot.blowState) {
+    case 'warming':
+      return {
+        title: 'Warming up',
+        detail: 'Wait for the sensor to finish warming up.',
+        tone: 'warning'
+      };
+    case 'blowing':
+      return {
+        title: 'Breath detected',
+        detail: 'Keep the breath going until the reading levels off.',
+        tone: 'success'
+      };
+    case 'peak_ready':
+      return {
+        title: 'Peak reached',
+        detail: 'Capture when the reading holds steady.',
+        tone: 'success'
+      };
+    case 'fault':
+      return {
+        title: 'Sensor fault',
+        detail: sensorFaultMessage(snapshot.fault),
+        tone: 'danger'
+      };
+    case 'idle':
+      return {
+        title: 'Ready for a breath sample',
+        detail: 'Ask the subject to blow steadily into the mouthpiece.',
+        tone: 'success'
+      };
+    default:
+      return {
+        title: 'Ready for a breath sample',
+        detail: 'Ask the subject to blow steadily into the mouthpiece.',
+        tone: 'success'
+      };
+  }
+}
+
 export function buildCaptureReadiness(
   snapshot: BreathalyzerSnapshot,
   now = Date.now(),
@@ -277,40 +589,69 @@ export function buildCaptureReadiness(
   const receivedSample = snapshot.readings > 0 && snapshot.avg !== null;
   const warmupComplete = connected && !snapshot.warm;
   const sessionPeakReady = snapshot.sessionPeak !== null;
+  const sensorFaulted = hasSensorFault(snapshot);
+  const sampleSettled = snapshot.sampleStable !== false;
+  const sensorReady = connected && !sensorFaulted && sampleSettled;
+  const secondsLeft = warmupSecondsRemaining(snapshot);
 
   return [
     {
       key: 'connection',
-      label: 'Device connection',
-      detail: connected ? snapshot.transportLabel ?? 'Connected' : 'Connect an HC-06 or simulated device.',
+      label: 'Breathalyser connected',
+      detail: connected
+        ? snapshot.transportLabel ?? 'the breathalyser'
+        : 'Connect a breathalyser first.',
       ok: connected,
       tone: connected ? 'success' : snapshot.connection === 'error' ? 'error' : 'neutral'
     },
     {
       key: 'stream',
-      label: 'Live telemetry stream',
-      detail: fresh ? 'The latest sample is within the freshness window.' : 'Waiting for a fresh device sample.',
+      label: 'Live data',
+      detail: fresh
+        ? 'Receiving readings.'
+        : 'No recent readings yet. Waiting for the next one.',
       ok: fresh,
       tone: fresh ? 'success' : connected ? 'warning' : 'neutral'
     },
     {
       key: 'warmup',
-      label: 'Sensor warm-up',
-      detail: warmupComplete ? 'Warm-up complete.' : 'Wait for the MQ-3 warm-up flag to clear.',
+      label: 'Sensor warmed up',
+      detail: warmupComplete
+        ? 'Warm-up finished.'
+        : secondsLeft === null
+          ? 'Wait for warm-up to finish.'
+          : `About ${secondsLeft} s left.`,
       ok: warmupComplete,
       tone: warmupComplete ? 'success' : connected ? 'warning' : 'neutral'
     },
     {
+      key: 'sensor',
+      label: 'Sensor healthy',
+      detail: !connected
+        ? 'Checked once the breathalyser is connected.'
+        : sensorFaulted
+          ? sensorFaultMessage(snapshot.fault)
+          : !sampleSettled
+            ? 'The signal is still settling. Keep the sensor still in clean air.'
+            : 'No sensor fault and the signal is steady.',
+      ok: sensorReady,
+      tone: sensorReady ? 'success' : sensorFaulted ? 'error' : connected ? 'warning' : 'neutral'
+    },
+    {
       key: 'sample',
-      label: 'Breath sample',
-      detail: receivedSample ? `${snapshot.readings} sample${snapshot.readings === 1 ? '' : 's'} received.` : 'Blow steadily into the sensor to create a sample.',
+      label: 'Breath sample received',
+      detail: receivedSample
+        ? `${snapshot.readings} sample(s) received.`
+        : 'Ask the subject to blow steadily to create a sample.',
       ok: receivedSample,
       tone: receivedSample ? 'success' : connected ? 'warning' : 'neutral'
     },
     {
       key: 'peak',
-      label: 'Session peak',
-      detail: sessionPeakReady ? `Peak raw ${formatRawValue(snapshot.sessionPeak)}.` : 'The first non-warm sample becomes the session peak.',
+      label: 'Subject peak recorded',
+      detail: sessionPeakReady
+        ? `Peak reading ${Math.round(snapshot.sessionPeak as number)}.`
+        : 'The first reading after warm-up sets the subject peak.',
       ok: sessionPeakReady,
       tone: sessionPeakReady ? 'success' : connected ? 'warning' : 'neutral'
     }
@@ -333,6 +674,31 @@ export function transportKindLabel(kind: string | null): string {
 export function buildDeviceDiagnosticReport(input: DeviceDiagnosticReportInput): string {
   const { snapshot, preferences, history } = input;
   const readiness = buildCaptureReadiness(snapshot);
+  const hardwareLines: string[] = [];
+  const { vccMv, spread, seq, droppedFrames, deviceAddress } = snapshot;
+
+  if (typeof snapshot.fault === 'string') {
+    hardwareLines.push(`Sensor fault: ${snapshot.fault === 'ok' ? 'None reported' : snapshot.fault}`);
+  }
+  if (typeof snapshot.sampleStable === 'boolean') {
+    hardwareLines.push(`Sample stable: ${snapshot.sampleStable ? 'Yes' : 'Settling'}`);
+  }
+  if (vccMv !== null && vccMv !== undefined && Number.isFinite(vccMv)) {
+    hardwareLines.push(`Rail voltage: ${(vccMv / 1000).toFixed(3)} V (${vccMv} mV)`);
+  }
+  if (spread !== null && spread !== undefined && Number.isFinite(spread)) {
+    hardwareLines.push(`Signal spread: ${Math.round(spread)} ADC counts`);
+  }
+  if (seq !== null && seq !== undefined && Number.isFinite(seq)) {
+    hardwareLines.push(`Frame sequence: ${seq}`);
+  }
+  if (droppedFrames !== null && droppedFrames !== undefined && Number.isFinite(droppedFrames)) {
+    hardwareLines.push(`Dropped frames: ${droppedFrames}`);
+  }
+  if (deviceAddress) {
+    hardwareLines.push(`Device address: ${deviceAddress}`);
+  }
+
   const lines = [
     'IntegriScan breathalyzer diagnostic report',
     `Generated: ${new Date().toISOString()}`,
@@ -358,6 +724,7 @@ export function buildDeviceDiagnosticReport(input: DeviceDiagnosticReportInput):
     `Warm-up: ${snapshot.warm ? 'Active' : 'Complete'}`,
     `Threshold flag: ${snapshot.over ? 'Over' : 'Normal'}`,
     `Alarm: ${snapshot.alarm ? 'Active' : 'Clear'}`,
+    ...hardwareLines,
     '',
     'Calibration',
     `Version: ${snapshot.calibration.version}`,
@@ -369,6 +736,9 @@ export function buildDeviceDiagnosticReport(input: DeviceDiagnosticReportInput):
     '',
     'Capture readiness',
     ...readiness.map((check) => `${check.ok ? 'PASS' : 'WAIT'} — ${check.label}: ${check.detail}`),
+    '',
+    'Screening estimate',
+    'The readiness checks only confirm that the device stream is healthy. They do not validate the measurement against a reference, so treat a captured reading as a screening estimate, not a certified result.',
     '',
     'Local custody history',
     `Local records: ${history.totalLocalRecords}`,

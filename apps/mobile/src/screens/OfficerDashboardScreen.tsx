@@ -66,6 +66,7 @@ import {
   loadCalibration,
   saveCalibration,
 } from "../services/breathalyzerStorage";
+import { recordCalibrationChange } from "../services/breathalyzerDeviceStorage";
 import {
   DeviceSettingsModal,
   type DeviceSettingsTab,
@@ -178,6 +179,102 @@ const BREATHALYZER_SIMULATION_ENABLED =
 /** Fade duration for the collapsible scan-guidance card. */
 const SCAN_HELP_ANIMATION_MS = 200;
 
+/** A peak older than this is no longer evidence of a current breath sample. */
+const BREATH_PEAK_MAX_AGE_MS = 60_000;
+
+/**
+ * Firmware telemetry that the upgraded HC-06 stream adds on top of the legacy
+ * snapshot shape. It is read defensively so the dashboard keeps compiling and
+ * behaving against both the legacy and the upgraded snapshot.
+ */
+type BreathalyzerTelemetry = Partial<{
+  fault: string | null;
+  sampleStable: boolean | null;
+  peakReceivedAt: string | null;
+  blowState: string | null;
+}>;
+
+type RoadsideBlowState =
+  | "warming"
+  | "idle"
+  | "blowing"
+  | "peak_ready"
+  | "fault";
+
+function telemetryOf(snapshot: BreathalyzerSnapshot): BreathalyzerTelemetry {
+  return snapshot as BreathalyzerSnapshot & BreathalyzerTelemetry;
+}
+
+/** True when the firmware reports a hardware fault code other than `ok`. */
+function hasSensorFault(snapshot: BreathalyzerSnapshot): boolean {
+  const fault = telemetryOf(snapshot).fault;
+  return typeof fault === "string" && fault !== "ok";
+}
+
+/**
+ * The peak is only meaningful while the subject is still at the device: a peak
+ * recorded more than a minute ago must not be captured as a fresh reading.
+ */
+function isPeakStale(
+  snapshot: BreathalyzerSnapshot,
+  now = Date.now(),
+): boolean {
+  const peakReceivedAt = telemetryOf(snapshot).peakReceivedAt;
+  if (!peakReceivedAt) return false;
+  const receivedAt = Date.parse(peakReceivedAt);
+  return (
+    Number.isFinite(receivedAt) && now - receivedAt > BREATH_PEAK_MAX_AGE_MS
+  );
+}
+
+/** Concise roadside guidance derived from the firmware blow state machine. */
+function blowStateHint(
+  blowState: string | null | undefined,
+  fault: string | null | undefined,
+): string | null {
+  switch (blowState as RoadsideBlowState | null | undefined) {
+    case "warming":
+      return "Sensor warming up";
+    case "idle":
+      return "Ready \u2014 ask subject to blow steadily";
+    case "blowing":
+      return "Blowing detected \u2014 keep blowing until peak settles";
+    case "peak_ready":
+      return "Peak stabilised \u2014 ready to capture";
+    case "fault":
+      return `Hardware fault (${fault ?? "unknown"})`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Blow/sample status line for the reading card. Prefers the firmware state
+ * machine and falls back to a generic hint for legacy one-way firmware.
+ */
+function sampleStatusHint(snapshot: BreathalyzerSnapshot): string {
+  const telemetry = telemetryOf(snapshot);
+  const firmwareHint = blowStateHint(telemetry.blowState, telemetry.fault);
+  if (firmwareHint) return firmwareHint;
+  if (snapshot.readings === 0) return "Waiting for the device to send a sample";
+  if (snapshot.warm) return "Sensor warming up";
+  return "Blow steadily until the peak settles";
+}
+
+/**
+ * The upgraded HC-06 firmware accepts `CAL <ohms>` so the device converts raw
+ * values with the same clean-air baseline the app persists. Older one-way
+ * firmware ignores it, so the write is fire-and-forget.
+ */
+function syncCalibrationToFirmware(cleanAirResistanceOhms: number): void {
+  const session = breathalyzerSession as Partial<{
+    sendCommand?: (command: string) => void;
+  }>;
+  void session.sendCommand?.(
+    `CAL ${Math.round(cleanAirResistanceOhms)}`,
+  );
+}
+
 const subscribeBreathalyzer = (listener: () => void) =>
   breathalyzerSession.subscribe(listener);
 
@@ -259,6 +356,14 @@ function deviceStatusVisual(snapshot: BreathalyzerSnapshot): {
     return { label: "Connecting to breathalyzer…", color: colors.warning };
   }
   if (snapshot.connection === "connected") {
+    if (snapshot.readings === 0) {
+      // A silent socket is not a warming sensor: report the stream, not the
+      // warm-up flag, so officers know the HC-06 has not sent anything yet.
+      return { label: "Waiting for data", color: colors.warning };
+    }
+    if (snapshot.warm) {
+      return { label: "Warming", color: colors.warning };
+    }
     return {
       label: snapshot.transportLabel ?? "Breathalyzer connected",
       color: colors.success,
@@ -754,7 +859,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   const scanHelpAnim = useRef(new Animated.Value(1)).current;
   const scanHelpAnimRef = useRef<Animated.CompositeAnimation | null>(null);
   const [deviceSettingsVisible, setDeviceSettingsVisible] = useState(false);
-  const [deviceSettingsTab, setDeviceSettingsTab] = useState<DeviceSettingsTab>("device");
+  const [deviceSettingsTab, setDeviceSettingsTab] = useState<DeviceSettingsTab>("live");
   const [step, setStep] = useState<OfficerStep>("idle");
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [scannedData, setScannedData] = useState<DriverLicenseData | null>(
@@ -1727,10 +1832,24 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       );
       return;
     }
+    if (hasSensorFault(snapshot)) {
+      Alert.alert(
+        "Sensor fault",
+        "The breathalyzer reported a sensor fault. Check the hardware before capturing.",
+      );
+      return;
+    }
     if (!isBreathalyzerReadingFresh(snapshot.lastReceivedAt)) {
       Alert.alert(
         "Reading is stale",
         "The breathalyzer has stopped sending live data. Reconnect it and take a fresh sample.",
+      );
+      return;
+    }
+    if (isPeakStale(snapshot)) {
+      Alert.alert(
+        "Peak reading is old",
+        "The peak BAC was recorded over a minute ago. Reset or take a fresh breath sample before capturing.",
       );
       return;
     }
@@ -1767,7 +1886,40 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     });
   }, [profile]);
 
-  const handleSetCleanAirBaseline = () => {
+  const handleSetCleanAirBaseline = async () => {
+    const snapshot = breathalyzerSession.getSnapshot();
+    // Same safety gates as the breathalyser console, so a baseline can never be
+    // recorded from a warming, faulted, unsettled, or silent sensor.
+    if (snapshot.connection !== "connected" || snapshot.readings === 0) {
+      Alert.alert(
+        "No live sample",
+        "Connect the breathalyzer and wait for a live sample before setting the clean-air baseline.",
+      );
+      return;
+    }
+    if (snapshot.warm) {
+      Alert.alert(
+        "Sensor warming up",
+        "Wait for the 60-second sensor warm-up to finish before setting the clean-air baseline.",
+      );
+      return;
+    }
+    if (hasSensorFault(snapshot)) {
+      Alert.alert(
+        "Sensor fault",
+        "The breathalyzer reported a sensor fault. Check the hardware before setting the clean-air baseline.",
+      );
+      return;
+    }
+    if (telemetryOf(snapshot).sampleStable === false) {
+      Alert.alert(
+        "Signal not settled",
+        "Wait a moment for the clean-air reading to stabilise before setting the baseline.",
+      );
+      return;
+    }
+
+    const previous = snapshot.calibration;
     const next = breathalyzerSession.calibrateFromCleanAir();
     if (!next) {
       Alert.alert(
@@ -1776,7 +1928,34 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       );
       return;
     }
-    void saveCalibration(next);
+
+    await saveCalibration(next);
+    await recordCalibrationChange({
+      source: "clean-air",
+      calibration: next,
+      previousCleanAirResistanceOhms: previous.cleanAirResistanceOhms,
+      rawSample: snapshot.avg,
+    });
+    syncCalibrationToFirmware(next.cleanAirResistanceOhms);
+    await logAuditEvent({
+      action: "test.device.calibrated",
+      outcome: "success",
+      message: `Clean-air baseline set to ${next.cleanAirResistanceOhms.toFixed(0)} \u03A9`,
+      entityType: "breathalyzer",
+      entityId: next.version,
+      officerId: profile?.officerId ?? null,
+      officerName: profile
+        ? `${profile.name} ${profile.surname}`.trim() || profile.name
+        : null,
+      badgeNumber: profile?.badgeNumber ?? null,
+      metadata: {
+        source: "clean_air",
+        deviceSerial: snapshot.deviceSerial,
+        version: next.version,
+        cleanAirResistanceOhms: next.cleanAirResistanceOhms,
+        loadResistorOhms: next.loadResistorOhms,
+      },
+    });
     Alert.alert(
       "Baseline updated",
       `Clean-air sensor resistance recorded as ${next.cleanAirResistanceOhms.toFixed(0)} \u03A9.`,
@@ -1928,7 +2107,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
   }
 
   const deviceStatus = deviceStatusVisual(breathalyzer);
-  const openDeviceSettings = (initialTab: DeviceSettingsTab = "device") => {
+  const openDeviceSettings = (initialTab: DeviceSettingsTab = "live") => {
     setDeviceSettingsTab(initialTab);
     setDeviceSettingsVisible(true);
   };
@@ -1960,7 +2139,9 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         <View style={styles.headerActions}>
           <Pressable
             style={styles.headerIconButton}
-            onPress={() => openDeviceSettings("device")}
+            onPress={() =>
+              openDeviceSettings(breathalyzer.connection === "connected" ? "live" : "connect")
+            }
             accessibilityRole="button"
             accessibilityLabel={`Manage breathalyzer. ${deviceStatus.label}`}
           >
@@ -2389,12 +2570,24 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                   <Text style={styles.deviceBadge}>WARMING</Text>
                 ) : null}
                 {breathalyzer.connection === "connected" &&
+                hasSensorFault(breathalyzer) ? (
+                  <Text style={[styles.deviceBadge, styles.deviceBadgeAlert]}>
+                    FAULT
+                  </Text>
+                ) : null}
+                {breathalyzer.connection === "connected" &&
                 breathalyzer.over ? (
                   <Text style={[styles.deviceBadge, styles.deviceBadgeAlert]}>
                     ALARM
                   </Text>
                 ) : null}
               </View>
+
+              {breathalyzer.connection === "connected" ? (
+                <Text style={styles.readOnlyHint}>
+                  {sampleStatusHint(breathalyzer)}
+                </Text>
+              ) : null}
 
               {breathalyzer.connection === "connected" ? (
                 <View style={styles.metricsRow}>
@@ -2437,7 +2630,7 @@ export function OfficerDashboardScreen({ navigation }: Props) {
                     </Pressable>
                     <Pressable
                       style={styles.deviceSecondaryButton}
-                      onPress={handleSetCleanAirBaseline}
+                      onPress={() => void handleSetCleanAirBaseline()}
                     >
                       <Text style={styles.deviceSecondaryButtonText}>
                         SET CLEAN-AIR BASELINE

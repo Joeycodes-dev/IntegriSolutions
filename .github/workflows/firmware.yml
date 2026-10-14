@@ -1,0 +1,66 @@
+name: Firmware CI
+
+# Triggers on every branch rather than only main/develop, so feature branches
+# get compile feedback before merge instead of first seeing failures on main.
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'firmware/**'
+      - '.github/workflows/firmware.yml'
+  pull_request:
+    branches: ['**']
+    paths:
+      - 'firmware/**'
+      - '.github/workflows/firmware.yml'
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+
+    # Compile the sketch for both supported 5 V boards. fail-fast: false so a
+    # failure on one board still reports the other board's result.
+    strategy:
+      fail-fast: false
+      matrix:
+        fqbn:
+          - arduino:avr:uno   # Arduino Uno (ATmega328P)
+          - arduino:avr:nano  # ATmega328P Nano (also covers atmega168 builds)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install arduino-cli
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \
+            | BINDIR="$HOME/.local/bin" sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Show arduino-cli version
+        run: arduino-cli version
+
+      - name: Install arduino:avr core
+        run: arduino-cli core install arduino:avr
+
+      - name: Compile firmware/breathalyzer (${{ matrix.fqbn }}, --warnings all)
+        run: arduino-cli compile --fqbn ${{ matrix.fqbn }} --warnings all firmware/breathalyzer
+
+      # arduino-cli compiles functions in source order and does not pre-insert
+      # prototypes. The Arduino IDE does hoist function bodies above the type
+      # definitions and then synthesise prototypes, which is what broke the
+      # sketch with "'BurstResult' does not name a type". This check fails the
+      # build if a type is ever declared below the first function definition.
+      - name: Check every type is declared above the first function
+        run: |
+          set -euo pipefail
+          sketch=firmware/breathalyzer/breathalyzer.ino
+          first_fn=$(grep -nE '^[A-Za-z_][A-Za-z0-9_:<>*&[:space:]]*[[:space:]][A-Za-z_][A-Za-z0-9_]*[[:space:]]*\([^;]*\)[[:space:]]*\{[[:space:]]*$' "$sketch" | head -n1 | cut -d: -f1)
+          echo "First function definition is at line $first_fn"
+          late=$(grep -nE '^(struct|enum|class)[[:space:]]' "$sketch" | awk -F: -v fn="$first_fn" '$1 > fn')
+          if [ -n "$late" ]; then
+            echo "::error file=$sketch::types must be declared before the first function so the Arduino IDE cannot hoist a function away from its type"
+            echo "$late"
+            exit 1
+          fi
+          echo "All type declarations are above the first function."

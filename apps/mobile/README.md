@@ -100,6 +100,12 @@ with diagrams and console wireframes alongside it.
 Capture uses the **session peak** (highest smoothed reading since the subject session started), because breath
 alcohol is the peak of the exhale, not the settling value.
 
+The breathalyser settings console (`src/components/DeviceSettingsModal.tsx`) has three tabs — **Connect**,
+**Calibrate** and **Live**. Connect pairs the HC-06 and holds connection preferences, Calibrate sets the
+clean-air baseline and keeps the advanced sensor fields behind **Show advanced settings**, and Live shows the
+live and peak BAC estimates above an auto-scaling signal chart (`src/components/LiveSignalChart.tsx`) plus the
+readiness checks and device health tiles.
+
 ### Chain of custody
 
 Every device-captured reading carries custody fields into the SHA-256 record hash and the synced record:
@@ -200,11 +206,13 @@ officer must resolve by reconnecting or retrying.
 
 ### Not evidential
 
-The console's "Capture readiness" card describes its checks as gating "an evidential reading". That wording is
-misleading: this is an **uncalibrated screening prototype**, not a certified instrument. The readiness checks
-verify that the connection, stream, warm-up flag and session peak are all present — they do not validate the
-measurement against any reference. See the [specification's known issues](../../firmware/breathalyzer/docs/TECHNICAL_SPECIFICATION.md)
-before any enforcement use.
+The console no longer describes its checks as gating "an evidential reading". Instead the Live tab states plainly
+that BAC figures are a screening estimate ("Screening estimate only. This is not an evidential measurement."),
+and its "Ready for a roadside test" card reads "Every check must pass before a roadside reading can be
+captured." Those checks only verify that the connection, stream, warm-up flag and session peak are present — they
+do not validate the measurement against any reference. This is an **uncalibrated screening prototype**, not a
+certified instrument. See the [specification's known
+issues](../../firmware/breathalyzer/docs/TECHNICAL_SPECIFICATION.md) before any enforcement use.
 
 ## Notes
 

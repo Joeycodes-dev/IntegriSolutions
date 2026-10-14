@@ -25,6 +25,13 @@ import com.facebook.react.modules.core.DeviceEventManagerModule;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.UUID;
@@ -38,12 +45,15 @@ public final class Hc06BluetoothModule extends ReactContextBaseJavaModule {
   private static final String EVENT_DISCONNECTED = "Hc06Disconnected";
   private static final String EVENT_ERROR = "Hc06Error";
   private static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+  private static final int RFCOMM_FALLBACK_CHANNEL = 1;
   private static final Pattern MAC_ADDRESS = Pattern.compile("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$");
   private static final int READ_BUFFER_BYTES = 512;
 
   private final ReactApplicationContext reactContext;
   private final ExecutorService connectionExecutor = Executors.newSingleThreadExecutor();
   private final Object connectionLock = new Object();
+  /** Serializes writes so concurrent commands cannot interleave on the wire. */
+  private final Object commandLock = new Object();
 
   @Nullable
   private BluetoothSocket socket;
@@ -137,6 +147,73 @@ public final class Hc06BluetoothModule extends ReactContextBaseJavaModule {
     }
   }
 
+  private boolean isGenerationActive(int generation) {
+    synchronized (connectionLock) {
+      return connectionGeneration == generation;
+    }
+  }
+
+  /**
+   * Creates a raw RFCOMM channel 1 socket through reflection. Some HC-06
+   * carriers fail the SDP service-record lookup but still accept this channel.
+   */
+  @Nullable
+  private BluetoothSocket createFallbackRfcommSocket(BluetoothDevice device) throws IOException {
+    try {
+      Method factory = device.getClass().getMethod("createRfcommSocket", int.class);
+      Object socket = factory.invoke(device, RFCOMM_FALLBACK_CHANNEL);
+      if (!(socket instanceof BluetoothSocket)) {
+        return null;
+      }
+      return (BluetoothSocket) socket;
+    } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException error) {
+      throw new IOException("The raw RFCOMM fallback socket is unavailable.", error);
+    }
+  }
+
+  /**
+   * Decodes a chunk with a stateful decoder so a multi-byte character split
+   * across two SPP reads is joined instead of being corrupted.
+   */
+  @NonNull
+  private String decodeChunk(
+      @NonNull CharsetDecoder decoder, @NonNull byte[] data, int count) {
+    ByteBuffer input = ByteBuffer.wrap(data, 0, count);
+    StringBuilder decoded = new StringBuilder();
+    boolean overflow;
+    do {
+      CharBuffer sink = CharBuffer.allocate(Math.max(16, input.remaining() + 8));
+      overflow = decoder.decode(input, sink, false).isOverflow();
+      sink.flip();
+      decoded.append(sink);
+    } while (overflow);
+    return decoded.toString();
+  }
+
+  /**
+   * Drains a partial trailing sequence at end of stream so the bytes the device
+   * already delivered are not silently discarded.
+   */
+  @NonNull
+  private String flushDecoder(@NonNull CharsetDecoder decoder) {
+    StringBuilder decoded = new StringBuilder();
+    boolean overflow;
+    do {
+      CharBuffer sink = CharBuffer.allocate(16);
+      overflow = decoder.decode(ByteBuffer.allocate(0), sink, true).isOverflow();
+      sink.flip();
+      decoded.append(sink);
+    } while (overflow);
+
+    do {
+      CharBuffer sink = CharBuffer.allocate(16);
+      overflow = decoder.flush(sink).isOverflow();
+      sink.flip();
+      decoded.append(sink);
+    } while (overflow);
+    return decoded.toString();
+  }
+
   private void startReader(BluetoothSocket source, BluetoothDevice device, int generation) {
     Thread reader = new Thread(() -> readLoop(source, device, generation), "Hc06BluetoothReader");
     reader.setDaemon(true);
@@ -145,6 +222,11 @@ public final class Hc06BluetoothModule extends ReactContextBaseJavaModule {
 
   private void readLoop(BluetoothSocket source, BluetoothDevice device, int generation) {
     byte[] buffer = new byte[READ_BUFFER_BYTES];
+    CharsetDecoder decoder =
+        StandardCharsets.UTF_8
+            .newDecoder()
+            .onMalformedInput(CodingErrorAction.REPLACE)
+            .onUnmappableCharacter(CodingErrorAction.REPLACE);
 
     try (InputStream input = source.getInputStream()) {
       while (readerRunning && !disconnectRequested && isCurrentConnection(generation, source)) {
@@ -156,9 +238,23 @@ public final class Hc06BluetoothModule extends ReactContextBaseJavaModule {
           continue;
         }
 
+        String text = decodeChunk(decoder, buffer, count);
+        if (text.isEmpty()) {
+          continue;
+        }
+
         WritableMap payload = Arguments.createMap();
         payload.putString("address", device.getAddress());
-        payload.putString("data", new String(buffer, 0, count, StandardCharsets.UTF_8));
+        payload.putString("data", text);
+        emit(EVENT_DATA, payload);
+      }
+
+      // Flush a partial trailing sequence so its bytes are not silently dropped.
+      String tail = flushDecoder(decoder);
+      if (!tail.isEmpty()) {
+        WritableMap payload = Arguments.createMap();
+        payload.putString("address", device.getAddress());
+        payload.putString("data", tail);
         emit(EVENT_DATA, payload);
       }
     } catch (IOException error) {
@@ -265,8 +361,27 @@ public final class Hc06BluetoothModule extends ReactContextBaseJavaModule {
       BluetoothSocket candidate = null;
       try {
         BluetoothDevice device = adapter.getRemoteDevice(address);
-        candidate = device.createRfcommSocketToServiceRecord(SPP_UUID);
-        candidate.connect();
+        try {
+          candidate = device.createRfcommSocketToServiceRecord(SPP_UUID);
+          candidate.connect();
+        } catch (IOException initialError) {
+          if (!isGenerationActive(generation)) {
+            // A newer connect/disconnect already superseded this attempt, so the
+            // caller must be told it was cancelled rather than retried.
+            throw initialError;
+          }
+
+          // Some HC-06 carriers refuse the SDP service-record lookup but still
+          // accept a raw RFCOMM channel 1 socket opened by reflection.
+          closeSocket(candidate);
+          candidate = null;
+          BluetoothSocket fallback = createFallbackRfcommSocket(device);
+          if (fallback == null) {
+            throw initialError;
+          }
+          candidate = fallback;
+          candidate.connect();
+        }
 
         boolean cancelled;
         BluetoothSocket previous;
@@ -327,6 +442,41 @@ public final class Hc06BluetoothModule extends ReactContextBaseJavaModule {
     }
     closeSocket(current);
     promise.resolve(true);
+  }
+
+  /**
+   * Writes a firmware command verb (`RST`, `PING`, ...) to the open socket. The
+   * sketch expects a newline-terminated ASCII line, so a bare CR/LF is appended
+   * when the caller did not already terminate the command.
+   */
+  @ReactMethod
+  public void sendCommand(String command, Promise promise) {
+    if (command == null || command.trim().isEmpty()) {
+      promise.reject("E_HC06_COMMAND", "The device command must be a non-empty string.");
+      return;
+    }
+
+    BluetoothSocket target;
+    synchronized (connectionLock) {
+      target = socket;
+    }
+    if (target == null) {
+      promise.reject(
+          "E_HC06_NOT_CONNECTED", "Connect to the HC-06 before sending a command.");
+      return;
+    }
+
+    String payload = command.endsWith("\n") ? command : command + "\r\n";
+    try {
+      synchronized (commandLock) {
+        OutputStream output = target.getOutputStream();
+        output.write(payload.getBytes(StandardCharsets.UTF_8));
+        output.flush();
+      }
+      promise.resolve(true);
+    } catch (IOException | SecurityException error) {
+      promise.reject("E_HC06_COMMAND", "Could not send the command to the HC-06.", error);
+    }
   }
 
   @ReactMethod

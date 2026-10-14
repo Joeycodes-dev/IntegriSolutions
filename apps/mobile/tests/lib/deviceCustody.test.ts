@@ -13,6 +13,14 @@ import {
   DEFAULT_BREATHALYZER_CALIBRATION,
   type DeviceEvidencePayload
 } from '../../src/services/breathalyzer';
+// `deviceCustody` only type-imports its types, so it loads cleanly under the
+// jest-expo runtime. The backend's crypto-backed `hashData`/`getTestHashValidity`
+// cannot be imported here (the RN Babel transform emits `@babel/runtime` helpers
+// that do not resolve from the backend tree), so the authoritative hash/verify
+// contract for `serial@MAC` lives in the backend contract test; this file proves
+// the mobile side preserves the composite serial and that the shared row mapper
+// extracts the paired MAC.
+import { mapDeviceCustodyRow } from '../../../../backend/src/utilities/deviceCustody';
 
 jest.mock('../../src/services/auth', () => ({
   getAccessToken: jest.fn()
@@ -259,5 +267,140 @@ describe('syncPendingRecords device custody', () => {
 
     const sent = apiMock.syncRecords.mock.calls[0][0][0] as Record<string, unknown>;
     expect(JSON.stringify(sent)).not.toContain('device');
+  });
+});
+
+describe('Bluetooth Classic serial@MAC custody', () => {
+  const bluetoothClassicDevice: DeviceEvidencePayload = {
+    transport: 'bluetooth_classic',
+    serial: 'MQ3-0001@98:D3:31:FD:42:10',
+    calibrationVersion: 'mq3-default-v1',
+    calibrationCleanAirResistanceOhms: DEFAULT_BREATHALYZER_CALIBRATION.cleanAirResistanceOhms,
+    sessionPeakRaw: 812,
+    avgRaw: 640,
+    raw: 623,
+    capturedAt: '2026-09-21T10:15:00.000Z'
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    authMock.getAccessToken.mockResolvedValue('token');
+    repositoryMock.getPendingAttachments.mockResolvedValue([]);
+    apiMock.syncRecords.mockResolvedValue({ synced: [], failed: [], duplicates: [] });
+  });
+
+  it('hashes the composite serial@MAC into the custody payload', () => {
+    const payload = buildRecordPayload({ ...baseRecord, device: bluetoothClassicDevice });
+
+    // The full composite serial (serial + `@<MAC>`) is what gets hashed and
+    // uploaded, so the backend can verify it against the stored device_serial.
+    expect(payload.deviceSerial).toBe('MQ3-0001@98:D3:31:FD:42:10');
+    expect(
+      computeHash(buildRecordPayload({ ...baseRecord, device: bluetoothClassicDevice }))
+    ).toBe(computeHash(payload));
+    expect(computeHash(payload)).not.toBe(
+      computeHash(
+        buildRecordPayload({
+          ...baseRecord,
+          device: { ...bluetoothClassicDevice, serial: 'MQ3-0001@98:D3:31:FD:42:11' }
+        })
+      )
+    );
+  });
+
+  it('stores a composite serial@MAC and binds it into the stored hash', async () => {
+    await saveLocally({ ...baseRecord, device: bluetoothClassicDevice, officerId: 1 });
+
+    const record = repositoryMock.insertTest.mock.calls[0][0] as {
+      hash: string;
+      createdAt: string;
+      driverId: string;
+      deviceSerial: string | null;
+    };
+
+    expect(record.deviceSerial).toBe('MQ3-0001@98:D3:31:FD:42:10');
+
+    const expectedHash = computeHash(
+      buildRecordPayload({
+        ...baseRecord,
+        driverId: record.driverId,
+        createdAt: record.createdAt,
+        device: bluetoothClassicDevice
+      })
+    );
+    expect(record.hash).toBe(expectedHash);
+  });
+
+  it('forwards the composite serial@MAC in the synced camelCase payload', async () => {
+    repositoryMock.getPendingSync.mockResolvedValue([
+      {
+        id: 'bt-1',
+        officerId: 1,
+        officerName: 'Officer One',
+        badgeNumber: 'B001',
+        driverName: 'Driver A',
+        driverId: 'enc:DL**1:digest',
+        driverDob: '1990-01-01',
+        bacReading: 0.08,
+        result: 'fail',
+        location: JSON.stringify(location),
+        hash: 'hash-bt-1',
+        receiptNumber: 'BT-1',
+        createdAt: '2026-08-01T10:00:00Z',
+        syncStatus: 'pending_sync' as const,
+        syncedAt: null,
+        retryCount: 0,
+        photoUri: null,
+        originalTestId: null,
+        deviceTransport: 'bluetooth_classic',
+        deviceSerial: 'MQ3-0001@98:D3:31:FD:42:10',
+        deviceCalibrationVersion: 'mq3-default-v1',
+        deviceCalibrationR0: 7532,
+        deviceSessionPeakRaw: 812,
+        deviceAvgRaw: 640,
+        deviceRaw: 623,
+        deviceCapturedAt: '2026-09-21T10:15:00.000Z'
+      }
+    ]);
+
+    await syncPendingRecords(1);
+
+    expect(apiMock.syncRecords).toHaveBeenCalledTimes(1);
+    const sent = apiMock.syncRecords.mock.calls[0][0][0] as Record<string, unknown>;
+    expect(sent.deviceTransport).toBe('bluetooth_classic');
+    expect(sent.deviceSerial).toBe('MQ3-0001@98:D3:31:FD:42:10');
+  });
+
+  it('mapDeviceCustodyRow extracts the paired MAC from a composite serial', () => {
+    const custody = mapDeviceCustodyRow({
+      device_transport: 'bluetooth_classic',
+      device_serial: 'MQ3-0001@98:D3:31:FD:42:10',
+      device_calibration_version: 'mq3-default-v1',
+      device_calibration_r0: 7532,
+      device_session_peak_raw: 812,
+      device_avg_raw: 640,
+      device_raw: 623,
+      device_captured_at: '2026-09-21T10:15:00.000Z'
+    });
+
+    expect(custody?.deviceAddress).toBe('98:D3:31:FD:42:10');
+    // Consumers still see the exact stored composite serial.
+    expect(custody?.serial).toBe('MQ3-0001@98:D3:31:FD:42:10');
+  });
+
+  it('mapDeviceCustodyRow surfaces the MAC even from a serial-less capture', () => {
+    const custody = mapDeviceCustodyRow({
+      device_transport: 'bluetooth_classic',
+      device_serial: '@98:D3:31:FD:42:10',
+      device_calibration_version: 'mq3-default-v1',
+      device_calibration_r0: 7532,
+      device_session_peak_raw: 812,
+      device_avg_raw: 640,
+      device_raw: 623,
+      device_captured_at: '2026-09-21T10:15:00.000Z'
+    });
+
+    expect(custody?.deviceAddress).toBe('98:D3:31:FD:42:10');
+    expect(custody?.serial).toBe('@98:D3:31:FD:42:10');
   });
 });

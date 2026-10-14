@@ -44,7 +44,7 @@ export const styles = StyleSheet.create({
     backgroundColor: colors.primaryDark,
     paddingHorizontal: 22,
     paddingTop: 12,
-    paddingBottom: 20,
+    paddingBottom: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between'
@@ -66,13 +66,13 @@ export const styles = StyleSheet.create({
   },
   headerEyebrow: {
     color: 'rgba(255, 255, 255, 0.62)',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 1.4
+    letterSpacing: 1.2
   },
   headerTitle: {
     color: colors.background,
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: '800',
     marginTop: 2,
     letterSpacing: -0.2
@@ -83,129 +83,141 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center'
   },
-  deviceHero: {
+
+  // ---- Status hero (always visible under the header) ----
+  statusHero: {
     marginHorizontal: 16,
     marginTop: 12,
-    marginBottom: 12,
-    borderRadius: 22,
-    backgroundColor: colors.instrumentPanel,
+    marginBottom: 10,
+    borderRadius: 20,
+    backgroundColor: colors.background,
     borderWidth: 1,
-    padding: 18,
-    gap: 14
+    borderColor: colors.borderLight,
+    padding: 16,
+    gap: 10
   },
-  deviceHeroTop: {
+  statusHeroPillRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12
+    justifyContent: 'space-between',
+    gap: 10
   },
-  deviceHeroIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center'
+  statusHeroTitleBlock: {
+    flex: 1,
+    gap: 2
   },
-  deviceHeroText: {
-    flex: 1
-  },
-  deviceHeroTitle: {
-    color: colors.background,
-    fontSize: 16,
+  statusHeroTitle: {
+    color: colors.textPrimary,
+    fontSize: 17,
     fontWeight: '800'
   },
-  deviceHeroDetail: {
-    color: 'rgba(255, 255, 255, 0.7)',
+  statusHeroMeta: {
+    color: colors.textSecondary,
     fontSize: 12,
-    lineHeight: 17,
-    marginTop: 3
+    fontWeight: '600',
+    marginTop: 2
   },
-  deviceHeroBadge: {
+  statusHeroDetail: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18
+  },
+  statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexShrink: 0,
     gap: 6,
     borderRadius: 999,
-    paddingHorizontal: 9,
+    paddingHorizontal: 10,
     paddingVertical: 6
   },
   statusDot: {
-    width: 7,
-    height: 7,
+    width: 8,
+    height: 8,
     borderRadius: 4
   },
-  statusChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    paddingHorizontal: 9,
-    paddingVertical: 6
-  },
-  statusChipText: {
-    fontSize: 10,
+  statusPillText: {
+    fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.5
+    letterSpacing: 0.3
   },
-  statusChipWarning: {
-    backgroundColor: 'rgba(245, 158, 11, 0.14)'
+
+  // ---- Setup stepper ----
+  setupStepper: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    gap: 8
   },
-  statusChipSuccess: {
-    backgroundColor: 'rgba(34, 197, 94, 0.14)'
+  stepperCaption: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700'
   },
-  statusChipError: {
-    backgroundColor: 'rgba(220, 38, 38, 0.14)'
-  },
-  statusChipTextWarning: {
-    color: colors.warning
-  },
-  statusChipTextSuccess: {
+  stepperCaptionSuccess: {
     color: colors.successText
   },
-  statusChipTextError: {
-    color: colors.errorText
-  },
-  signalRailHero: {
-    height: 42,
+  stepperItems: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 4
+    gap: 8
   },
-  signalRailHeroEmpty: {
+  stepperItem: {
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'center'
+    gap: 6,
+    paddingVertical: 4,
+    minHeight: 44
   },
-  signalRailHeroEmptyText: {
-    color: 'rgba(255, 255, 255, 0.5)',
-    fontSize: 11,
+  stepperCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.borderLight
+  },
+  stepperCircleDone: {
+    backgroundColor: colors.success,
+    borderColor: colors.success
+  },
+  stepperCircleCurrent: {
+    borderColor: colors.accentBlue
+  },
+  stepperCircleAttention: {
+    backgroundColor: colors.error,
+    borderColor: colors.error
+  },
+  stepperCircleOptional: {
+    borderStyle: 'dashed',
+    borderColor: colors.borderHighlight
+  },
+  stepperDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: colors.accentBlue
+  },
+  stepperLabel: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center'
+  },
+  stepperLabelMuted: {
+    color: colors.textSecondary
+  },
+  stepperOptionalText: {
+    color: colors.neutralGray,
+    fontSize: 12,
     fontWeight: '600'
   },
-  signalBarHero: {
-    flex: 1,
-    minWidth: 3,
-    borderRadius: 999
+  stepperDetail: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17
   },
-  deviceHeroStats: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.12)',
-    paddingTop: 12,
-    gap: 10
-  },
-  deviceHeroStat: {
-    flex: 1
-  },
-  deviceHeroStatLabel: {
-    color: 'rgba(255, 255, 255, 0.52)',
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.8
-  },
-  deviceHeroStatValue: {
-    color: colors.background,
-    fontSize: 13,
-    fontWeight: '700',
-    marginTop: 4
-  },
+
+  // ---- Tabs ----
   tabBar: {
     flexDirection: 'row',
     borderTopWidth: 1,
@@ -215,12 +227,12 @@ export const styles = StyleSheet.create({
   },
   tabButton: {
     flex: 1,
-    minHeight: 60,
+    minHeight: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingTop: 8,
-    paddingBottom: 9,
+    gap: 3,
+    paddingTop: 6,
+    paddingBottom: 7,
     borderBottomWidth: 3,
     borderBottomColor: 'transparent'
   },
@@ -230,12 +242,13 @@ export const styles = StyleSheet.create({
   },
   tabLabel: {
     color: colors.textSecondary,
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700'
   },
   tabLabelActive: {
     color: colors.primaryDark
   },
+
   body: {
     flex: 1,
     backgroundColor: colors.pageBackground
@@ -245,6 +258,50 @@ export const styles = StyleSheet.create({
     gap: 16,
     paddingBottom: 32
   },
+
+  // ---- Inline banner ----
+  bannerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  inlineMessage: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 12,
+    gap: 8
+  },
+  inlineMessageSuccess: {
+    backgroundColor: colors.successBackground,
+    borderColor: colors.successBorder
+  },
+  inlineMessageError: {
+    backgroundColor: colors.errorBackground,
+    borderColor: colors.errorBorder
+  },
+  inlineMessageInfo: {
+    backgroundColor: colors.surfaceHighlight,
+    borderColor: colors.borderHighlight
+  },
+  inlineMessageText: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '600'
+  },
+  bannerDismiss: {
+    minHeight: 44,
+    alignItems: 'flex-end',
+    justifyContent: 'center'
+  },
+  bannerDismissText: {
+    color: colors.accentBlue,
+    fontSize: 12,
+    fontWeight: '800'
+  },
+
+  // ---- Section cards ----
   sectionCard: {
     backgroundColor: colors.background,
     borderRadius: 20,
@@ -260,7 +317,8 @@ export const styles = StyleSheet.create({
     gap: 10
   },
   sectionHeaderText: {
-    flex: 1
+    flex: 1,
+    minWidth: 0
   },
   sectionTitle: {
     color: colors.textPrimary,
@@ -273,72 +331,16 @@ export const styles = StyleSheet.create({
     lineHeight: 19,
     marginTop: 4
   },
-  connectionSummary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 12,
-    borderRadius: 16,
-    backgroundColor: colors.pageBackground,
-    borderWidth: 1,
-    borderColor: colors.borderLight
-  },
-  connectionIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: colors.primaryDark,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  connectionText: {
-    flex: 1
-  },
-  connectionTitle: {
+  subSectionTitle: {
     color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '800'
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 2
   },
-  connectionDetail: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 3
-  },
-  connectionMeta: {
-    color: colors.neutralGray,
-    fontSize: 12,
-    lineHeight: 17,
-    marginTop: 4
-  },
-  inlineMessage: {
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 12
-  },
-  inlineMessageSuccess: {
-    backgroundColor: colors.successBackground,
-    borderColor: colors.successBorder
-  },
-  inlineMessageError: {
-    backgroundColor: colors.errorBackground,
-    borderColor: colors.errorBorder
-  },
-  inlineMessageInfo: {
-    backgroundColor: colors.surfaceHighlight,
-    borderColor: colors.borderHighlight
-  },
-  inlineMessageText: {
-    color: colors.textPrimary,
-    fontSize: 13,
-    lineHeight: 19,
-    fontWeight: '600'
-  },
-  actionGrid: {
-    gap: 10
-  },
+
+  // ---- Buttons ----
   primaryButton: {
-    minHeight: 54,
+    minHeight: 52,
     borderRadius: 15,
     backgroundColor: colors.primaryDark,
     flexDirection: 'row',
@@ -349,12 +351,12 @@ export const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: colors.background,
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '800',
     textAlign: 'center'
   },
   secondaryButton: {
-    minHeight: 52,
+    minHeight: 50,
     borderRadius: 15,
     borderWidth: 1,
     borderColor: colors.borderHighlight,
@@ -367,32 +369,60 @@ export const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     color: colors.primaryDark,
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
     textAlign: 'center'
   },
   buttonDisabled: {
     opacity: 0.65
   },
-  loadingState: {
-    minHeight: 76,
+  actionGrid: {
+    gap: 10
+  },
+  textButton: {
+    minHeight: 44,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8
+    gap: 6
   },
-  loadingText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '600'
+  textButtonDanger: {
+    color: colors.errorText,
+    fontSize: 12,
+    fontWeight: '800'
   },
-  iconActionButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 13,
+  textButtonLabel: {
+    color: colors.primaryDark,
+    fontSize: 14,
+    fontWeight: '800',
+    textAlign: 'center'
+  },
+
+  // ---- Connected row ----
+  connectedRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surfaceHighlight
+    gap: 10,
+    padding: 12,
+    borderRadius: 16,
+    backgroundColor: colors.successBackground,
+    borderWidth: 1,
+    borderColor: colors.successBorder
   },
+  connectedDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.success
+  },
+  connectedText: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700'
+  },
+
+  // ---- Device rows ----
   deviceRow: {
     minHeight: 76,
     flexDirection: 'row',
@@ -416,29 +446,20 @@ export const styles = StyleSheet.create({
     backgroundColor: colors.primaryDark
   },
   deviceRowText: {
-    flex: 1
+    flex: 1,
+    minWidth: 0
   },
   deviceRowTitle: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6
+    gap: 6,
+    flexWrap: 'wrap'
   },
   deviceName: {
     color: colors.textPrimary,
     fontSize: 14,
     fontWeight: '800',
     flexShrink: 1
-  },
-  savedBadge: {
-    color: colors.successText,
-    backgroundColor: colors.successBackground,
-    borderRadius: 999,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-    overflow: 'hidden'
   },
   deviceAddress: {
     color: colors.textSecondary,
@@ -448,14 +469,14 @@ export const styles = StyleSheet.create({
   },
   deviceMeta: {
     color: colors.neutralGray,
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 12,
+    lineHeight: 17,
     marginTop: 3
   },
   rowAction: {
     minHeight: 48,
     minWidth: 88,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     borderRadius: 12,
     backgroundColor: colors.surfaceHighlight,
     flexDirection: 'row',
@@ -468,9 +489,34 @@ export const styles = StyleSheet.create({
   },
   rowActionText: {
     color: colors.primaryDark,
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800'
   },
+  deviceTag: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1
+  },
+  deviceTagConnected: {
+    backgroundColor: colors.successBackground,
+    borderColor: colors.successBorder
+  },
+  deviceTagSaved: {
+    backgroundColor: colors.surfaceHighlight,
+    borderColor: colors.borderHighlight
+  },
+  deviceTagText: {
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  deviceTagConnectedText: {
+    color: colors.successText
+  },
+  deviceTagSavedText: {
+    color: colors.textSecondary
+  },
+
   emptyState: {
     minHeight: 124,
     alignItems: 'center',
@@ -492,14 +538,28 @@ export const styles = StyleSheet.create({
     lineHeight: 19,
     textAlign: 'center'
   },
+
+  // ---- Numbered steps (plain text) ----
+  numberedStep: {
+    gap: 4
+  },
+  numberedStepText: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 20
+  },
+
+  // ---- Toggle rows ----
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingVertical: 4
+    paddingVertical: 4,
+    minHeight: 48
   },
   toggleText: {
-    flex: 1
+    flex: 1,
+    minWidth: 0
   },
   toggleLabel: {
     color: colors.textPrimary,
@@ -512,6 +572,8 @@ export const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 3
   },
+
+  // ---- Notes ----
   noteCard: {
     flexDirection: 'row',
     gap: 10,
@@ -527,43 +589,163 @@ export const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18
   },
-  stepList: {
-    gap: 14
-  },
-  stepRow: {
-    minHeight: 56,
+  warningNote: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12
+    gap: 10,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: colors.alertHighBackground,
+    borderWidth: 1,
+    borderColor: colors.alertHighBorder
   },
-  stepNumber: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
+  warningNoteText: {
+    flex: 1,
+    color: colors.alertHighAccent,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600'
+  },
+  footnote: {
+    paddingHorizontal: 4
+  },
+  footnoteText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17
+  },
+
+  // ---- Disclosure ----
+  disclosureHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primaryDark
+    justifyContent: 'space-between',
+    gap: 10,
+    minHeight: 44
   },
-  stepNumberText: {
-    color: colors.background,
-    fontSize: 14,
+  disclosureTitle: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 15,
     fontWeight: '800'
   },
-  stepText: {
-    flex: 1,
-    paddingTop: 1
+  disclosureInlineToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    minHeight: 44,
+    paddingHorizontal: 4
   },
-  stepTitle: {
+  disclosureContent: {
+    gap: 14,
+    paddingTop: 4
+  },
+
+  // ---- Chips ----
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  chip: {
+    flexGrow: 1,
+    flexBasis: '30%',
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 10,
+    gap: 3
+  },
+  chipSuccess: {
+    backgroundColor: colors.successBackground,
+    borderColor: colors.successBorder
+  },
+  chipWarning: {
+    backgroundColor: colors.alertHighBackground,
+    borderColor: colors.alertHighBorder
+  },
+  chipDanger: {
+    backgroundColor: colors.errorBackground,
+    borderColor: colors.errorBorder
+  },
+  chipNeutral: {
+    backgroundColor: colors.surfaceHighlight,
+    borderColor: colors.borderHighlight
+  },
+  chipLabel: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  chipValue: {
     color: colors.textPrimary,
     fontSize: 14,
     fontWeight: '800'
   },
-  stepDetail: {
+
+  // ---- Read-only summary rows ----
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    minHeight: 36,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+    paddingVertical: 6
+  },
+  summaryLabel: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+    flexShrink: 1
+  },
+  summaryValue: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '800'
+  },
+
+  // ---- Input fields ----
+  inputGrid: {
+    gap: 12
+  },
+  fieldBlock: {
+    gap: 4
+  },
+  fieldLabel: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  fieldHint: {
     color: colors.textSecondary,
     fontSize: 12,
-    lineHeight: 18,
-    marginTop: 3
+    lineHeight: 17
   },
+  input: {
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: colors.pageBackground,
+    paddingHorizontal: 12,
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '600'
+  },
+  inputLabel: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 6
+  },
+  errorText: {
+    color: colors.errorText,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600'
+  },
+
+  // ---- Calibration hero ----
   calibrationHero: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -575,56 +757,226 @@ export const styles = StyleSheet.create({
   },
   calibrationHeroLabel: {
     color: 'rgba(255, 255, 255, 0.58)',
-    fontSize: 9,
+    fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.8
+    letterSpacing: 0.4
   },
   calibrationHeroValue: {
     color: colors.background,
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
     marginTop: 4
+  },
+  calibrationHeroMeta: {
+    color: 'rgba(255, 255, 255, 0.68)',
+    fontSize: 12,
+    marginTop: 2
   },
   calibrationVersionPill: {
     maxWidth: 170,
     borderRadius: 999,
-    paddingHorizontal: 9,
+    paddingHorizontal: 10,
     paddingVertical: 6,
     backgroundColor: 'rgba(255, 255, 255, 0.12)'
   },
   calibrationVersionText: {
     color: colors.background,
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
     textAlign: 'right'
   },
+
+  // ---- Raw-value target chips ----
+  targetGrid: {
+    flexDirection: 'row',
+    gap: 8
+  },
+  targetChip: {
+    flex: 1,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceHighlight,
+    padding: 10
+  },
+  targetLabel: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  targetValue: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 3
+  },
+  previewOutput: {
+    backgroundColor: colors.primaryDark,
+    borderRadius: 14,
+    padding: 12,
+    gap: 3
+  },
+  previewOutputLabel: {
+    color: 'rgba(255, 255, 255, 0.62)',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  previewOutputValue: {
+    color: colors.background,
+    fontSize: 20,
+    fontWeight: '800'
+  },
+  previewOutputDetail: {
+    color: 'rgba(255, 255, 255, 0.72)',
+    fontSize: 12
+  },
+  previewField: {
+    gap: 6
+  },
+
+  // ---- Live stat blocks ----
+  statRow: {
+    flexDirection: 'row',
+    gap: 10
+  },
+  statBlock: {
+    flex: 1,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: colors.pageBackground,
+    padding: 12,
+    gap: 4
+  },
+  statBlockSuccess: {
+    backgroundColor: colors.successBackground,
+    borderColor: colors.successBorder
+  },
+  statBlockWarning: {
+    backgroundColor: colors.alertHighBackground,
+    borderColor: colors.alertHighBorder
+  },
+  statBlockLabel: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  statBlockValue: {
+    color: colors.textPrimary,
+    fontSize: 22,
+    fontWeight: '800'
+  },
+  statBlockValueWarning: {
+    color: colors.alertHighAccent
+  },
+
+  // ---- Trend chip ----
+  trendChip: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1
+  },
+  trendChipUp: {
+    backgroundColor: colors.alertLowBackground,
+    borderColor: colors.alertLowBorder
+  },
+  trendChipNeutral: {
+    backgroundColor: colors.surfaceHighlight,
+    borderColor: colors.borderHighlight
+  },
+  trendChipText: {
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  trendChipTextUp: {
+    color: colors.accentBlue
+  },
+  trendChipTextNeutral: {
+    color: colors.textSecondary
+  },
+
+  // ---- Blow-state guidance box ----
+  guidanceBox: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 14,
+    gap: 4
+  },
+  guidanceBoxSuccess: {
+    backgroundColor: colors.successBackground,
+    borderColor: colors.successBorder
+  },
+  guidanceBoxWarning: {
+    backgroundColor: colors.alertHighBackground,
+    borderColor: colors.alertHighBorder
+  },
+  guidanceBoxDanger: {
+    backgroundColor: colors.errorBackground,
+    borderColor: colors.errorBorder
+  },
+  guidanceBoxNeutral: {
+    backgroundColor: colors.surfaceHighlight,
+    borderColor: colors.borderHighlight
+  },
+  guidanceTitle: {
+    fontSize: 15,
+    fontWeight: '800'
+  },
+  guidanceTitleSuccess: {
+    color: colors.successText
+  },
+  guidanceTitleWarning: {
+    color: colors.alertHighAccent
+  },
+  guidanceTitleDanger: {
+    color: colors.errorText
+  },
+  guidanceTitleNeutral: {
+    color: colors.textPrimary
+  },
+  guidanceDetail: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19
+  },
+
+  chartCaption: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 2
+  },
+
+  // ---- Readiness checks ----
   readinessList: {
     gap: 8
   },
   readinessRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    minHeight: 32
+    gap: 10,
+    minHeight: 44
   },
   readinessText: {
-    flex: 1
+    flex: 1,
+    minWidth: 0
   },
   readinessLabel: {
     color: colors.textPrimary,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700'
   },
   readinessDetail: {
     color: colors.textSecondary,
     fontSize: 12,
-    lineHeight: 18,
+    lineHeight: 17,
     marginTop: 2
   },
   readinessStatus: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5
+    fontSize: 12,
+    fontWeight: '800'
   },
   readinessStatusOk: {
     color: colors.successText
@@ -632,16 +984,18 @@ export const styles = StyleSheet.create({
   readinessStatusWaiting: {
     color: colors.warning
   },
-  helperText: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    lineHeight: 16
+  readinessSummary: {
+    fontSize: 14,
+    fontWeight: '800'
   },
-  profileGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8
+  readinessSummaryOk: {
+    color: colors.successText
   },
+  readinessSummaryWarn: {
+    color: colors.textSecondary
+  },
+
+  // ---- Metric grid ----
   metricGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -650,12 +1004,16 @@ export const styles = StyleSheet.create({
   metricTile: {
     flexGrow: 1,
     flexBasis: '46%',
-    minHeight: 74,
+    minHeight: 78,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.borderLight,
     backgroundColor: colors.pageBackground,
-    padding: 10
+    padding: 12,
+    gap: 4
+  },
+  metricTileFull: {
+    flexBasis: '100%'
   },
   metricTileSuccess: {
     borderColor: colors.successBorder,
@@ -671,190 +1029,21 @@ export const styles = StyleSheet.create({
   },
   metricLabel: {
     color: colors.textSecondary,
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.6
+    fontSize: 12,
+    fontWeight: '700'
   },
   metricValue: {
     color: colors.textPrimary,
-    fontSize: 17,
-    fontWeight: '800',
-    marginTop: 5
+    fontSize: 18,
+    fontWeight: '800'
   },
   metricDetail: {
     color: colors.textSecondary,
-    fontSize: 10,
-    marginTop: 3
-  },
-  inputGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8
-  },
-  inputField: {
-    flexGrow: 1,
-    flexBasis: '46%'
-  },
-  inputLabel: {
-    color: colors.textSecondary,
     fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-    marginBottom: 6
-  },
-  input: {
-    minHeight: 48,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    backgroundColor: colors.pageBackground,
-    paddingHorizontal: 12,
-    color: colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '600'
-  },
-  errorText: {
-    color: colors.errorText,
-    fontSize: 11,
-    lineHeight: 16,
-    fontWeight: '600'
-  },
-  previewRow: {
-    flexDirection: 'row',
-    gap: 10,
-    alignItems: 'flex-end'
-  },
-  previewField: {
-    flex: 1
-  },
-  previewOutput: {
-    flex: 1,
-    minHeight: 74,
-    borderRadius: 14,
-    backgroundColor: colors.primaryDark,
-    padding: 10,
-    justifyContent: 'center'
-  },
-  previewOutputLabel: {
-    color: 'rgba(255, 255, 255, 0.58)',
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.6
-  },
-  previewOutputValue: {
-    color: colors.background,
-    fontSize: 19,
-    fontWeight: '800',
-    marginTop: 3
-  },
-  previewOutputDetail: {
-    color: 'rgba(255, 255, 255, 0.68)',
-    fontSize: 10,
     marginTop: 2
   },
-  targetGrid: {
-    flexDirection: 'row',
-    gap: 8
-  },
-  targetChip: {
-    flex: 1,
-    borderRadius: 12,
-    backgroundColor: colors.surfaceHighlight,
-    padding: 9
-  },
-  targetLabel: {
-    color: colors.textPrimary,
-    fontSize: 10,
-    fontWeight: '800'
-  },
-  targetValue: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    marginTop: 3
-  },
-  livePreviewRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    paddingTop: 4
-  },
-  currentSampleValue: {
-    color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
-    marginTop: 3
-  },
-  historyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    minHeight: 48
-  },
-  historyIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
-    backgroundColor: colors.surfaceHighlight,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  historyText: {
-    flex: 1
-  },
-  historyTitle: {
-    color: colors.textPrimary,
-    fontSize: 12,
-    fontWeight: '800'
-  },
-  historyDetail: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    marginTop: 2
-  },
-  historySource: {
-    color: colors.neutralGray,
-    fontSize: 10,
-    fontWeight: '700',
-    textAlign: 'right'
-  },
-  textButton: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6
-  },
-  textButtonDanger: {
-    color: colors.errorText,
-    fontSize: 12,
-    fontWeight: '800'
-  },
-  statusChipRow: {
-    flexDirection: 'row',
-    gap: 8
-  },
-  signalRail: {
-    height: 84,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 4,
-    borderRadius: 14,
-    backgroundColor: colors.pageBackground,
-    padding: 10
-  },
-  signalRailEmpty: {
-    flex: 1,
-    textAlign: 'center',
-    color: colors.neutralGray,
-    fontSize: 11,
-    fontWeight: '600'
-  },
-  signalBar: {
-    flex: 1,
-    minWidth: 3,
-    borderRadius: 999
-  },
+
+  // ---- Diagnostic result ----
   diagnosticResult: {
     flexDirection: 'row',
     gap: 10,
@@ -872,7 +1061,8 @@ export const styles = StyleSheet.create({
     borderColor: colors.errorBorder
   },
   diagnosticResultText: {
-    flex: 1
+    flex: 1,
+    minWidth: 0
   },
   diagnosticResultTitle: {
     color: colors.textPrimary,
@@ -881,10 +1071,48 @@ export const styles = StyleSheet.create({
   },
   diagnosticResultDetail: {
     color: colors.textSecondary,
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 12,
+    lineHeight: 17,
     marginTop: 2
   },
+
+  // ---- History rows ----
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 48
+  },
+  historyIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    backgroundColor: colors.surfaceHighlight,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  historyText: {
+    flex: 1,
+    minWidth: 0
+  },
+  historyTitle: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  historyDetail: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2
+  },
+  historySource: {
+    color: colors.neutralGray,
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'right'
+  },
+
+  // ---- Policy rows ----
   policyRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -901,39 +1129,23 @@ export const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800'
   },
-  linkText: {
-    color: colors.accentBlue,
-    fontSize: 12,
-    fontWeight: '800'
-  },
+
+  // ---- Footer ----
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
     padding: 14,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
-    backgroundColor: colors.background
+    borderRadius: 18,
+    backgroundColor: colors.surfaceHighlight,
+    borderWidth: 1,
+    borderColor: colors.borderHighlight
   },
   footerText: {
     flex: 1,
     color: colors.textSecondary,
-    fontSize: 10,
-    lineHeight: 14
-  },
-  footerButton: {
-    minHeight: 48,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    backgroundColor: colors.primaryDark,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  footerButtonText: {
-    color: colors.background,
     fontSize: 12,
-    fontWeight: '800'
+    lineHeight: 17
   }
 });
-

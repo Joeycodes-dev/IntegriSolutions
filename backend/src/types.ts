@@ -26,6 +26,8 @@ export interface TestDeviceCustody {
   avgRaw: number;
   raw: number;
   capturedAt: string;
+  /** Paired Bluetooth MAC split out of a composite `serial@MAC` value, when present. */
+  deviceAddress?: string | null;
 }
 
 export interface TestRecord {

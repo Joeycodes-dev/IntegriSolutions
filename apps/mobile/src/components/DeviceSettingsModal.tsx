@@ -24,6 +24,7 @@ import type {
 import {
   DEFAULT_BREATHALYZER_CALIBRATION,
   breathalyzerSession,
+  cleanAirRaw,
   formatBacGdl
 } from '../services/breathalyzer';
 import {
@@ -56,31 +57,82 @@ import type { RuntimeConfig, UserProfile } from '../types';
 import {
   buildCaptureReadiness,
   buildDeviceDiagnosticReport,
+  buildSetupSteps,
+  calibrationBlockReason,
   calibrationHistoryLabel,
   calibrationPreview,
+  blowStateGuidance,
   createManualCalibration,
   formatRawValue,
   formatRelativeTimestamp,
   formatResistance,
   formatSampleAge,
   formatVoltage,
+  hasSensorFault,
+  isBaselineSet,
+  sensorFaultMessage,
+  statusFromSnapshot,
   summarizeDeviceHistory,
   targetRawForBac,
   toCalibrationDraft,
+  warmupSecondsRemaining,
   type CalibrationDraft,
-  type DeviceHistorySummary
+  type ConsoleTab,
+  type DeviceHistorySummary,
+  type DeviceStatusTone,
+  type SetupStep
 } from '../lib/deviceSettings';
+import { appendSignalSample, signalTrend, type SignalSample } from '../lib/signalChart';
 
+import { LiveSignalChart } from './LiveSignalChart';
 import { styles } from './DeviceSettingsModal.styles';
 import { colors } from '../styles/colors';
 
-const SIGNAL_SAMPLE_LIMIT = 28;
 const SIMULATION_ENABLED =
   __DEV__ || process.env.EXPO_PUBLIC_BREATHALYZER_SIMULATION === '1';
 const DIAGNOSTIC_WINDOW_MS = 3_000;
 const CALIBRATION_PREVIEW_TARGETS = [0.02, 0.05, 0.08] as const;
 
-export type DeviceSettingsTab = 'device' | 'connect' | 'calibration' | 'activity';
+const STATUS_TONE_STYLES: Record<
+  DeviceStatusTone,
+  { color: string; background: string }
+> = {
+  success: { color: colors.success, background: 'rgba(34, 197, 94, 0.16)' },
+  warning: { color: colors.warning, background: 'rgba(245, 158, 11, 0.16)' },
+  danger: { color: colors.error, background: 'rgba(220, 38, 38, 0.14)' },
+  neutral: { color: colors.neutralGray, background: 'rgba(155, 165, 183, 0.16)' }
+};
+
+/**
+ * The upgraded HC-06 firmware accepts `CAL <ohms>` so the device converts raw
+ * values with the same clean-air baseline the app persists. Older one-way
+ * firmware ignores it, so the write is fire-and-forget.
+ */
+function syncCalibrationToFirmware(cleanAirResistanceOhms: number): void {
+  const session = breathalyzerSession as Partial<{
+    sendCommand?: (command: string) => void;
+  }>;
+  void session.sendCommand?.(`CAL ${Math.round(cleanAirResistanceOhms)}`);
+}
+
+/**
+ * The paired-device scanner takes an options bag so renamed HC-06 modules can be
+ * listed. Bridged through a loose signature so this console builds against the
+ * current service typing.
+ */
+type PairedDeviceScanOptions = { includeAllClassic?: boolean };
+
+const scanPairedHc06Devices = async (
+  options: PairedDeviceScanOptions,
+): Promise<PairedBluetoothDevice[]> => {
+  const scan = getPairedHc06Devices as unknown as (
+    runtime: null | undefined,
+    options?: PairedDeviceScanOptions,
+  ) => Promise<PairedBluetoothDevice[]>;
+  return scan(undefined, options);
+};
+
+export type DeviceSettingsTab = ConsoleTab;
 
 type InlineMessage = {
   type: 'success' | 'error' | 'info';
@@ -116,47 +168,24 @@ const TABS: Array<{
   label: string;
   icon: keyof typeof Feather.glyphMap;
 }> = [
-  { key: 'device', label: 'Device', icon: 'bluetooth' },
-  { key: 'connect', label: 'Connect', icon: 'radio' },
-  { key: 'calibration', label: 'Calibrate', icon: 'sliders' },
-  { key: 'activity', label: 'Activity', icon: 'activity' }
+  { key: 'connect', label: 'Connect', icon: 'bluetooth' },
+  { key: 'calibrate', label: 'Calibrate', icon: 'sliders' },
+  { key: 'live', label: 'Live', icon: 'activity' }
 ];
 
-function statusFromSnapshot(snapshot: BreathalyzerSnapshot): {
+function statusVisual(snapshot: BreathalyzerSnapshot): {
   label: string;
   detail: string;
   color: string;
   background: string;
 } {
-  if (snapshot.connection === 'connecting') {
-    return {
-      label: 'Connecting',
-      detail: 'Opening the Bluetooth serial stream…',
-      color: colors.warning,
-      background: 'rgba(245, 158, 11, 0.16)'
-    };
-  }
-  if (snapshot.connection === 'connected') {
-    return {
-      label: snapshot.warm ? 'Warming' : 'Live',
-      detail: snapshot.transportLabel ?? 'Breathalyzer connected',
-      color: colors.success,
-      background: 'rgba(34, 197, 94, 0.16)'
-    };
-  }
-  if (snapshot.connection === 'error') {
-    return {
-      label: 'Attention',
-      detail: snapshot.error ?? 'The device connection needs attention.',
-      color: colors.error,
-      background: 'rgba(220, 38, 38, 0.14)'
-    };
-  }
+  const status = statusFromSnapshot(snapshot);
+  const toneStyle = STATUS_TONE_STYLES[status.tone];
   return {
-    label: 'Offline',
-    detail: 'No breathalyzer is connected.',
-    color: colors.neutralGray,
-    background: 'rgba(155, 165, 183, 0.16)'
+    label: status.label,
+    detail: status.detail,
+    color: toneStyle.color,
+    background: toneStyle.background
   };
 }
 
@@ -164,12 +193,14 @@ function MetricTile({
   label,
   value,
   detail,
-  tone = 'neutral'
+  tone = 'neutral',
+  fullWidth = false
 }: {
   label: string;
   value: string;
   detail?: string;
   tone?: 'neutral' | 'success' | 'warning' | 'error';
+  fullWidth?: boolean;
 }) {
   const toneStyle =
     tone === 'success'
@@ -181,7 +212,9 @@ function MetricTile({
       : null;
 
   return (
-    <View style={[styles.metricTile, toneStyle]}>
+    <View
+      style={[styles.metricTile, toneStyle, fullWidth ? styles.metricTileFull : null]}
+    >
       <Text style={styles.metricLabel}>{label}</Text>
       <Text style={styles.metricValue}>{value}</Text>
       {detail ? <Text style={styles.metricDetail}>{detail}</Text> : null}
@@ -244,16 +277,109 @@ function ToggleRow({
   );
 }
 
+const STEP_STATE_WORDS: Record<SetupStep['state'], string> = {
+  done: 'done',
+  current: 'in progress',
+  waiting: 'waiting',
+  attention: 'needs attention',
+  optional: 'optional'
+};
+
+function StepperItem({ step, onPress }: { step: SetupStep; onPress: () => void }) {
+  const state = step.state;
+  const circleStyle =
+    state === 'done'
+      ? styles.stepperCircleDone
+      : state === 'current'
+        ? styles.stepperCircleCurrent
+        : state === 'attention'
+          ? styles.stepperCircleAttention
+          : state === 'optional'
+            ? styles.stepperCircleOptional
+            : null;
+  const accentColor =
+    state === 'done'
+      ? colors.success
+      : state === 'attention'
+        ? colors.error
+        : state === 'current'
+          ? colors.accentBlue
+          : colors.neutralGray;
+  const labelActive = state === 'done' || state === 'current' || state === 'attention';
+
+  return (
+    <Pressable
+      style={styles.stepperItem}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${step.label}: ${STEP_STATE_WORDS[state]}. ${step.detail}`}
+    >
+      <View style={[styles.stepperCircle, circleStyle]}>
+        {state === 'done' ? (
+          <Feather name="check" size={14} color={colors.background} />
+        ) : state === 'attention' ? (
+          <Feather name="alert-circle" size={14} color={colors.background} />
+        ) : state === 'current' ? (
+          <View style={styles.stepperDot} />
+        ) : null}
+      </View>
+      <Text style={[styles.stepperLabel, !labelActive && styles.stepperLabelMuted]}>
+        {step.label}
+      </Text>
+      {state === 'optional' ? (
+        <Text style={styles.stepperOptionalText}>Optional</Text>
+      ) : null}
+    </Pressable>
+  );
+}
+
+function Disclosure({
+  title,
+  summary,
+  expanded,
+  onToggle,
+  children
+}: {
+  title: string;
+  summary?: string;
+  expanded: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.sectionCard}>
+      <Pressable
+        style={styles.disclosureHeader}
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        accessibilityLabel={title}
+      >
+        <View style={styles.sectionHeaderText}>
+          <Text style={styles.disclosureTitle}>{title}</Text>
+          {summary ? <Text style={styles.sectionDescription}>{summary}</Text> : null}
+        </View>
+        <Feather
+          name={expanded ? 'chevron-up' : 'chevron-down'}
+          size={18}
+          color={colors.primaryDark}
+        />
+      </Pressable>
+      {expanded ? <View style={styles.disclosureContent}>{children}</View> : null}
+    </View>
+  );
+}
+
 export function DeviceSettingsModal({
   visible,
-  initialTab = 'device',
+  initialTab,
   onClose,
   snapshot,
   runtimeConfig,
   profile,
   lockDeviceMutations = false
 }: DeviceSettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<DeviceSettingsTab>(initialTab);
+  const [activeTab, setActiveTab] = useState<DeviceSettingsTab>(initialTab ?? 'connect');
   const [preferences, setPreferences] = useState<BreathalyzerDevicePreferences>(
     DEFAULT_BREATHALYZER_DEVICE_PREFERENCES,
   );
@@ -271,17 +397,20 @@ export function DeviceSettingsModal({
   );
   const [calibrationError, setCalibrationError] = useState<string | null>(null);
   const [showAdvancedCalibration, setShowAdvancedCalibration] = useState(false);
+  // Which optional sections are open. Keys match the Disclosure titles.
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
   const [calibrationHistory, setCalibrationHistory] = useState<CalibrationHistoryEntry[]>([]);
   const [historySummary, setHistorySummary] = useState<DeviceHistorySummary>(() =>
     summarizeDeviceHistory([]),
   );
   const [previewRawText, setPreviewRawText] = useState('');
-  const [signalSamples, setSignalSamples] = useState<number[]>([]);
+  const [signalSamples, setSignalSamples] = useState<SignalSample[]>([]);
+  const [showAllPairedClassic, setShowAllPairedClassic] = useState(false);
   const autoConnectAttemptedRef = useRef(false);
   const deviceListRequestRef = useRef(0);
   const initialLoadRequestRef = useRef(0);
 
-  const status = useMemo(() => statusFromSnapshot(snapshot), [snapshot]);
+  const status = useMemo(() => statusVisual(snapshot), [snapshot]);
   const readiness = useMemo(() => buildCaptureReadiness(snapshot), [snapshot]);
   const preview = useMemo(
     () => calibrationPreview(snapshot.avg ?? snapshot.sessionPeak, snapshot.calibration),
@@ -297,6 +426,10 @@ export function DeviceSettingsModal({
       ? snapshot.transportLabel ?? preferences.preferredDeviceName ?? 'Breathalyzer device'
       : preferences.preferredDeviceName ?? 'No device connected';
   const deviceConnectionLocked = lockDeviceMutations && snapshot.connection === 'connected';
+
+  const isSectionOpen = (key: string) => openSections[key] === true;
+  const toggleSection = (key: string) =>
+    setOpenSections((current) => ({ ...current, [key]: !current[key] }));
 
   const setMessage = (type: InlineMessage['type'], text: string) => {
     setInlineMessage({ type, text });
@@ -367,7 +500,7 @@ export function DeviceSettingsModal({
       });
 
       if (!options.quiet) {
-        setActiveTab('device');
+        setActiveTab('live');
         setMessage('success', `${device.name} is connected and streaming.`);
       }
     } catch (error) {
@@ -393,7 +526,9 @@ export function DeviceSettingsModal({
     setIsLoadingDevices(true);
     setInlineMessage(null);
     try {
-      const devices = await getPairedHc06Devices();
+      const devices = await scanPairedHc06Devices({
+        includeAllClassic: showAllPairedClassic
+      });
       if (requestId !== deviceListRequestRef.current) return;
       setPairedDevices(devices);
 
@@ -449,6 +584,13 @@ export function DeviceSettingsModal({
     } else if (!value) {
       setMessage('info', 'Auto-connect is off. The saved device remains available for manual connection.');
     }
+  };
+
+  const handleToggleShowAllPairedClassic = (value: boolean) => {
+    setShowAllPairedClassic(value);
+    // Renamed modules only appear in the wider scan, so refresh immediately
+    // instead of waiting for the officer to tap "Scan paired devices".
+    void refreshPairedDevices(undefined, { autoConnect: false });
   };
 
   const handleForgetPreferredDevice = () => {
@@ -553,6 +695,7 @@ export function DeviceSettingsModal({
       previousCleanAirResistanceOhms: previous.cleanAirResistanceOhms,
       rawSample: snapshot.avg
     });
+    syncCalibrationToFirmware(next.cleanAirResistanceOhms);
     setCalibrationHistory(history);
     setCalibrationDraft(toCalibrationDraft(next));
     await logAuditEvent({
@@ -696,6 +839,10 @@ export function DeviceSettingsModal({
   };
 
   const handleConnectSimulator = async () => {
+    if (lockDeviceMutations) {
+      setMessage('info', 'Finish or cancel the current test before connecting.');
+      return;
+    }
     if (busyDeviceAddress || isDisconnecting || snapshot.connection === 'connecting') return;
     setInlineMessage(null);
     try {
@@ -813,7 +960,12 @@ export function DeviceSettingsModal({
 
     const requestId = ++initialLoadRequestRef.current;
     autoConnectAttemptedRef.current = false;
-    setActiveTab(initialTab);
+    setActiveTab(
+      initialTab ??
+        (snapshot.connection === 'connected' || snapshot.connection === 'connecting'
+          ? 'live'
+          : 'connect'),
+    );
     setInlineMessage(null);
     setDiagnosticResult(null);
     setPreviewCaptureResult(null);
@@ -857,360 +1009,242 @@ export function DeviceSettingsModal({
   }, [visible]);
 
   useEffect(() => {
-    if (snapshot.raw === null) {
+    if (snapshot.readings === 0 || snapshot.avg === null) {
       setSignalSamples([]);
       return;
     }
-    setSignalSamples((current) => [...current.slice(-(SIGNAL_SAMPLE_LIMIT - 1)), snapshot.raw as number]);
-  }, [snapshot.raw]);
+    const value = snapshot.avg;
+    setSignalSamples((current) =>
+      appendSignalSample(current, { value, over: snapshot.over, at: Date.now() }),
+    );
+  }, [snapshot.readings]);
 
   useEffect(() => {
     setCalibrationDraft(toCalibrationDraft(snapshot.calibration));
   }, [snapshot.calibration]);
-
-  const pairedDeviceRows =
+const pairedDeviceRows =
     Platform.OS !== 'android' ? (
       <View style={styles.emptyState}>
         <Feather name="smartphone" size={24} color={colors.neutralGray} />
-        <Text style={styles.emptyStateTitle}>Android-only hardware connection</Text>
+        <Text style={styles.emptyStateTitle}>Bluetooth runs in the Android app</Text>
         <Text style={styles.emptyStateText}>
-          The HC-06 uses Bluetooth Classic SPP in the Android build. Use the simulated MQ-3 for non-Android rehearsal.
+          Use test mode below to rehearse this console on this device.
         </Text>
       </View>
-    ) : pairedDevices.length ? (
-    pairedDevices.map((device) => {
-      const isPreferred = preferences.preferredDeviceAddress === device.address;
-      const isBusy = busyDeviceAddress === device.address;
-      return (
-        <View key={device.address} style={styles.deviceRow}>
-          <View style={[styles.deviceIcon, isPreferred && styles.deviceIconPreferred]}>
-            <Feather name="bluetooth" size={18} color={isPreferred ? colors.background : colors.primaryDark} />
-          </View>
-          <View style={styles.deviceRowText}>
-            <View style={styles.deviceRowTitle}>
-              <Text style={styles.deviceName}>{device.name}</Text>
-              {isPreferred ? <Text style={styles.savedBadge}>SAVED</Text> : null}
-            </View>
-            <Text style={styles.deviceAddress}>{device.address}</Text>
-            <Text style={styles.deviceMeta}>
-              {device.type === 'CLASSIC' ? 'Bluetooth Classic' : device.type} · {device.bonded ? 'Paired' : 'Not paired'}
-            </Text>
-          </View>
-          <Pressable
-            style={[
-              styles.rowAction,
-              (isBusy || deviceConnectionLocked) && styles.rowActionDisabled,
-            ]}
-            onPress={() => void connectDevice(device)}
-            disabled={Boolean(busyDeviceAddress) || isDisconnecting || deviceConnectionLocked}
-            accessibilityRole="button"
-            accessibilityLabel={
-              deviceConnectionLocked
-                ? `Device changes locked during the current test`
-                : `Connect ${device.name}`
-            }
-          >
-            {isBusy ? (
-              <ActivityIndicator size="small" color={colors.primaryDark} />
-            ) : (
-              <>
-                <Feather name="lock" size={14} color={colors.primaryDark} />
-                <Text style={styles.rowActionText}>
-                  {deviceConnectionLocked ? 'Locked' : isPreferred ? 'Reconnect' : 'Connect'}
-                </Text>
-              </>
-            )}
-          </Pressable>
-        </View>
-      );
-    })
-  ) : (
-    <View style={styles.emptyState}>
-      <Feather name="bluetooth" size={24} color={colors.neutralGray} />
-      <Text style={styles.emptyStateTitle}>No paired HC-06 found</Text>
-      <Text style={styles.emptyStateText}>
-        Pair the module in Android Bluetooth settings (PIN 1234 or 0000), then refresh this list.
-      </Text>
-    </View>
-  );
-
-  const renderDeviceTab = () => (
-    <>
-      <SectionCard
-        title="Breathalyser"
-        description="Current field device, readiness, and the next useful action."
-        action={
-          <View style={[styles.statusChip, { backgroundColor: status.background }]}>
-            <View style={[styles.statusDot, { backgroundColor: status.color }]} />
-            <Text style={[styles.statusChipText, { color: status.color }]}>{status.label}</Text>
-          </View>
-        }
-      >
-        <View style={styles.connectionSummary}>
-          <View style={styles.connectionIcon}>
-            <Feather name="bluetooth" size={24} color={colors.background} />
-          </View>
-          <View style={styles.connectionText}>
-            <Text style={styles.connectionTitle}>{deviceIdentity}</Text>
-            <Text style={styles.connectionDetail}>{status.detail}</Text>
-            <Text style={styles.connectionMeta}>
-              {snapshot.deviceSerial
-                ? `Firmware serial ${snapshot.deviceSerial}`
-                : 'Firmware serial appears after the first sample'}
-            </Text>
-          </View>
-        </View>
-
-        {inlineMessage ? (
-          <View
-            style={[
-              styles.inlineMessage,
-              inlineMessage.type === 'error'
-                ? styles.inlineMessageError
-                : inlineMessage.type === 'success'
-                ? styles.inlineMessageSuccess
-                : styles.inlineMessageInfo
-            ]}
-            accessibilityRole={inlineMessage.type === 'error' ? 'alert' : 'text'}
-            accessibilityLiveRegion="polite"
-          >
-            <Text style={styles.inlineMessageText}>{inlineMessage.text}</Text>
-          </View>
-        ) : null}
-
+    ) : pairedDevices.length === 0 ? (
+      <View style={styles.emptyState}>
+        <Feather name="bluetooth" size={24} color={colors.neutralGray} />
+        <Text style={styles.emptyStateTitle}>No breathalyser found</Text>
+        <Text style={styles.emptyStateText}>
+          Pair the HC-06 in Android Bluetooth settings (PIN 1234 or 0000), then tap Find my
+          breathalysers.
+        </Text>
         <View style={styles.actionGrid}>
-          {snapshot.connection === 'connected' ? (
-            <Pressable
-              style={styles.primaryButton}
-              onPress={() => setActiveTab('activity')}
-              accessibilityRole="button"
-              accessibilityLabel="View live breathalyser activity"
-            >
-              <Feather name="activity" size={17} color={colors.background} />
-              <Text style={styles.primaryButtonText}>View live activity</Text>
-            </Pressable>
-          ) : (
-            <Pressable
-              style={styles.primaryButton}
-              onPress={() => setActiveTab('connect')}
-              accessibilityRole="button"
-              accessibilityLabel="Open the connection tab"
-            >
-              <Feather name="bluetooth" size={17} color={colors.background} />
-              <Text style={styles.primaryButtonText}>Connect a device</Text>
-            </Pressable>
-          )}
-
-          {snapshot.connection === 'connected' ? (
-            <Pressable
-              style={[
-                styles.secondaryButton,
-                (isDisconnecting || lockDeviceMutations) && styles.buttonDisabled,
-              ]}
-              onPress={handleDisconnect}
-              disabled={isDisconnecting || lockDeviceMutations}
-              accessibilityRole="button"
-              accessibilityLabel="Disconnect breathalyzer"
-            >
-              {isDisconnecting ? (
-                <ActivityIndicator size="small" color={colors.primaryDark} />
-              ) : (
-                <Feather name="power" size={16} color={colors.primaryDark} />
-              )}
-              <Text style={styles.secondaryButtonText}>
-                {lockDeviceMutations ? 'Locked during test' : 'Disconnect'}
-              </Text>
-            </Pressable>
-          ) : (
-            <Pressable
-              style={styles.secondaryButton}
-              onPress={() => void handleOpenBluetoothSettings()}
-              accessibilityRole="button"
-              accessibilityLabel="Pair a new HC-06 in Android Bluetooth settings"
-            >
-              <Feather name="plus" size={16} color={colors.primaryDark} />
-              <Text style={styles.secondaryButtonText}>Pair a new HC-06</Text>
-            </Pressable>
-          )}
-        </View>
-      </SectionCard>
-
-      <SectionCard title="Before a roadside test" description="Open Activity for the complete readiness check.">
-        <View style={styles.readinessList}>
-          {readiness.slice(0, 3).map((check) => (
-            <View key={check.key} style={styles.readinessRow}>
-              <Feather
-                name={check.ok ? 'check-circle' : 'alert-circle'}
-                size={17}
-                color={check.ok ? colors.success : check.tone === 'error' ? colors.error : colors.warning}
-              />
-              <View style={styles.readinessText}>
-                <Text style={styles.readinessLabel}>{check.label}</Text>
-                <Text style={styles.readinessDetail}>{check.detail}</Text>
-              </View>
+          {[
+            'Switch the breathalyser on. Its light should blink.',
+            'Open Android Bluetooth settings and pair the HC-06.',
+            'Come back here and tap Find my breathalysers.'
+          ].map((step) => (
+            <View key={step} style={styles.numberedStep}>
+              <Text style={styles.numberedStepText}>{step}</Text>
             </View>
           ))}
         </View>
-        <Pressable
-          style={styles.secondaryButton}
-          onPress={() => setActiveTab('activity')}
-          accessibilityRole="button"
-          accessibilityLabel="Open complete live activity"
-        >
-          <Feather name="bar-chart-2" size={16} color={colors.primaryDark} />
-          <Text style={styles.secondaryButtonText}>Open live activity</Text>
-        </Pressable>
-      </SectionCard>
-
-      <SectionCard title="Device tools" description="Maintenance and calibration stay separate from connection.">
-        <View style={styles.actionGrid}>
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={() => setActiveTab('calibration')}
-            accessibilityRole="button"
-            accessibilityLabel="Open calibration settings"
-          >
-            <Feather name="sliders" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>Calibration settings</Text>
-          </Pressable>
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={() => void handleShareReport()}
-            accessibilityRole="button"
-            accessibilityLabel="Share a breathalyser diagnostic report"
-          >
-            <Feather name="share" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>Share diagnostic report</Text>
-          </Pressable>
-        </View>
-      </SectionCard>
-
-      <View style={styles.noteCard}>
-        <Feather name="shield" size={16} color={colors.accentBlue} />
-        <Text style={styles.noteText}>
-          Connection, calibration, and test activity use the same live device session. Closing this console does not disconnect the breathalyser.
-        </Text>
       </View>
-    </>
-  );
-
-  const renderConnectTab = () => (
+    ) : (
+      <>
+        {pairedDevices.map((device) => {
+          const isActive =
+            snapshot.connection === 'connected' && snapshot.deviceAddress === device.address;
+          const isPreferred = device.address === preferences.preferredDeviceAddress;
+          const isBusy = busyDeviceAddress === device.address;
+          const actionLabel = isActive
+            ? 'Connected'
+            : deviceConnectionLocked
+              ? 'Locked'
+              : isPreferred
+                ? 'Reconnect'
+                : 'Connect';
+          return (
+            <View key={device.address} style={styles.deviceRow}>
+              <View
+                style={[
+                  styles.deviceIcon,
+                  isPreferred ? styles.deviceIconPreferred : null
+                ]}
+              >
+                <Feather
+                  name="bluetooth"
+                  size={16}
+                  color={isPreferred ? colors.accentBlue : colors.textSecondary}
+                />
+              </View>
+              <View style={styles.deviceRowText}>
+                <Text style={styles.deviceRowTitle}>{device.name || 'HC-06 module'}</Text>
+                <Text style={styles.deviceAddress}>{device.address}</Text>
+              </View>
+              {isActive ? (
+                <View style={[styles.deviceTag, styles.deviceTagConnected]}>
+                  <Text style={[styles.deviceTagText, styles.deviceTagConnectedText]}>
+                    Connected
+                  </Text>
+                </View>
+              ) : isPreferred ? (
+                <View style={[styles.deviceTag, styles.deviceTagSaved]}>
+                  <Text style={[styles.deviceTagText, styles.deviceTagSavedText]}>Saved</Text>
+                </View>
+              ) : null}
+              <Pressable
+                style={[styles.rowAction, actionLabel === 'Connected' ? styles.rowActionDisabled : null]}
+                onPress={() => void connectDevice(device)}
+                disabled={isActive || deviceConnectionLocked || isBusy || isDisconnecting}
+                accessibilityRole="button"
+                accessibilityLabel={`${actionLabel} ${device.name || 'HC-06 module'}`}
+                accessibilityState={{ disabled: isActive || deviceConnectionLocked || isBusy }}
+              >
+                <Text
+                  style={[
+                    styles.rowActionText,
+                    actionLabel === 'Connected' ? styles.rowActionDisabled : null
+                  ]}
+                >
+                  {isBusy ? 'Connecting…' : actionLabel}
+                </Text>
+              </Pressable>
+            </View>
+          );
+        })}
+      </>
+    );
+const renderConnectTab = () => (
     <>
       <SectionCard
-        title="Connect an HC-06"
-        description="Pair or reconnect directly here. No driver licence or active test is required."
+        title="Connect"
+        description="Pair once in Android Bluetooth settings, then connect here."
       >
-        {inlineMessage ? (
-          <View
-            style={[
-              styles.inlineMessage,
-              inlineMessage.type === 'error'
-                ? styles.inlineMessageError
-                : inlineMessage.type === 'success'
-                ? styles.inlineMessageSuccess
-                : styles.inlineMessageInfo
-            ]}
-            accessibilityRole={inlineMessage.type === 'error' ? 'alert' : 'text'}
-            accessibilityLiveRegion="polite"
-          >
-            <Text style={styles.inlineMessageText}>{inlineMessage.text}</Text>
+        {snapshot.connection === 'connected' || snapshot.connection === 'connecting' ? (
+          <View style={styles.connectedRow}>
+            <View style={[styles.connectedDot, { backgroundColor: status.color }]} />
+            <Text style={styles.connectedText}>Connected to {deviceIdentity}</Text>
+            <Pressable
+              style={[
+                styles.rowAction,
+                deviceConnectionLocked ? styles.rowActionDisabled : null
+              ]}
+              onPress={handleDisconnect}
+              disabled={deviceConnectionLocked || isDisconnecting}
+              accessibilityRole="button"
+              accessibilityLabel="Disconnect breathalyser"
+              accessibilityState={{ disabled: deviceConnectionLocked }}
+            >
+              <Text
+                style={[
+                  styles.rowActionText,
+                  deviceConnectionLocked ? styles.rowActionDisabled : null
+                ]}
+              >
+                {deviceConnectionLocked ? 'Locked during test' : 'Disconnect'}
+              </Text>
+            </Pressable>
           </View>
         ) : null}
+
+        <Pressable
+          style={[styles.primaryButton, isLoadingDevices ? styles.buttonDisabled : null]}
+          onPress={() => void refreshPairedDevices(undefined, { autoConnect: true })}
+          disabled={isLoadingDevices}
+          accessibilityRole="button"
+          accessibilityLabel="Find my breathalysers"
+          accessibilityState={{ disabled: isLoadingDevices }}
+        >
+          {isLoadingDevices ? (
+            <ActivityIndicator size="small" color={colors.background} />
+          ) : (
+            <Feather name="search" size={16} color={colors.background} />
+          )}
+          <Text style={styles.primaryButtonText}>
+            {isLoadingDevices ? 'Looking for breathalysers…' : 'Find my breathalysers'}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.secondaryButton}
+          onPress={() => void handleOpenBluetoothSettings()}
+          accessibilityRole="button"
+          accessibilityLabel="Pair a new breathalyser"
+        >
+          <Feather name="plus" size={16} color={colors.primaryDark} />
+          <Text style={styles.secondaryButtonText}>Pair a new breathalyser</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.textButton}
+          onPress={() => void handleOpenAppSettings()}
+          accessibilityRole="button"
+          accessibilityLabel="Check Bluetooth permissions"
+        >
+          <Feather name="lock" size={15} color={colors.primaryDark} />
+          <Text style={styles.textButtonLabel}>Check Bluetooth permissions</Text>
+        </Pressable>
+
+        {Platform.OS !== 'android' ? (
+          <View style={styles.noteCard}>
+            <Feather name="info" size={16} color={colors.accentBlue} />
+            <Text style={styles.noteText}>
+              The Bluetooth connection runs in the Android app. Use test mode below to rehearse on
+              this device.
+            </Text>
+          </View>
+        ) : null}
+
         {deviceConnectionLocked ? (
-          <View style={[styles.inlineMessage, styles.inlineMessageInfo]}>
-            <Text style={styles.inlineMessageText}>
-              Device replacement is locked until the current roadside test is saved or cancelled.
+          <View style={styles.warningNote}>
+            <Feather name="lock" size={16} color={colors.alertHighAccent} />
+            <Text style={styles.warningNoteText}>
+              Device changes are locked until the current roadside test is saved or cancelled.
             </Text>
           </View>
-        ) : null}
-
-        <View style={styles.actionGrid}>
-          <Pressable
-            style={[styles.primaryButton, isLoadingDevices && styles.buttonDisabled]}
-            onPress={() => void refreshPairedDevices(undefined, { autoConnect: true })}
-            disabled={isLoadingDevices}
-            accessibilityRole="button"
-            accessibilityLabel="Scan for paired HC-06 devices"
-            accessibilityState={{ busy: isLoadingDevices }}
-          >
-            {isLoadingDevices ? (
-              <ActivityIndicator size="small" color={colors.background} />
-            ) : (
-              <Feather name="radio" size={17} color={colors.background} />
-            )}
-            <Text style={styles.primaryButtonText}>
-              {isLoadingDevices ? 'Scanning paired devices…' : 'Scan paired devices'}
-            </Text>
-          </Pressable>
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={() => void handleOpenBluetoothSettings()}
-            accessibilityRole="button"
-            accessibilityLabel="Pair a new HC-06 in Android Bluetooth settings"
-          >
-            <Feather name="plus" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>Pair a new HC-06</Text>
-          </Pressable>
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={() => void handleOpenAppSettings()}
-            accessibilityRole="button"
-            accessibilityLabel="Open Android Bluetooth permissions"
-          >
-            <Feather name="lock" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>Check app permissions</Text>
-          </Pressable>
-        </View>
-
-        {SIMULATION_ENABLED && snapshot.connection !== 'connected' ? (
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={() => void handleConnectSimulator()}
-            disabled={Boolean(busyDeviceAddress) || snapshot.connection === 'connecting'}
-            accessibilityRole="button"
-            accessibilityLabel="Connect simulated MQ-3 device"
-          >
-            <Feather name="cpu" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>Use simulated MQ-3</Text>
-          </Pressable>
         ) : null}
       </SectionCard>
 
       <SectionCard
-        title="Paired devices"
-        description="HC-06 modules already paired with this Android phone."
-        action={
-          <Pressable
-            style={styles.iconActionButton}
-            onPress={() => void refreshPairedDevices()}
-            disabled={isLoadingDevices}
-            accessibilityRole="button"
-            accessibilityLabel="Refresh paired HC-06 devices"
-          >
-            <Feather name="rotate-cw" size={18} color={colors.primaryDark} />
-          </Pressable>
-        }
+        title="Your breathalysers"
+        description="Paired with this phone."
       >
-        {isLoadingDevices && pairedDevices.length === 0 ? (
-          <View style={styles.loadingState}>
-            <ActivityIndicator size="small" color={colors.primaryDark} />
-            <Text style={styles.loadingText}>Reading paired devices…</Text>
-          </View>
-        ) : (
-          pairedDeviceRows
-        )}
-      </SectionCard>
+        {pairedDeviceRows}
 
-      <SectionCard title="Connection preferences" description="Saved locally on this phone.">
+        <Disclosure
+          title="Can't see your breathalyser?"
+          expanded={showAllPairedClassic}
+          onToggle={() => handleToggleShowAllPairedClassic(!showAllPairedClassic)}
+        >
+          <Text style={styles.noteText}>
+            Renamed modules are hidden by the HC-06 name filter. Turn this on to list every paired
+            Bluetooth device.
+          </Text>
+          {Platform.OS === 'android' ? (
+            <ToggleRow
+              label="Show all paired Bluetooth devices"
+              detail="Lists every paired module, not only ones still named HC-06."
+              value={showAllPairedClassic}
+              onValueChange={handleToggleShowAllPairedClassic}
+            />
+          ) : null}
+        </Disclosure>
+      </SectionCard>
+<SectionCard
+        title="Connection options"
+        description="Saved on this phone."
+      >
         <ToggleRow
-          label="Remember and auto-connect"
-          detail="Reconnect the saved HC-06 when this console opens."
+          label="Reconnect automatically"
+          detail="Reconnect the saved breathalyser when this screen opens."
           value={preferences.autoConnectPreferredDevice}
           onValueChange={(value) => void handleToggleAutoConnect(value)}
         />
         <ToggleRow
-          label="Confirm before disconnect"
-          detail="Ask before ending a live measurement stream."
+          label="Ask before disconnecting"
+          detail="Show a confirmation before ending a live stream."
           value={preferences.confirmBeforeDisconnect}
           onValueChange={(value) =>
             void persistPreferences({ ...preferences, confirmBeforeDisconnect: value })
@@ -1221,570 +1255,1044 @@ export function DeviceSettingsModal({
           onPress={handleForgetPreferredDevice}
           disabled={!preferences.preferredDeviceAddress}
           accessibilityRole="button"
-          accessibilityLabel="Forget saved breathalyzer"
+          accessibilityLabel="Forget saved breathalyser"
           accessibilityState={{ disabled: !preferences.preferredDeviceAddress }}
         >
           <Feather name="trash-2" size={15} color={colors.errorText} />
-          <Text style={styles.textButtonDanger}>Forget saved device</Text>
+          <Text style={styles.textButtonDanger}>Forget saved breathalyser</Text>
         </Pressable>
       </SectionCard>
 
-      <SectionCard title="Pairing steps" description="Use these once for each HC-06.">
-        <View style={styles.stepList}>
-          {[
-            ['Power the HC-06', 'The module LED should blink continuously.'],
-            ['Open Android Bluetooth settings', `Pair the module using PIN 1234 or 0000.`],
-            ['Return to IntegriScan', 'This console scans paired devices again automatically.']
-          ].map(([title, detail], index) => (
-            <View key={title} style={styles.stepRow}>
-              <View style={styles.stepNumber}>
-                <Text style={styles.stepNumberText}>{index + 1}</Text>
-              </View>
-              <View style={styles.stepText}>
-                <Text style={styles.stepTitle}>{title}</Text>
-                <Text style={styles.stepDetail}>{detail}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
-      </SectionCard>
+      {SIMULATION_ENABLED && snapshot.connection !== 'connected' ? (
+        <SectionCard
+          title="Test mode"
+          description="Simulated breathalyser for training and rehearsal. Test-mode records are labelled as simulated."
+        >
+          <Pressable
+            style={[
+              styles.secondaryButton,
+              Boolean(busyDeviceAddress) ||
+              snapshot.connection === 'connecting' ||
+              lockDeviceMutations
+                ? styles.buttonDisabled
+                : null
+            ]}
+            onPress={() => void handleConnectSimulator()}
+            disabled={
+              Boolean(busyDeviceAddress) ||
+              snapshot.connection === 'connecting' ||
+              lockDeviceMutations
+            }
+            accessibilityRole="button"
+            accessibilityLabel="Start simulated breathalyser"
+            accessibilityState={{
+              disabled:
+                Boolean(busyDeviceAddress) ||
+                snapshot.connection === 'connecting' ||
+                lockDeviceMutations
+            }}
+          >
+            <Feather name="cpu" size={16} color={colors.primaryDark} />
+            <Text style={styles.secondaryButtonText}>Start simulated breathalyser</Text>
+          </Pressable>
+        </SectionCard>
+      ) : null}
     </>
   );
+const renderCalibrateTab = () => {
+    const baselineBlockReason = calibrationBlockReason(snapshot, {
+      locked: lockDeviceMutations
+    });
+    const baselineSet = isBaselineSet(snapshot.calibration);
+    const warmupSeconds = warmupSecondsRemaining(snapshot);
 
-  const renderCalibrationTab = () => (
-    <>
-      <SectionCard
-        title="Clean-air baseline"
-        description="Recalculate the sensor's clean-air resistance from a live sample."
-      >
-        <View style={styles.calibrationHero}>
-          <View>
-            <Text style={styles.calibrationHeroLabel}>ACTIVE CLEAN-AIR RESISTANCE</Text>
+    return (
+      <>
+        <SectionCard
+          title="Clean-air baseline"
+          description="Tells the app what clean air reads on this sensor."
+        >
+          <View style={styles.calibrationHero}>
+            <Text style={styles.calibrationHeroLabel}>Current baseline</Text>
             <Text style={styles.calibrationHeroValue}>
               {formatResistance(snapshot.calibration.cleanAirResistanceOhms)}
             </Text>
-          </View>
-          <View style={styles.calibrationVersionPill}>
-            <Text style={styles.calibrationVersionText}>{snapshot.calibration.version}</Text>
-          </View>
-        </View>
-
-        <View style={styles.readinessList}>
-          {readiness.slice(0, 3).map((check) => (
-            <View key={check.key} style={styles.readinessRow}>
-              <Feather
-                name={check.ok ? 'check-circle' : 'alert-circle'}
-                size={16}
-                color={check.ok ? colors.success : check.tone === 'error' ? colors.error : colors.warning}
-              />
-              <Text style={styles.readinessLabel}>{check.label}</Text>
-              <Text style={styles.readinessDetail}>{check.ok ? 'Ready' : 'Waiting'}</Text>
-            </View>
-          ))}
-        </View>
-
-        <Pressable
-          style={[
-            styles.primaryButton,
-            (snapshot.connection !== 'connected' || lockDeviceMutations) && styles.buttonDisabled,
-          ]}
-          onPress={() => void handleCalibrateFromCleanAir()}
-          disabled={snapshot.connection !== 'connected' || lockDeviceMutations}
-          accessibilityRole="button"
-          accessibilityLabel="Set clean-air calibration baseline"
-        >
-          <Feather name="target" size={16} color={colors.background} />
-          <Text style={styles.primaryButtonText}>
-            {lockDeviceMutations ? 'Locked during test' : 'Set clean-air baseline'}
-          </Text>
-        </Pressable>
-        <Text style={styles.helperText}>
-          {lockDeviceMutations
-            ? 'Finish or cancel the current roadside test before changing calibration.'
-            : 'Use clean air only. Do not calibrate from human breath or an alcohol sample unless you are using an approved calibrated reference system.'}
-        </Text>
-      </SectionCard>
-
-      <SectionCard
-        title="Measurement profile"
-        description="Edit the MQ-3 conversion curve used to turn raw ADC into BAC."
-        action={
-          <Pressable
-            onPress={() => setShowAdvancedCalibration((current) => !current)}
-            accessibilityRole="button"
-            accessibilityLabel={showAdvancedCalibration ? 'Hide advanced calibration' : 'Show advanced calibration'}
-          >
-            <Text style={styles.linkText}>{showAdvancedCalibration ? 'Hide' : 'Edit'}</Text>
-          </Pressable>
-        }
-      >
-        <View style={styles.profileGrid}>
-          <MetricTile label="LOAD RESISTANCE" value={formatResistance(snapshot.calibration.loadResistorOhms)} />
-          <MetricTile label="CLEAN-AIR RATIO" value={snapshot.calibration.cleanAirRatio.toFixed(1)} />
-          <MetricTile label="MG/L AT RATIO 1" value={snapshot.calibration.mgPerLAtRatioOne.toFixed(3)} />
-          <MetricTile label="CURVE SLOPE" value={snapshot.calibration.curveSlope.toFixed(2)} />
-        </View>
-
-        {showAdvancedCalibration ? (
-          <>
-            <View style={styles.inputGrid}>
-              {(
-                [
-                  ['loadResistorOhms', 'Load resistance Ω'],
-                  ['cleanAirResistanceOhms', 'Clean-air R0 Ω'],
-                  ['mgPerLAtRatioOne', 'mg/L at ratio 1'],
-                  ['curveSlope', 'Curve slope'],
-                  ['cleanAirRatio', 'Clean-air ratio']
-                ] as Array<[keyof CalibrationDraft, string]>
-              ).map(([key, label]) => (
-                <View key={key} style={styles.inputField}>
-                  <Text style={styles.inputLabel}>{label}</Text>
-                  <TextInput
-                    value={calibrationDraft[key]}
-                    onChangeText={(value) =>
-                      setCalibrationDraft((current) => ({ ...current, [key]: value }))
-                    }
-                    keyboardType="decimal-pad"
-                    placeholderTextColor={colors.neutralGray}
-                    style={styles.input}
-                    accessibilityLabel={label}
-                  />
-                </View>
-              ))}
-            </View>
-            {calibrationError ? (
-              <Text style={styles.errorText} accessibilityRole="alert" accessibilityLiveRegion="polite">
-                {calibrationError}
+            <Text style={styles.calibrationHeroMeta}>
+              {baselineSet
+                ? 'Set from a clean-air sample on this phone.'
+                : 'Factory default. Not set on this phone yet.'}
+            </Text>
+            {calibrationHistory.length > 0 ? (
+              <Text style={styles.calibrationHeroMeta}>
+                Last changed {formatRelativeTimestamp(calibrationHistory[0].recordedAt)}
               </Text>
             ) : null}
-            <View style={styles.actionGrid}>
-              <Pressable
-                style={[styles.primaryButton, lockDeviceMutations && styles.buttonDisabled]}
-                onPress={() => void handleApplyCalibration()}
-                disabled={lockDeviceMutations}
-                accessibilityRole="button"
-                accessibilityLabel="Apply measurement profile"
-              >
-                <Feather name="save" size={16} color={colors.background} />
-                <Text style={styles.primaryButtonText}>Apply profile</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.secondaryButton, lockDeviceMutations && styles.buttonDisabled]}
-                onPress={handleResetCalibration}
-                disabled={lockDeviceMutations}
-                accessibilityRole="button"
-                accessibilityLabel="Restore default calibration"
-              >
-                <Feather name="rotate-ccw" size={16} color={colors.primaryDark} />
-                <Text style={styles.secondaryButtonText}>Restore defaults</Text>
-              </Pressable>
-            </View>
-          </>
-        ) : null}
-      </SectionCard>
+          </View>
 
-      <SectionCard title="Conversion preview" description="Sanity-check raw ADC values against the active profile.">
-        <View style={styles.previewRow}>
-          <View style={styles.previewField}>
-            <Text style={styles.inputLabel}>Raw ADC</Text>
+          <Text style={styles.subSectionTitle}>How to set it</Text>
+          {[
+            'Take the breathalyser to clean, fresh air, away from people, vehicles and alcohol.',
+            'Wait until the status shows Ready and the signal is steady.',
+            'Tap Set clean-air baseline.'
+          ].map((step) => (
+            <View key={step} style={styles.numberedStep}>
+              <Text style={styles.numberedStepText}>{step}</Text>
+            </View>
+          ))}
+
+          <View style={styles.chipRow}>
+            <View
+              style={[
+                styles.chip,
+                snapshot.connection === 'connected'
+                  ? styles.chipSuccess
+                  : styles.chipNeutral
+              ]}
+            >
+              <Text style={styles.chipLabel}>Connection</Text>
+              <Text style={styles.chipValue}>
+                {snapshot.connection === 'connected' ? 'Connected' : 'Not connected'}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.chip,
+                snapshot.warm === true
+                  ? styles.chipWarning
+                  : snapshot.readings > 0
+                    ? styles.chipSuccess
+                    : styles.chipNeutral
+              ]}
+            >
+              <Text style={styles.chipLabel}>Warm-up</Text>
+              <Text style={styles.chipValue}>
+                {snapshot.warm === true
+                  ? warmupSeconds === null
+                    ? 'Warming up'
+                    : `${warmupSeconds} s left`
+                  : 'Done'}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.chip,
+                hasSensorFault(snapshot)
+                  ? styles.chipDanger
+                  : snapshot.sampleStable === false
+                    ? styles.chipWarning
+                    : styles.chipSuccess
+              ]}
+            >
+              <Text style={styles.chipLabel}>Signal</Text>
+              <Text style={styles.chipValue}>
+                {hasSensorFault(snapshot)
+                  ? 'Fault'
+                  : snapshot.sampleStable === false
+                    ? 'Settling'
+                    : 'Steady'}
+              </Text>
+            </View>
+          </View>
+
+          <Pressable
+            style={[
+              styles.primaryButton,
+              baselineBlockReason ? styles.buttonDisabled : null
+            ]}
+            onPress={() => void handleCalibrateFromCleanAir()}
+            disabled={baselineBlockReason !== null}
+            accessibilityRole="button"
+            accessibilityLabel="Set clean-air baseline"
+            accessibilityState={{ disabled: baselineBlockReason !== null }}
+          >
+            <Feather name="check-circle" size={16} color={colors.background} />
+            <Text style={styles.primaryButtonText}>Set clean-air baseline</Text>
+          </Pressable>
+          <Text style={styles.footnoteText}>
+            {baselineBlockReason ??
+              'Uses the current clean-air reading. The device and the app both update.'}
+          </Text>
+
+          <View style={styles.warningNote}>
+            <Feather name="alert-triangle" size={16} color={colors.alertHighAccent} />
+            <Text style={styles.warningNoteText}>
+              Use clean air only. Do not calibrate from breath or an alcohol sample unless you are
+              using an approved calibrated reference system.
+            </Text>
+          </View>
+        </SectionCard>
+<SectionCard
+          title="Advanced sensor settings"
+          description="Only for calibration authorities."
+        >
+          {showAdvancedCalibration ? (
+            <>
+          <View style={styles.warningNote}>
+            <Feather name="alert-triangle" size={16} color={colors.alertHighAccent} />
+            <Text style={styles.warningNoteText}>
+              Only change these when your calibration authority or the sensor datasheet tells you
+              to. They change how a raw sensor reading becomes a BAC estimate.
+            </Text>
+          </View>
+          <Pressable
+            style={styles.textButton}
+            onPress={() => setShowAdvancedCalibration(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Hide advanced settings"
+          >
+            <Feather name="chevron-up" size={15} color={colors.primaryDark} />
+            <Text style={styles.textButtonLabel}>Hide advanced settings</Text>
+          </Pressable>
+
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Load resistor (RL)</Text>
+            <Text style={styles.summaryValue}>
+              {formatResistance(snapshot.calibration.loadResistorOhms)}
+            </Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Clean-air resistance (R0)</Text>
+            <Text style={styles.summaryValue}>
+              {formatResistance(snapshot.calibration.cleanAirResistanceOhms)}
+            </Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Reference strength at ratio 1</Text>
+            <Text style={styles.summaryValue}>
+              {snapshot.calibration.mgPerLAtRatioOne.toFixed(3)} mg/L
+            </Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Curve slope</Text>
+            <Text style={styles.summaryValue}>
+              {snapshot.calibration.curveSlope.toFixed(2)}
+            </Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Clean-air ratio</Text>
+            <Text style={styles.summaryValue}>
+              {snapshot.calibration.cleanAirRatio.toFixed(1)}
+            </Text>
+          </View>
+
+          <View style={styles.fieldBlock}>
+            <Text style={styles.fieldLabel}>Load resistor (RL), ohms</Text>
+            <Text style={styles.fieldHint}>Resistor on the sensor board. Default 1,000 ohms.</Text>
             <TextInput
+              style={styles.input}
+              value={calibrationDraft.loadResistorOhms}
+              onChangeText={(value) =>
+                setCalibrationDraft((current) => ({ ...current, loadResistorOhms: value }))
+              }
+              keyboardType="numeric"
+              placeholder="1000"
+              placeholderTextColor={colors.textSecondary}
+              accessibilityLabel="Load resistor (RL), ohms"
+            />
+          </View>
+          <View style={styles.fieldBlock}>
+            <Text style={styles.fieldLabel}>Clean-air resistance (R0), ohms</Text>
+            <Text style={styles.fieldHint}>Set automatically by the clean-air baseline.</Text>
+            <TextInput
+              style={styles.input}
+              value={calibrationDraft.cleanAirResistanceOhms}
+              onChangeText={(value) =>
+                setCalibrationDraft((current) => ({ ...current, cleanAirResistanceOhms: value }))
+              }
+              keyboardType="numeric"
+              placeholder="60000"
+              placeholderTextColor={colors.textSecondary}
+              accessibilityLabel="Clean-air resistance (R0), ohms"
+            />
+          </View>
+          <View style={styles.fieldBlock}>
+            <Text style={styles.fieldLabel}>Reference strength at ratio 1, mg/L</Text>
+            <Text style={styles.fieldHint}>Constant from the sensor curve.</Text>
+            <TextInput
+              style={styles.input}
+              value={calibrationDraft.mgPerLAtRatioOne}
+              onChangeText={(value) =>
+                setCalibrationDraft((current) => ({ ...current, mgPerLAtRatioOne: value }))
+              }
+              keyboardType="numeric"
+              placeholder="0.400"
+              placeholderTextColor={colors.textSecondary}
+              accessibilityLabel="Reference strength at ratio 1, mg/L"
+            />
+          </View>
+          <View style={styles.fieldBlock}>
+            <Text style={styles.fieldLabel}>Curve slope</Text>
+            <Text style={styles.fieldHint}>Negative value from the sensor curve.</Text>
+            <TextInput
+              style={styles.input}
+              value={calibrationDraft.curveSlope}
+              onChangeText={(value) =>
+                setCalibrationDraft((current) => ({ ...current, curveSlope: value }))
+              }
+              keyboardType="numeric"
+              placeholder="-0.4"
+              placeholderTextColor={colors.textSecondary}
+              accessibilityLabel="Curve slope"
+            />
+          </View>
+          <View style={styles.fieldBlock}>
+            <Text style={styles.fieldLabel}>Clean-air ratio</Text>
+            <Text style={styles.fieldHint}>Default 60.</Text>
+            <TextInput
+              style={styles.input}
+              value={calibrationDraft.cleanAirRatio}
+              onChangeText={(value) =>
+                setCalibrationDraft((current) => ({ ...current, cleanAirRatio: value }))
+              }
+              keyboardType="numeric"
+              placeholder="60"
+              placeholderTextColor={colors.textSecondary}
+              accessibilityLabel="Clean-air ratio"
+            />
+          </View>
+<Text style={styles.subSectionTitle}>Check a raw value</Text>
+          <Text style={styles.noteText}>
+            Type one raw sensor value to see the BAC estimate it produces on this phone.
+          </Text>
+          <View style={styles.fieldBlock}>
+            <Text style={styles.fieldLabel}>Raw sensor value (0–1023)</Text>
+            <TextInput
+              style={styles.input}
               value={previewRawText}
               onChangeText={setPreviewRawText}
-              keyboardType="number-pad"
+              keyboardType="numeric"
               placeholder="e.g. 512"
-              placeholderTextColor={colors.neutralGray}
-              style={styles.input}
-              accessibilityLabel="Raw ADC preview value"
+              placeholderTextColor={colors.textSecondary}
+              accessibilityLabel="Raw sensor value"
             />
           </View>
           <View style={styles.previewOutput}>
-            <Text style={styles.previewOutputLabel}>ESTIMATED BAC</Text>
+            <Text style={styles.previewOutputLabel}>Estimated BAC</Text>
             <Text style={styles.previewOutputValue}>
-              {previewFromText?.bacGdl === null || previewFromText === null
-                ? '--'
-                : formatBacGdl(previewFromText.bacGdl)}
+              {previewFromText ? formatBacGdl(previewFromText.bacGdl) : '--'}
+              <Text style={styles.previewOutputDetail}> g/100ml</Text>
             </Text>
             <Text style={styles.previewOutputDetail}>
-              {previewFromText?.mgPerL == null
-                ? 'Enter a raw value'
+              {previewFromText === null || previewFromText.mgPerL === null
+                ? '--'
                 : `${previewFromText.mgPerL.toFixed(3)} mg/L`}
             </Text>
           </View>
-        </View>
-        <View style={styles.targetGrid}>
-          {CALIBRATION_PREVIEW_TARGETS.map((target) => (
-            <View key={target} style={styles.targetChip}>
-              <Text style={styles.targetLabel}>{target.toFixed(2)} g/100ml</Text>
-              <Text style={styles.targetValue}>raw ≈ {formatRawValue(targetRawForBac(target, snapshot.calibration))}</Text>
-            </View>
-          ))}
-        </View>
-        <View style={styles.livePreviewRow}>
-          <View>
-            <Text style={styles.inputLabel}>Current sample</Text>
-            <Text style={styles.currentSampleValue}>
-              raw {formatRawValue(snapshot.avg ?? snapshot.sessionPeak)} ·{' '}
-              {preview.rsOhms === null ? '-- Ω' : formatResistance(preview.rsOhms)}
-            </Text>
-          </View>
-          <View>
-            <Text style={styles.previewOutputLabel}>LIVE ESTIMATE</Text>
-            <Text style={styles.previewOutputValue}>{formatBacGdl(preview.bacGdl)}</Text>
-          </View>
-        </View>
-      </SectionCard>
-
-      <SectionCard title="Calibration history" description="Last 20 local profile changes.">
-        {calibrationHistory.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Feather name="clock" size={24} color={colors.neutralGray} />
-            <Text style={styles.emptyStateTitle}>No calibration changes yet</Text>
-            <Text style={styles.emptyStateText}>Clean-air baselines and manual profiles will appear here.</Text>
-          </View>
-        ) : (
-          calibrationHistory.slice(0, 6).map((entry) => (
-            <View key={entry.id} style={styles.historyRow}>
-              <View style={styles.historyIcon}>
-                <Feather
-                  name={entry.source === 'clean-air' ? 'target' : entry.source === 'reset' ? 'rotate-ccw' : 'sliders'}
-                  size={16}
-                  color={colors.primaryDark}
-                />
-              </View>
-              <View style={styles.historyText}>
-                <Text style={styles.historyTitle}>{calibrationHistoryLabel(entry)}</Text>
-                <Text style={styles.historyDetail}>
-                  {formatResistance(entry.calibration.cleanAirResistanceOhms)} ·{' '}
-                  {formatRelativeTimestamp(entry.recordedAt)}
+          <Text style={styles.subSectionTitle}>Raw values for common BAC levels</Text>
+          <View style={styles.chipRow}>
+            {CALIBRATION_PREVIEW_TARGETS.map((target) => (
+              <View key={target} style={[styles.targetChip, styles.chipNeutral]}>
+                <Text style={styles.targetLabel}>{target.toFixed(2)} g/100ml</Text>
+                <Text style={styles.targetValue}>
+                  {formatRawValue(targetRawForBac(target, snapshot.calibration))}
                 </Text>
               </View>
-              <Text style={styles.historySource}>{entry.rawSample === null ? '—' : `raw ${formatRawValue(entry.rawSample)}`}</Text>
-            </View>
-          ))
-        )}
-        {calibrationHistory.length > 0 ? (
+            ))}
+          </View>
+        <View style={styles.actionGrid}>
+            <Pressable
+              style={[styles.primaryButton, lockDeviceMutations ? styles.buttonDisabled : null]}
+              onPress={() => void handleApplyCalibration()}
+              disabled={lockDeviceMutations}
+              accessibilityRole="button"
+              accessibilityLabel="Apply settings"
+              accessibilityState={{ disabled: lockDeviceMutations }}
+            >
+              <Feather name="save" size={16} color={colors.background} />
+              <Text style={styles.primaryButtonText}>Apply settings</Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.secondaryButton,
+                lockDeviceMutations ? styles.buttonDisabled : null
+              ]}
+              onPress={handleResetCalibration}
+              disabled={lockDeviceMutations}
+              accessibilityRole="button"
+              accessibilityLabel="Restore factory defaults"
+              accessibilityState={{ disabled: lockDeviceMutations }}
+            >
+              <Feather name="rotate-ccw" size={16} color={colors.primaryDark} />
+              <Text style={styles.secondaryButtonText}>Restore factory defaults</Text>
+            </Pressable>
+          </View>
+          {calibrationError ? <Text style={styles.errorText}>{calibrationError}</Text> : null}
+          </>
+        ) : (
           <Pressable
             style={styles.textButton}
-            onPress={() => {
-              Alert.alert('Clear calibration history?', 'This only removes local history entries. Saved records are not deleted.', [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Clear history',
-                  style: 'destructive',
-                  onPress: () => {
-                    void (async () => {
-                      await clearCalibrationHistory();
-                      setCalibrationHistory([]);
-                      setMessage('success', 'Calibration history cleared.');
-                    })();
-                  }
-                }
-              ]);
-            }}
+            onPress={() => setShowAdvancedCalibration(true)}
             accessibilityRole="button"
-            accessibilityLabel="Clear calibration history"
+            accessibilityLabel="Show advanced settings"
           >
-            <Feather name="trash-2" size={14} color={colors.errorText} />
-            <Text style={styles.textButtonDanger}>Clear history</Text>
+            <Feather name="chevron-down" size={15} color={colors.primaryDark} />
+            <Text style={styles.textButtonLabel}>Show advanced settings</Text>
           </Pressable>
-        ) : null}
-      </SectionCard>
-    </>
-  );
+        )}
+        </SectionCard>
+<Disclosure
+          title={`Baseline history (${calibrationHistory.length})`}
+          summary="Clean-air changes saved on this phone."
+          expanded={isSectionOpen('baselineHistory')}
+          onToggle={() => toggleSection('baselineHistory')}
+        >
+          {calibrationHistory.length === 0 ? (
+            <Text style={styles.noteText}>No baseline changes yet.</Text>
+          ) : (
+            <View style={styles.actionGrid}>
+              {calibrationHistory.slice(0, 6).map((entry) => (
+                <View key={entry.id} style={styles.historyRow}>
+                  <View style={styles.historyIcon}>
+                    <Feather
+                      name={
+                        entry.source === 'clean-air'
+                          ? 'target'
+                          : entry.source === 'reset'
+                            ? 'rotate-ccw'
+                            : 'sliders'
+                      }
+                      size={16}
+                      color={colors.primaryDark}
+                    />
+                  </View>
+                  <View style={styles.historyText}>
+                    <Text style={styles.historyTitle}>{calibrationHistoryLabel(entry)}</Text>
+                    <Text style={styles.historyDetail}>
+                      {formatResistance(entry.calibration.cleanAirResistanceOhms)} ·{' '}
+                      {formatRelativeTimestamp(entry.recordedAt)}
+                    </Text>
+                  </View>
+                  <Text style={styles.historySource}>
+                    {entry.rawSample === null ? '—' : `raw ${formatRawValue(entry.rawSample)}`}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+          {calibrationHistory.length > 0 ? (
+            <Pressable
+              style={styles.textButton}
+              onPress={() => {
+                Alert.alert(
+                  'Clear baseline history?',
+                  'This only removes local history entries. Saved records are not deleted.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Clear history',
+                      style: 'destructive',
+                      onPress: () => {
+                        void (async () => {
+                          await clearCalibrationHistory();
+                          setCalibrationHistory([]);
+                          setMessage('success', 'Calibration history cleared.');
+                        })();
+                      }
+                    }
+                  ]
+                );
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Clear calibration history"
+            >
+              <Feather name="trash-2" size={15} color={colors.errorText} />
+              <Text style={styles.textButtonDanger}>Clear history</Text>
+            </Pressable>
+          ) : null}
+        </Disclosure>
+      </>
+    );
+  };
+const renderLiveTab = () => {
+    const guidance = blowStateGuidance(snapshot);
+    const guidanceStyle =
+      guidance.tone === 'success'
+        ? styles.guidanceBoxSuccess
+        : guidance.tone === 'warning'
+          ? styles.guidanceBoxWarning
+          : guidance.tone === 'danger'
+            ? styles.guidanceBoxDanger
+            : styles.guidanceBoxNeutral;
+    const guidanceTitleStyle =
+      guidance.tone === 'success'
+        ? styles.guidanceTitleSuccess
+        : guidance.tone === 'warning'
+          ? styles.guidanceTitleWarning
+          : guidance.tone === 'danger'
+            ? styles.guidanceTitleDanger
+            : styles.guidanceTitleNeutral;
+    const trend = signalTrend(signalSamples.map((sample) => sample.value));
+    const attentionChecks = readiness.filter((check) => !check.ok);
 
-  const renderActivityTab = () => (
-    <>
-      <SectionCard title="Capture readiness" description="All checks must pass before an evidential reading is captured.">
-        <View style={styles.readinessList}>
-          {readiness.map((check) => (
-            <View key={check.key} style={styles.readinessRow}>
-              <Feather
-                name={check.ok ? 'check-circle' : 'alert-circle'}
-                size={16}
-                color={check.ok ? colors.success : check.tone === 'error' ? colors.error : colors.warning}
-              />
-              <View style={styles.readinessText}>
-                <Text style={styles.readinessLabel}>{check.label}</Text>
-                <Text style={styles.readinessDetail}>{check.detail}</Text>
-              </View>
-              <Text
-                style={[
-                  styles.readinessStatus,
-                  check.ok ? styles.readinessStatusOk : styles.readinessStatusWaiting
-                ]}
-              >
-                {check.ok ? 'PASS' : 'WAIT'}
+    return (
+      <>
+        <SectionCard title="Live reading" description="A screening estimate from the sensor.">
+          <View style={styles.statRow}>
+            <View style={styles.statBlock}>
+              <Text style={styles.statBlockLabel}>Live BAC estimate</Text>
+              <Text style={styles.statBlockValue}>
+                {formatBacGdl(snapshot.liveBacGdl)}
+                <Text style={styles.metricDetail}> g/100ml</Text>
               </Text>
             </View>
-          ))}
-        </View>
-      </SectionCard>
+            <View style={snapshot.peakBacGdl === null ? styles.statBlock : styles.statBlockWarning}>
+              <Text style={styles.statBlockLabel}>Peak BAC estimate</Text>
+              <Text
+                style={
+                  snapshot.peakBacGdl === null ? styles.statBlockValue : styles.statBlockValueWarning
+                }
+              >
+                {formatBacGdl(snapshot.peakBacGdl)}
+                <Text style={styles.metricDetail}> g/100ml</Text>
+              </Text>
+            </View>
+          </View>
 
-      <SectionCard title="Live telemetry" description="Read-only values from the firmware stream.">
-        <View style={styles.metricGrid}>
-          <MetricTile label="RAW ADC" value={formatRawValue(snapshot.raw)} />
-          <MetricTile label="SMOOTHED AVG" value={formatRawValue(snapshot.avg)} />
-          <MetricTile label="DEVICE PEAK" value={formatRawValue(snapshot.devicePeak)} />
-          <MetricTile label="SESSION PEAK" value={formatRawValue(snapshot.sessionPeak)} tone="success" />
-          <MetricTile
-            label="SIGNAL VOLTAGE"
-            value={snapshot.raw === null ? '-- V' : formatVoltage((snapshot.raw * 5) / 1023)}
-          />
-          <MetricTile
-            label="SENSOR RESISTANCE"
-            value={preview.rsOhms === null ? '-- Ω' : formatResistance(preview.rsOhms)}
-          />
-          <MetricTile label="LIVE BAC" value={formatBacGdl(snapshot.liveBacGdl)} tone="success" />
-          <MetricTile label="PEAK BAC" value={formatBacGdl(snapshot.peakBacGdl)} tone="warning" />
-          <MetricTile label="SAMPLES" value={String(snapshot.readings)} />
-          <MetricTile label="LAST SAMPLE" value={formatSampleAge(snapshot.lastReceivedAt)} />
-        </View>
-        <View style={styles.statusChipRow}>
-          <View style={[styles.statusChip, snapshot.warm ? styles.statusChipWarning : styles.statusChipSuccess]}>
-            <Text style={[styles.statusChipText, snapshot.warm ? styles.statusChipTextWarning : styles.statusChipTextSuccess]}>
-              {snapshot.warm ? 'WARMING' : 'WARM COMPLETE'}
-            </Text>
-          </View>
-          <View style={[styles.statusChip, snapshot.over ? styles.statusChipError : styles.statusChipSuccess]}>
-            <Text style={[styles.statusChipText, snapshot.over ? styles.statusChipTextError : styles.statusChipTextSuccess]}>
-              {snapshot.over ? 'THRESHOLD' : 'NORMAL'}
-            </Text>
-          </View>
-          <View style={[styles.statusChip, snapshot.alarm ? styles.statusChipError : styles.statusChipSuccess]}>
-            <Text style={[styles.statusChipText, snapshot.alarm ? styles.statusChipTextError : styles.statusChipTextSuccess]}>
-              {snapshot.alarm ? 'ALARM' : 'ALARM CLEAR'}
-            </Text>
-          </View>
-        </View>
-      </SectionCard>
-
-      <SectionCard title="Signal rail" description="The latest raw ADC samples from the connected device.">
-        <View style={styles.signalRail}>
-          {signalSamples.length === 0 ? (
-            <Text style={styles.signalRailEmpty}>Waiting for telemetry…</Text>
-          ) : (
-            signalSamples.map((sample, index) => (
-              <View
-                key={`${index}-${sample}`}
-                style={[
-                  styles.signalBar,
-                  {
-                    height: `${Math.max(10, Math.min(100, (sample / 1023) * 100))}%`,
-                    backgroundColor:
-                      snapshot.over && index >= signalSamples.length - 4 ? colors.error : colors.accentBlue
-                  }
-                ]}
+          {signalSamples.length >= 2 ? (
+            <View style={[styles.trendChip, trend.direction === 'steady' ? styles.trendChipNeutral : styles.trendChipUp]}>
+              <Feather
+                name={
+                  trend.direction === 'up'
+                    ? 'trending-up'
+                    : trend.direction === 'down'
+                      ? 'trending-down'
+                      : 'minus'
+                }
+                size={14}
+                color={trend.direction === 'steady' ? colors.textSecondary : colors.accentBlue}
               />
+              <Text
+                style={
+                  trend.direction === 'steady' ? styles.trendChipTextNeutral : styles.trendChipTextUp
+                }
+              >
+                {trend.direction === 'up'
+                  ? `Rising by ${Math.abs(trend.delta)}`
+                  : trend.direction === 'down'
+                    ? `Falling by ${Math.abs(trend.delta)}`
+                    : 'Steady'}
+              </Text>
+            </View>
+          ) : null}
+
+          <View style={[styles.guidanceBox, guidanceStyle]}>
+            <Text style={[styles.guidanceTitle, guidanceTitleStyle]}>{guidance.title}</Text>
+            <Text style={styles.guidanceDetail}>{guidance.detail}</Text>
+          </View>
+
+          <LiveSignalChart
+            samples={signalSamples}
+            baseline={cleanAirRaw(snapshot.calibration)}
+            height={140}
+          />
+          <Text style={styles.chartCaption}>
+            Smoothed device signal. Newest reading on the right.
+          </Text>
+
+          <View style={styles.actionGrid}>
+            <Pressable
+              style={[
+                styles.secondaryButton,
+                lockDeviceMutations ? styles.buttonDisabled : null
+              ]}
+              onPress={handleResetSubjectPeak}
+              disabled={lockDeviceMutations}
+              accessibilityRole="button"
+              accessibilityLabel="Reset peak for next subject"
+              accessibilityState={{ disabled: lockDeviceMutations }}
+            >
+              <Feather name="refresh-cw" size={16} color={colors.primaryDark} />
+              <Text style={styles.secondaryButtonText}>
+                {lockDeviceMutations ? 'Peak locked during a test' : 'Reset peak for next subject'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.secondaryButton}
+              onPress={handlePreviewCapture}
+              accessibilityRole="button"
+              accessibilityLabel="Dry-run capture"
+            >
+              <Feather name="eye" size={16} color={colors.primaryDark} />
+              <Text style={styles.secondaryButtonText}>Dry-run capture</Text>
+            </Pressable>
+            <Text style={styles.footnoteText}>Nothing is saved.</Text>
+            <Pressable
+              style={[styles.secondaryButton, isRunningDiagnostic ? styles.buttonDisabled : null]}
+              onPress={() => void handleRunDiagnostic()}
+              disabled={isRunningDiagnostic}
+              accessibilityRole="button"
+              accessibilityLabel="Check data stream"
+              accessibilityState={{ disabled: isRunningDiagnostic }}
+            >
+              <Feather name="activity" size={16} color={colors.primaryDark} />
+              <Text style={styles.secondaryButtonText}>
+                {isRunningDiagnostic ? 'Checking the stream…' : 'Check data stream'}
+              </Text>
+            </Pressable>
+          </View>
+{previewCaptureResult ? (
+            <View
+              style={[styles.diagnosticResult, styles.diagnosticResultOk]}
+              accessibilityLiveRegion="polite"
+            >
+              <Feather name="eye" size={18} color={colors.successText} />
+              <View style={styles.diagnosticResultText}>
+                <Text style={styles.diagnosticResultTitle}>Dry run ready</Text>
+                <Text style={styles.diagnosticResultDetail}>
+                  Raw {formatRawValue(previewCaptureResult.raw)} converts to{' '}
+                  {formatBacGdl(previewCaptureResult.bacGdl)} g/100ml. No test record was created.
+                </Text>
+              </View>
+            </View>
+          ) : null}
+          {diagnosticResult ? (
+            <View
+              style={[
+                styles.diagnosticResult,
+                diagnosticResult.ok ? styles.diagnosticResultOk : styles.diagnosticResultError
+              ]}
+              accessibilityLiveRegion="polite"
+            >
+              <Feather
+                name={diagnosticResult.ok ? 'check-circle' : 'alert-circle'}
+                size={18}
+                color={diagnosticResult.ok ? colors.successText : colors.errorText}
+              />
+              <View style={styles.diagnosticResultText}>
+                <Text style={styles.diagnosticResultTitle}>
+                  {diagnosticResult.ok ? 'Stream healthy' : 'Stream needs attention'}
+                </Text>
+                <Text style={styles.diagnosticResultDetail}>{diagnosticResult.detail}</Text>
+              </View>
+            </View>
+          ) : null}
+          <View style={styles.footnote}>
+            <Text style={styles.footnoteText}>
+              Screening estimate only. This is not an evidential measurement.
+            </Text>
+          </View>
+        </SectionCard>
+
+        <SectionCard
+          title="Ready for a roadside test"
+          description="Every check must pass before a roadside reading can be captured."
+        >
+          <Text
+            style={
+              attentionChecks.length === 0 ? styles.readinessSummaryOk : styles.readinessSummaryWarn
+            }
+          >
+            {attentionChecks.length === 0
+              ? 'All checks passed.'
+              : attentionChecks.length === 1
+                ? '1 check still needs attention.'
+                : `${attentionChecks.length} checks still need attention.`}
+          </Text>
+          <View style={styles.readinessList}>
+            {readiness.map((check) => (
+              <View key={check.key} style={styles.readinessRow}>
+                <Feather
+                  name={check.ok ? 'check-circle' : 'alert-circle'}
+                  size={16}
+                  color={check.ok ? colors.success : check.tone === 'error' ? colors.error : colors.warning}
+                />
+                <View style={styles.readinessText}>
+                  <Text style={styles.readinessLabel}>{check.label}</Text>
+                  <Text style={styles.readinessDetail}>{check.detail}</Text>
+                </View>
+                <Text
+                  style={[
+                    styles.readinessStatus,
+                    check.ok ? styles.readinessStatusOk : styles.readinessStatusWaiting
+                  ]}
+                >
+                  {check.ok ? 'Done' : 'Waiting'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </SectionCard>
+<SectionCard title="Device health" description="Read-only values from the device.">
+          <View style={styles.metricGrid}>
+            <MetricTile
+              label="Sensor"
+              value={hasSensorFault(snapshot) ? `Fault: ${sensorFaultMessage(snapshot.fault)}` : 'OK'}
+              tone={hasSensorFault(snapshot) ? 'error' : 'success'}
+            />
+            <MetricTile
+              label="Supply voltage"
+              value={snapshot.vccMv === null ? '--' : `${(snapshot.vccMv / 1000).toFixed(2)} V`}
+              tone={
+                snapshot.vccMv !== null && (snapshot.vccMv < 4500 || snapshot.vccMv > 5500)
+                  ? 'warning'
+                  : 'neutral'
+              }
+            />
+            <MetricTile
+              label="Signal noise"
+              value={snapshot.spread === null ? '--' : `${Math.round(snapshot.spread)} counts`}
+              detail="Range across each sample burst."
+            />
+            <MetricTile
+              label="Dropped frames"
+              value={String(snapshot.droppedFrames)}
+              tone={snapshot.droppedFrames > 0 ? 'warning' : 'neutral'}
+            />
+            <MetricTile label="Samples received" value={String(snapshot.readings)} />
+            <MetricTile label="Last reading" value={formatSampleAge(snapshot.lastReceivedAt)} />
+            <MetricTile
+              label="Firmware serial"
+              value={snapshot.deviceSerial ?? 'Not reported'}
+              fullWidth
+            />
+          </View>
+        </SectionCard>
+
+        <Disclosure
+          title="Technical readings"
+          summary="Raw device numbers, for support."
+          expanded={isSectionOpen('technical')}
+          onToggle={() => toggleSection('technical')}
+        >
+          <View style={styles.metricGrid}>
+            <MetricTile label="Raw sensor value" value={formatRawValue(snapshot.raw)} />
+            <MetricTile label="Smoothed signal" value={formatRawValue(snapshot.avg)} />
+            <MetricTile label="Device peak" value={formatRawValue(snapshot.devicePeak)} />
+            <MetricTile
+              label="Subject peak"
+              value={formatRawValue(snapshot.sessionPeak)}
+              tone="success"
+            />
+            <MetricTile
+              label="Sensor voltage"
+              value={snapshot.raw === null ? '-- V' : formatVoltage((snapshot.raw * 5) / 1023)}
+            />
+            <MetricTile
+              label="Sensor resistance"
+              value={preview.rsOhms === null ? '-- Ω' : formatResistance(preview.rsOhms)}
+            />
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Warm-up finished</Text>
+            <Text style={styles.summaryValue}>{snapshot.warm === false ? 'Yes' : 'Warming up'}</Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Above alarm level</Text>
+            <Text style={styles.summaryValue}>{snapshot.over === true ? 'Yes' : 'No'}</Text>
+          </View>
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>Alarm</Text>
+            <Text style={styles.summaryValue}>{snapshot.alarm === true ? 'On' : 'Off'}</Text>
+          </View>
+        </Disclosure>
+<Disclosure
+          title="Records on this phone"
+          summary="Test records stored locally."
+          expanded={isSectionOpen('records')}
+          onToggle={() => toggleSection('records')}
+        >
+          <View style={styles.metricGrid}>
+            <MetricTile label="LOCAL RECORDS" value={String(historySummary.totalLocalRecords)} />
+            <MetricTile
+              label="DEVICE CAPTURES"
+              value={String(historySummary.deviceCapturedRecords)}
+              tone="success"
+            />
+            <MetricTile
+              label="PENDING SYNC"
+              value={String(historySummary.pendingLocalRecords)}
+              tone="warning"
+            />
+            <MetricTile
+              label="FAILED SYNC"
+              value={String(historySummary.failedLocalRecords)}
+              tone="error"
+            />
+          </View>
+          <View style={styles.historyRow}>
+            <View style={styles.historyIcon}>
+              <Feather name="clock" size={16} color={colors.primaryDark} />
+            </View>
+            <View style={styles.historyText}>
+              <Text style={styles.historyTitle}>Last device capture</Text>
+              <Text style={styles.historyDetail}>
+                {formatRelativeTimestamp(historySummary.lastDeviceCapturedAt)}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={styles.subSectionTitle}>Captures by device</Text>
+          {historySummary.bySerial.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Feather name="database" size={24} color={colors.neutralGray} />
+              <Text style={styles.emptyStateTitle}>No device captures yet</Text>
+              <Text style={styles.emptyStateText}>
+                Capture a breathalyser reading to populate custody history.
+              </Text>
+            </View>
+          ) : (
+            historySummary.bySerial.map((item) => (
+              <View key={item.serial} style={styles.historyRow}>
+                <View style={styles.historyIcon}>
+                  <Feather name="cpu" size={16} color={colors.primaryDark} />
+                </View>
+                <View style={styles.historyText}>
+                  <Text style={styles.historyTitle}>{item.serial}</Text>
+                  <Text style={styles.historyDetail}>
+                    {item.count} capture{item.count === 1 ? '' : 's'} · last{' '}
+                    {formatRelativeTimestamp(item.lastCapturedAt)}
+                  </Text>
+                </View>
+                <Text style={styles.historySource}>
+                  {item.averageSessionPeakRaw === null
+                    ? '--'
+                    : `avg peak ${formatRawValue(item.averageSessionPeakRaw)}`}
+                </Text>
+              </View>
             ))
           )}
-        </View>
-      </SectionCard>
 
-      <SectionCard title="Diagnostics" description="Run local checks before relying on a roadside measurement.">
-        <View style={styles.actionGrid}>
-          <Pressable
-            style={[styles.primaryButton, isRunningDiagnostic && styles.buttonDisabled]}
-            onPress={() => void handleRunDiagnostic()}
-            disabled={isRunningDiagnostic}
-            accessibilityRole="button"
-            accessibilityLabel="Run three second stream diagnostic"
-          >
-            {isRunningDiagnostic ? (
-              <ActivityIndicator size="small" color={colors.background} />
-            ) : (
-              <Feather name="activity" size={16} color={colors.background} />
-            )}
-            <Text style={styles.primaryButtonText}>
-              {isRunningDiagnostic ? 'Testing stream…' : 'Run stream test'}
+          <Text style={styles.subSectionTitle}>Captures by connection type</Text>
+          {historySummary.byTransport.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Feather name="bar-chart-2" size={24} color={colors.neutralGray} />
+              <Text style={styles.emptyStateTitle}>No connection history yet</Text>
+              <Text style={styles.emptyStateText}>
+                Capture totals appear after the first breathalyser capture.
+              </Text>
+            </View>
+          ) : (
+            historySummary.byTransport.map((item) => (
+              <View key={item.transport} style={styles.historyRow}>
+                <View style={styles.historyIcon}>
+                  <Feather
+                    name={item.transport === 'bluetooth_classic' ? 'bluetooth' : 'cpu'}
+                    size={16}
+                    color={colors.primaryDark}
+                  />
+                </View>
+                <View style={styles.historyText}>
+                  <Text style={styles.historyTitle}>
+                    {item.transport === 'bluetooth_classic'
+                      ? 'Bluetooth Classic'
+                      : item.transport === 'simulated'
+                        ? 'Simulated'
+                        : item.transport}
+                  </Text>
+                  <Text style={styles.historyDetail}>
+                    {item.count} capture{item.count === 1 ? '' : 's'} · last{' '}
+                    {formatRelativeTimestamp(item.lastCapturedAt)}
+                  </Text>
+                </View>
+              </View>
+            ))
+          )}
+        </Disclosure>
+<Disclosure
+          title="BAC limits in force"
+          summary="Limits used for pass or fail."
+          expanded={isSectionOpen('limits')}
+          onToggle={() => toggleSection('limits')}
+        >
+          {runtimeConfig && runtimeConfig.bacLimits.length > 0 ? (
+            runtimeConfig.bacLimits.map((limit) => (
+              <View key={limit.key} style={styles.policyRow}>
+                <Text style={styles.policyLabel}>{limit.label}</Text>
+                <Text style={styles.policyValue}>{limit.limitG100ml.toFixed(3)} g/100ml</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.noteText}>
+              Limits unavailable offline. The last loaded policy stays active.
             </Text>
-          </Pressable>
+          )}
+        </Disclosure>
+
+        <View style={styles.footer}>
           <Pressable
-            style={[styles.secondaryButton, lockDeviceMutations && styles.buttonDisabled]}
-            onPress={handleResetSubjectPeak}
-            disabled={lockDeviceMutations}
-            accessibilityRole="button"
-            accessibilityLabel="Reset subject peak"
-          >
-            <Feather name="refresh-ccw" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>
-              {lockDeviceMutations ? 'Peak locked during test' : 'Reset subject peak'}
-            </Text>
-          </Pressable>
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={handlePreviewCapture}
-            accessibilityRole="button"
-            accessibilityLabel="Preview a test capture"
-          >
-            <Feather name="eye" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>Preview capture</Text>
-          </Pressable>
-          <Pressable
-            style={styles.secondaryButton}
+            style={styles.textButton}
             onPress={() => void handleShareReport()}
             accessibilityRole="button"
             accessibilityLabel="Share diagnostic report"
           >
-            <Feather name="share" size={16} color={colors.primaryDark} />
-            <Text style={styles.secondaryButtonText}>Share report</Text>
+            <Feather name="share-2" size={15} color={colors.primaryDark} />
+            <Text style={styles.textButtonLabel}>Share diagnostic report</Text>
           </Pressable>
+          <Text style={styles.footerText}>
+            Closing this screen does not disconnect the breathalyser.
+          </Text>
         </View>
-        {inlineMessage ? (
-          <View
-            style={[
-              styles.inlineMessage,
-              inlineMessage.type === 'error'
-                ? styles.inlineMessageError
-                : inlineMessage.type === 'success'
-                ? styles.inlineMessageSuccess
-                : styles.inlineMessageInfo,
-            ]}
-            accessibilityRole={inlineMessage.type === 'error' ? 'alert' : 'text'}
-            accessibilityLiveRegion="polite"
-          >
-            <Text style={styles.inlineMessageText}>{inlineMessage.text}</Text>
-          </View>
-        ) : null}
-        {previewCaptureResult ? (
-          <View
-            style={[styles.diagnosticResult, styles.diagnosticResultOk]}
-            accessibilityLiveRegion="polite"
-          >
-            <Feather name="eye" size={18} color={colors.successText} />
-            <View style={styles.diagnosticResultText}>
-              <Text style={styles.diagnosticResultTitle}>Preview capture ready</Text>
-              <Text style={styles.diagnosticResultDetail}>
-                Raw {formatRawValue(previewCaptureResult.raw)} converts to{' '}
-                {formatBacGdl(previewCaptureResult.bacGdl)} g/100ml. No test record was created.
-              </Text>
-            </View>
-          </View>
-        ) : null}
-        {diagnosticResult ? (
-          <View style={[styles.diagnosticResult, diagnosticResult.ok ? styles.diagnosticResultOk : styles.diagnosticResultError]}>
-            <Feather
-              name={diagnosticResult.ok ? 'check-circle' : 'alert-circle'}
-              size={18}
-              color={diagnosticResult.ok ? colors.successText : colors.errorText}
-            />
-            <View style={styles.diagnosticResultText}>
-              <Text style={styles.diagnosticResultTitle}>
-                {diagnosticResult.ok ? 'Stream healthy' : 'Stream needs attention'}
-              </Text>
-              <Text style={styles.diagnosticResultDetail}>{diagnosticResult.detail}</Text>
-            </View>
-          </View>
-        ) : null}
-      </SectionCard>
+      </>
+    );
+  };
+const renderHero = () => {
+    const steps = buildSetupSteps(snapshot);
+    const nextStep =
+      steps.find((step) => step.state === 'attention') ??
+      steps.find((step) => step.state === 'current') ??
+      null;
+    const isConnecting = snapshot.connection === 'connecting';
+    const hasDevice =
+      snapshot.connection === 'connected' || snapshot.connection === 'connecting';
 
-      {renderHistoryTab()}
-    </>
-  );
+    let actionLabel = 'Open live readings';
+    let actionTab: DeviceSettingsTab = 'live';
+    if (nextStep?.key === 'connect') {
+      actionLabel =
+        snapshot.connection === 'error' ? 'Reconnect' : 'Connect a breathalyser';
+      actionTab = 'connect';
+    } else if (nextStep?.key === 'warmup' || nextStep?.key === 'sensor') {
+      actionLabel = 'View live readings';
+      actionTab = 'live';
+    } else if (!nextStep && !isBaselineSet(snapshot.calibration)) {
+      actionLabel = 'Set clean-air baseline (recommended)';
+      actionTab = 'calibrate';
+    }
 
-  const renderHistoryTab = () => (
-    <>
-      <SectionCard title="Local custody history" description="Records stored on this phone for the signed-in officer.">
-        <View style={styles.profileGrid}>
-          <MetricTile label="LOCAL RECORDS" value={String(historySummary.totalLocalRecords)} />
-          <MetricTile
-            label="DEVICE CAPTURES"
-            value={String(historySummary.deviceCapturedRecords)}
-            tone="success"
-          />
-          <MetricTile label="PENDING SYNC" value={String(historySummary.pendingLocalRecords)} tone="warning" />
-          <MetricTile label="FAILED SYNC" value={String(historySummary.failedLocalRecords)} tone="error" />
-        </View>
-        <View style={styles.historyRow}>
-          <View style={styles.historyIcon}>
-            <Feather name="clock" size={16} color={colors.primaryDark} />
+    return (
+      <View style={styles.statusHero}>
+        <View style={styles.statusHeroPillRow}>
+          <View style={styles.statusHeroTitleBlock}>
+            <Text style={styles.statusHeroTitle}>
+              {hasDevice ? deviceIdentity : 'No breathalyser connected'}
+            </Text>
+            <Text style={styles.statusHeroMeta}>
+              {snapshot.deviceSerial ? `Serial ${snapshot.deviceSerial}` : 'Serial not reported yet'}
+              {snapshot.deviceAddress ? ` · ${snapshot.deviceAddress}` : ''}
+            </Text>
           </View>
-          <View style={styles.historyText}>
-            <Text style={styles.historyTitle}>Last device capture</Text>
-            <Text style={styles.historyDetail}>{formatRelativeTimestamp(historySummary.lastDeviceCapturedAt)}</Text>
+          <View style={[styles.statusPill, { backgroundColor: status.background }]}>
+            <View style={[styles.statusDot, { backgroundColor: status.color }]} />
+            <Text style={[styles.statusPillText, { color: status.color }]}>
+              {statusFromSnapshot(snapshot).label}
+            </Text>
           </View>
         </View>
-      </SectionCard>
 
-      <SectionCard title="By device serial" description="Custody totals recorded in local test records.">
-        {historySummary.bySerial.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Feather name="database" size={24} color={colors.neutralGray} />
-            <Text style={styles.emptyStateTitle}>No device captures yet</Text>
-            <Text style={styles.emptyStateText}>Capture a breathalyzer reading to populate custody history.</Text>
-          </View>
-        ) : (
-          historySummary.bySerial.map((item) => (
-            <View key={item.serial} style={styles.historyRow}>
-              <View style={styles.historyIcon}>
-                <Feather name="cpu" size={16} color={colors.primaryDark} />
-              </View>
-              <View style={styles.historyText}>
-                <Text style={styles.historyTitle}>{item.serial}</Text>
-                <Text style={styles.historyDetail}>
-                  {item.count} capture{item.count === 1 ? '' : 's'} · last {formatRelativeTimestamp(item.lastCapturedAt)}
-                </Text>
-              </View>
-              <Text style={styles.historySource}>
-                {item.averageSessionPeakRaw === null ? '--' : `avg peak ${formatRawValue(item.averageSessionPeakRaw)}`}
-              </Text>
-            </View>
-          ))
-        )}
-      </SectionCard>
-
-      <SectionCard title="By transport" description="Bluetooth Classic and simulated capture counts.">
-        {historySummary.byTransport.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Feather name="bar-chart-2" size={24} color={colors.neutralGray} />
-            <Text style={styles.emptyStateTitle}>No transport history yet</Text>
-            <Text style={styles.emptyStateText}>Device transport totals will appear after the first capture.</Text>
-          </View>
-        ) : (
-          historySummary.byTransport.map((item) => (
-            <View key={item.transport} style={styles.historyRow}>
-              <View style={styles.historyIcon}>
-                <Feather name={item.transport === 'bluetooth_classic' ? 'bluetooth' : 'cpu'} size={16} color={colors.primaryDark} />
-              </View>
-              <View style={styles.historyText}>
-                <Text style={styles.historyTitle}>
-                  {item.transport === 'bluetooth_classic' ? 'Bluetooth Classic (SPP)' : item.transport}
-                </Text>
-                <Text style={styles.historyDetail}>
-                  {item.count} capture{item.count === 1 ? '' : 's'} · last {formatRelativeTimestamp(item.lastCapturedAt)}
-                </Text>
-              </View>
-            </View>
-          ))
-        )}
-      </SectionCard>
-
-      <SectionCard title="Policy limits" description="Role-safe limits used for pass/fail classification.">
-        {runtimeConfig ? (
-          runtimeConfig.bacLimits.map((limit) => (
-            <View key={limit.key} style={styles.policyRow}>
-              <Text style={styles.policyLabel}>{limit.label}</Text>
-              <Text style={styles.policyValue}>{limit.limitG100ml.toFixed(3)} g/100ml</Text>
-            </View>
-          ))
-        ) : (
-          <View style={styles.emptyState}>
-            <Feather name="cloud-off" size={22} color={colors.neutralGray} />
-            <Text style={styles.emptyStateTitle}>Policy limits unavailable offline</Text>
-            <Text style={styles.emptyStateText}>The last loaded policy remains active. Reconnect to refresh it.</Text>
-          </View>
-        )}
-      </SectionCard>
-
-      <View style={styles.noteCard}>
-        <Feather name="shield" size={16} color={colors.accentBlue} />
-        <Text style={styles.noteText}>
-          Device settings and calibration history stay on this phone. Captured test records include transport, firmware serial, calibration version, and raw sensor values in their custody hash.
+        <Text style={styles.statusHeroDetail} numberOfLines={2}>
+          {status.detail}
         </Text>
+
+        <Pressable
+          style={[styles.primaryButton, isConnecting ? styles.buttonDisabled : null]}
+          onPress={() => setActiveTab(actionTab)}
+          disabled={isConnecting}
+          accessibilityRole="button"
+          accessibilityLabel={isConnecting ? 'Connecting' : actionLabel}
+          accessibilityState={{ disabled: isConnecting }}
+        >
+          {isConnecting ? (
+            <ActivityIndicator size="small" color={colors.background} />
+          ) : (
+            <Feather name="arrow-right" size={16} color={colors.background} />
+          )}
+          <Text style={styles.primaryButtonText}>
+            {isConnecting ? 'Connecting…' : actionLabel}
+          </Text>
+        </Pressable>
       </View>
-    </>
+    );
+  };
+
+  const renderStepper = () => {
+    const steps = buildSetupSteps(snapshot);
+    const required = steps.filter(
+      (step) => step.key === 'connect' || step.key === 'warmup' || step.key === 'sensor'
+    );
+    const doneCount = required.filter((step) => step.state === 'done').length;
+    const allDone = doneCount === required.length;
+    const outstanding = steps.find((step) => step.state !== 'done');
+
+    return (
+      <View style={styles.setupStepper}>
+        <Text style={allDone ? styles.stepperCaptionSuccess : styles.stepperCaption}>
+          {allDone
+            ? 'Ready for roadside testing'
+            : `Setup: ${doneCount} of ${required.length} required steps done`}
+        </Text>
+        <View style={styles.stepperItems}>
+          {steps.map((step) => (
+            <StepperItem key={step.key} step={step} onPress={() => setActiveTab(step.tab)} />
+          ))}
+        </View>
+        <Text style={styles.stepperDetail}>{outstanding?.detail ?? ''}</Text>
+      </View>
+    );
+  };
+const renderTabBar = () => (
+    <View style={styles.tabBar}>
+      {TABS.map((tab) => {
+        const active = activeTab === tab.key;
+        return (
+          <Pressable
+            key={tab.key}
+            style={[styles.tabButton, active ? styles.tabButtonActive : null]}
+            onPress={() => setActiveTab(tab.key)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+            accessibilityLabel={`${tab.label} tab`}
+          >
+            <Feather
+              name={tab.icon}
+              size={16}
+              color={active ? colors.primaryDark : colors.textSecondary}
+            />
+            <Text style={[styles.tabLabel, active ? styles.tabLabelActive : null]}>
+              {tab.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 
-  return (
+  const renderBanner = () => {
+    if (!inlineMessage) return null;
+    return (
+      <View style={styles.bannerRow}>
+        <View
+          style={[
+            styles.inlineMessage,
+            inlineMessage.type === 'success'
+              ? styles.inlineMessageSuccess
+              : inlineMessage.type === 'error'
+                ? styles.inlineMessageError
+                : styles.inlineMessageInfo
+          ]}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          <Feather
+            name={
+              inlineMessage.type === 'success'
+                ? 'check-circle'
+                : inlineMessage.type === 'error'
+                  ? 'alert-circle'
+                  : 'info'
+            }
+            size={16}
+            color={
+              inlineMessage.type === 'success'
+                ? colors.successText
+                : inlineMessage.type === 'error'
+                  ? colors.errorText
+                  : colors.accentBlue
+            }
+          />
+          <Text style={styles.inlineMessageText}>{inlineMessage.text}</Text>
+        </View>
+        <Pressable
+          style={styles.bannerDismiss}
+          onPress={() => setInlineMessage(null)}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss message"
+        >
+          <Text style={styles.bannerDismissText}>Dismiss</Text>
+        </Pressable>
+      </View>
+    );
+  };
+return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
@@ -1792,109 +2300,43 @@ export function DeviceSettingsModal({
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <View style={styles.sheet}>
-          <View style={styles.header}>
-            <View style={styles.headerLeading}>
-              <View style={styles.headerIcon}>
-                <Feather name="bluetooth" size={22} color={colors.background} />
-              </View>
-              <View>
-                <Text style={styles.headerEyebrow}>FIELD DEVICE</Text>
-                <Text style={styles.headerTitle}>Breathalyser console</Text>
-              </View>
-            </View>
-            <Pressable
-              style={styles.closeButton}
-              onPress={onClose}
-              accessibilityRole="button"
-              accessibilityLabel="Close breathalyser console"
-              hitSlop={10}
-            >
-              <Feather name="x" size={22} color={colors.background} />
-            </Pressable>
-          </View>
-
-          <View style={[styles.deviceHero, { borderColor: status.color }]}>
-            <View style={styles.deviceHeroTop}>
-              <View style={[styles.deviceHeroIcon, { backgroundColor: status.background }]}>
-                <Feather name="bluetooth" size={22} color={status.color} />
-              </View>
-              <View style={styles.deviceHeroText}>
-                <Text style={styles.deviceHeroTitle}>{deviceIdentity}</Text>
-                <Text style={styles.deviceHeroDetail}>{status.detail}</Text>
-              </View>
-              <View style={[styles.deviceHeroBadge, { backgroundColor: status.background }]}>
-                <View style={[styles.statusDot, { backgroundColor: status.color }]} />
-                <Text style={[styles.statusChipText, { color: status.color }]}>{status.label}</Text>
-              </View>
-            </View>
-            <View style={styles.signalRailHero}>
-              {signalSamples.length === 0 ? (
-                <View style={styles.signalRailHeroEmpty}>
-                  <Text style={styles.signalRailHeroEmptyText}>Signal rail waiting for telemetry</Text>
+            <View style={styles.header}>
+              <View style={styles.headerLeading}>
+                <View style={styles.headerIcon}>
+                  <Feather name="bluetooth" size={22} color={colors.background} />
                 </View>
-              ) : (
-                signalSamples.map((sample, index) => (
-                  <View
-                    key={`hero-${index}-${sample}`}
-                    style={[
-                      styles.signalBarHero,
-                      {
-                        height: `${Math.max(12, Math.min(100, (sample / 1023) * 100))}%`,
-                        backgroundColor: index >= signalSamples.length - 3 ? status.color : 'rgba(64, 150, 254, 0.75)'
-                      }
-                    ]}
-                  />
-                ))
-              )}
+                <View>
+                  <Text style={styles.headerEyebrow}>FIELD DEVICE</Text>
+                  <Text style={styles.headerTitle}>Breathalyser settings</Text>
+                </View>
+              </View>
+              <Pressable
+                style={styles.closeButton}
+                onPress={onClose}
+                accessibilityRole="button"
+                accessibilityLabel="Close breathalyser settings"
+                hitSlop={10}
+              >
+                <Feather name="x" size={22} color={colors.background} />
+              </Pressable>
             </View>
-            <View style={styles.deviceHeroStats}>
-              <View style={styles.deviceHeroStat}>
-                <Text style={styles.deviceHeroStatLabel}>SERIAL</Text>
-                <Text style={styles.deviceHeroStatValue}>{snapshot.deviceSerial ?? 'Not reported'}</Text>
-              </View>
-              <View style={styles.deviceHeroStat}>
-                <Text style={styles.deviceHeroStatLabel}>SAMPLES</Text>
-                <Text style={styles.deviceHeroStatValue}>{snapshot.readings}</Text>
-              </View>
-              <View style={styles.deviceHeroStat}>
-                <Text style={styles.deviceHeroStatLabel}>PEAK BAC</Text>
-                <Text style={styles.deviceHeroStatValue}>{formatBacGdl(snapshot.peakBacGdl)}</Text>
-              </View>
-            </View>
+
+            {renderHero()}
+            {renderStepper()}
+            {renderTabBar()}
+
+            <ScrollView
+              style={styles.body}
+              contentContainerStyle={styles.bodyContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {renderBanner()}
+              {activeTab === 'connect' ? renderConnectTab() : null}
+              {activeTab === 'calibrate' ? renderCalibrateTab() : null}
+              {activeTab === 'live' ? renderLiveTab() : null}
+            </ScrollView>
           </View>
-
-          <View style={styles.tabBar}>
-            {TABS.map((tab) => {
-              const active = activeTab === tab.key;
-              return (
-                <Pressable
-                  key={tab.key}
-                  style={[styles.tabButton, active && styles.tabButtonActive]}
-                  onPress={() => setActiveTab(tab.key)}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: active }}
-                  accessibilityLabel={`${tab.label} settings tab`}
-                >
-                  <Feather name={tab.icon} size={16} color={active ? colors.primaryDark : colors.textSecondary} />
-                  <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{tab.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <ScrollView
-            style={styles.body}
-            contentContainerStyle={styles.bodyContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {activeTab === 'device' ? renderDeviceTab() : null}
-            {activeTab === 'connect' ? renderConnectTab() : null}
-            {activeTab === 'calibration' ? renderCalibrationTab() : null}
-            {activeTab === 'activity' ? renderActivityTab() : null}
-          </ScrollView>
-
-        </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>

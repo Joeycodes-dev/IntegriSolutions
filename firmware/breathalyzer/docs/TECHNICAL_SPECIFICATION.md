@@ -3,7 +3,7 @@
 | Item | Value |
 | --- | --- |
 | Document status | Draft v0.1 for engineering review. Not approved for enforcement or evidential use. |
-| Date | 2026-10-13 |
+| Date | 2026-10-14 |
 | Firmware revision | `firmware/breathalyzer/breathalyzer.ino` at commit `1d86a91` (working tree clean for `firmware/` on 2026-10-13) |
 | App revision | `apps/mobile` breathalyzer services at `f6c4ff7`; Android native module `Hc06BluetoothModule.java` at `1d86a91`. Working tree clean for these paths on 2026-10-13. |
 | Companion artefacts | `diagrams/01`–`06` (draw.io, editable PNG) and `wireframes/01`–`02` (draw.io, editable PNG) in this folder |
@@ -46,7 +46,7 @@ MQ-3 module ──AO──▶ Arduino A0 ─┐                       ┌─ Hc0
                               Local SQLite (pending_sync) ─▶ sync.ts ─▶ backend (Cloudflare Worker, Supabase)
 ```
 
-Telemetry is **one-way**. The firmware parses no commands, and the app sends none. The console's diagnostic report says the same (`buildDeviceDiagnosticReport`, firmware note).
+Telemetry is still the primary stream. The firmware is now also **capable of receiving** newline-terminated ASCII configuration commands on both the HC-06 and the USB port, and it resets runtime state on demand. It emits no non-telemetry output, so the app's parser is unaffected.
 
 ---
 
@@ -132,34 +132,45 @@ Source: `firmware/breathalyzer/breathalyzer.ino`. Flow: diagram `04-firmware-loo
 | `HC06_ARDUINO_RX_PIN` | 3 | SoftwareSerial RX, from HC-06 TXD |
 | `HC06_ARDUINO_TX_PIN` | 4 | SoftwareSerial TX, to HC-06 RXD through the divider |
 | `SERIAL_BAUD` | 9600 | Rate for USB serial and for the HC-06 UART |
-| `DEVICE_SERIAL` | `"MQ3-0001"` | Serial in every record. The same value is used on every unit (KI-04). |
+| `config.serial` | `"MQ3-0001"` | EEPROM device serial (default). Settable per unit with `SN`. An unconfigured unit reports `MQ3-0001` everywhere (KI-04). |
 | `NUM_SAMPLES` | 25 | ADC reads per record |
 | `SAMPLE_DELAY_MS` | 2 | Gap between reads |
-| `ALARM_THRESHOLD` | 350 | ADC counts. The latch sets above this value. |
+| `ALARM_THRESHOLD` (now `config.alarmThreshold`) | 350 | ADC counts. The latch sets above this value. Storeable in EEPROM, settable with `ALM`. |
 | `ALARM_HYSTERESIS` | 20 | The latch clears below 330 |
-| `ALARM_HOLD_MS` | 0 | No hold time. The latch clears as soon as the level is below 330. |
 | `WARMUP_MS` | 60 000 | Warm-up flag window after boot |
-| `VCC` / `ADC_MAX` | 5.0 V / 1023 | Conversion constants |
-| `RL` | 1 000.0 Ω | Load resistor assumed in `rs` (KI-05) |
-| Tone | 2 700 Hz | Alarm frequency |
-| Record buffer | 160 bytes | A JSON record longer than 157 bytes is not sent |
+| `VCC` / `ADC_MAX` | measured mV / 1023 | `VCC` is measured with the internal bandgap (`readVccMv`, §4.12), `ADC_MAX` still 1023. |
+| `RL` (`config.rlOhms`) | 1 000 Ω | Load resistance, now from EEPROM (default 1000). Settable with `RL` (KI-05). |
+| `ALARM_HOLD_MS` | 1500 | 1500 ms minimum latch hold (was 0). Clears only after the level has been below the hysteresis band for 1.5 s. |
+| Tone (`BUZZER_FREQ`) | 2 700 Hz | Alarm frequency |
+| `WARMUP_STABLE_CEILING_MS` | 90 000 | Hard ceiling for the post-60 s stability wait |
+| `PEAK_HOLD_MS` | 8 000 | Post-blow `PEAK` hold window |
+| `RECORD_INTERVAL_MS` | 200 | Pumped (non-blocking) inter-record wait |
+| `CONFIG_MAGIC` / `CONFIG_VERSION` | 0x4953 / 1 | EEPROM `DeviceConfig` validity markers |
+| Config ranges | RL and R0 100–500 000, alarm 50–1000 | Accepted ranges for the config commands |
+| `VCC` bands | 3 500–6 000 mV plausible, 4 500–5 500 mV healthy, 5 000 mV fallback | Bandgap read sanity and fault logic (§4.12) |
+| Record buffer | 256 bytes | A JSON record longer than about 236 bytes is not sent (KI-18) |
 
 ### 4.3 Boot and main loop
 
-1. **`setup()`**: configure D8 and turn the buzzer off. Start `Serial` and `HC06Serial` at 9600. Record `bootMs`. Take one 25-sample average and set `ema` and `peak` to it.
+1. **`setup()`**: configure D8 and turn the buzzer off. Call `loadConfig()` — read the EEPROM `DeviceConfig`, validate magic, version and CRC, and fall back to defaults held in RAM (no write) when invalid. Start `Serial` and `HC06Serial` at 9600. Record `bootMs`, `lastOverMs` and `blowPeakMs`. Take one 25-sample burst to seed `ema`, `peak` and `baselineEma`. Enable the 2 s hardware watchdog with `wdt_enable(WDTO_2S)`.
 2. **`loop()`**, once per record:
-   1. `raw` = mean of 25 ADC reads with 2 ms gaps (about 50–75 ms).
-   2. `ema = (3·ema + raw) / 4` in integer arithmetic.
-   3. `warming` = `millis() − bootMs < 60 000`.
-   4. If not warming: `peak = max(peak, ema)`. While `ema < 250` and `peak > ema`, `peak` decreases by 2.
-   5. `over = ema > 350`. If `over`, set `alarm = true`. Otherwise, if `alarm` and `ema < 330`, set `alarm = false`.
-   6. Buzzer: `tone(D8, 2700)` only when `!warming && alarm`. Otherwise `noTone(D8)`.
-   7. Convert: `vout = raw × 5 / 1023`, `rs = 1000 × (5 − vout) / vout`, or −1 if `vout ≤ 0.05`.
-   8. Format the JSON line (§5) and append CRLF.
-   9. `HC06Serial.write()` (blocking SoftwareSerial), then `Serial.write()` (USB copy).
-   10. `delay(200)`.
+   1. `wdt_reset()`, then poll `HC06Serial` and `Serial` for a newline-terminated command (§4.11).
+   2. Read the supply rail with `readVccMv()` (§4.12) and set `vccVolts = vccMv / 1000.0`.
+   3. `raw` = mean of a 25-sample burst with 2 ms gaps (about 50–75 ms). Track `minRaw`, `maxRaw` and `spread = maxRaw − minRaw`, and reset the watchdog inside the burst.
+   4. `ema = (3·ema + raw) / 4` in integer arithmetic.
+   5. `warming` = `uptime < 60 000`, or `uptime < 90 000` while `abs(ema − prevEma) > 8` (measured stabilisation, §4.7).
+   6. Stuck-sensor detector: if not warming and `raw == prevRaw` with `spread == 0`, increment `stuckCount` (cap 1000); else reset it to 0.
+   7. Clean-air baseline: on the first warm-complete record set `baselineEma = ema`; afterwards, while `ema <= baselineEma + 8`, drift `baselineEma` towards `ema` slowly.
+   8. Device peak: `peak = max(peak, ema)`; while `ema` is well below the threshold and `peak > ema`, `peak` falls by 2.
+   9. Breath state machine: `WARM` while warming, otherwise `BLOW` / `PEAK` / `IDLE` (§4.12).
+   10. Alarm latch with a 1500 ms minimum hold (§4.8).
+   11. Convert `vout = raw × vccVolts / 1023` and `rs = config.rlOhms × (vccVolts − vout) / vout`, guarded to `0.05 < vout < vccVolts − 0.01`; otherwise `rs = −1`.
+   12. Pick the `fault` string: `short`, `rail`, `vcc`, `stuck` or `ok` (§4.12).
+   13. Edge-trigger the buzzer from `!warming && alarm && config.buzzerEnabled` (§4.8).
+   14. Format the JSON line (§5), append the XOR `crc` and CRLF, then write HC-06 first and USB second.
+   15. Pump a non-blocking 200 ms inter-record wait that keeps polling commands and resetting the watchdog.
 
-Note that the firmware evaluates `over` and `alarm` even while warming. Only the buzzer is suppressed during warm-up.
+Note that `over` and `alarm` are still evaluated during warm-up; only the buzzer's desired state depends on `!warming`.
 
 ### 4.4 Signal processing
 
@@ -176,32 +187,61 @@ Note that the firmware evaluates `over` and `alarm` even while warming. Only the
 | Stage | Estimate | Basis |
 | --- | --- | --- |
 | 25 ADC reads with `delay(2)` | 50–75 ms | 25 × about 2–3 ms |
-| `delay(200)` | 200 ms | Sketch |
-| SoftwareSerial TX of about 112 bytes | ≈117 ms | 112 bytes × 10 bits ÷ 9600 baud, blocking |
-| USB TX back-pressure | 0–50 ms | Only when the 64-byte hardware buffer is full |
-| **Record period** | **≈0.37–0.44 s** | **≈2.3–2.7 records per second** |
+| Bandgap `VCC` read (+2 ms settle) | ≈2–3 ms | One ADC conversion plus the settle delay (§4.12) |
+| `RECORD_INTERVAL_MS` wait | 200 ms | Pumped `millis()` wait (was blocking `delay`) |
+| SoftwareSerial TX of about 200–230 bytes | ≈210–240 ms | bytes × 10 bits ÷ 9600 baud, blocking |
+| USB TX back-pressure | 0–1 s when the host is slow to read | Only when the 64-byte hardware buffer is full and the longer record is mirrored |
+| **Record period** | **≈0.5–0.7 s** | **≈1.4–2 records per second** |
 
-`README.md` says about two readings per second, which agrees within the uncertainty. Confirm with serial timestamps (TC-12). The 200 ms delay is only one part of the period. Any document that says "one line every 200 ms" is wrong (§12).
+The README now says about one to two readings per second. Confirm measured values with serial timestamps (TC-12). The blocking RFCOMM write of the longer record is now the dominant term, not the 200 ms wait. Any document that still says "one line every 200 ms" or "about 2 Hz" is out of date (§12).
 
 ### 4.7 Warm-up gate
 
-`warm` is `true` for the first 60 seconds after boot and `false` afterwards. The app uses this flag to keep warm-up samples out of the session peak and to refuse capture (§6.4, §6.7).
+`warm` is `true` while `uptime < 60 000`, **or** while `uptime < 90 000` and the smoothed value is still moving (`abs(ema − prevEma) > 8` counts per record). So a steady input clears `warm` at exactly 60 s, while a still-drifting input holds it past 60 s up to the 90 s ceiling. The app uses this flag to keep warm-up samples out of the session peak and to refuse capture (§6.4, §6.7).
 
-The 60 s window is a **UI gate**. It is not a stabilisation test. The datasheet preheat is over 24 hours (§3.4). The firmware does not check the heater or the sensor's stability (KI-06).
+This is now a **measured-stability gate** rather than a pure fixed 60 s timer, which is a partial improvement on the datasheet issue. It is still far shorter than the MQ-3 preheat of over 24 hours (§3.4), it never inspects the heater power, and a sensor that settles while cold will still pass (KI-06).
 
 ### 4.8 Alarm latch and buzzer
 
 Diagram `03-firmware-state-machine.drawio` shows the two independent regions and the truth table.
 
-- The latch sets when `ema > 350`, and clears when `ema < 330`. The hold time is zero.
-- The buzzer sounds only when the device is ready (`!warming`) **and** the latch is set. The alarm can latch during warm-up, but the buzzer stays off.
-- The buzzer cannot be configured from the app. The firmware never reads commands (KI-02).
+- The latch sets when `ema` exceeds the threshold (`config.alarmThreshold`, default 350) and clears below `threshold − ALARM_HYSTERESIS`, **but only after a 1500 ms minimum hold** (`ALARM_HOLD_MS`). The hold stops the latch chattering when `ema` sits on the hysteresis boundary.
+- The buzzer is **edge-triggered**: its desired state is `!warming && alarm && config.buzzerEnabled`. `tone(BUZZER_PIN, 2700)` is called only when that state goes high, and `noTone(BUZZER_PIN)` only when it goes low. Because `tone()` is not re-issued every record, the waveform phase is stable across telemetry bursts, which reduces (but does not eliminate) the SoftwareSerial distortion in KI-11.
+- The alarm can latch during warm-up, but the buzzer stays off while warming.
+- The buzzer can be turned off at runtime with `BEEP 0` and the threshold changed with `ALM` (both persist to EEPROM). The app still sends no commands (KI-02 is about the app copy, not the link).
 
 ### 4.9 Output
 
-- One line per record: a JSON object (§5), then `\r\n`. The line goes to HC-06 first and then to USB.
-- A record that does not fit the buffer is dropped without a message.
-- No checksum, sequence number or protocol version is included.
+- One line per record: a JSON object (§5), a 2-digit uppercase hex XOR `crc`, then `\r\n`. The line goes to HC-06 first and then to USB.
+- A record that does not fit the 256-byte buffer is dropped silently (KI-18). The `seq` field lets a receiver notice the gap.
+
+### 4.10 EEPROM configuration
+
+- A versioned `DeviceConfig` struct lives in EEPROM: `magic` (`0x4953`), `version` (`1`), `buzzerEnabled`, `serial[16]`, `rlOhms`, `r0Ohms`, `alarmThreshold`, and a trailing `crc` (CRC-16/CCITT-FALSE over every preceding byte).
+- On boot `loadConfig()` reads it and keeps it only when the magic, version and CRC all check out; otherwise it uses defaults held in RAM and does **not** write, so a boot never burns a write cycle. The value is sanitized to its valid ranges either way.
+- A config command (`CAL`, `RL`, `ALM`, `BEEP`, `SN`, `FACTORY`) changes a field and calls `saveConfig()`, which recomputes the CRC and writes the struct. EEPROM is written only on those commands (about 100 000 writes per cell).
+
+### 4.11 Command parser
+
+- Both `HC06Serial` and `Serial` are polled non-blockingly at the top of `loop()` and during the inter-record wait. Input is buffered until `\r` or `\n`, trimmed, and dispatched. The firmware emits no reply text, so the telemetry stream stays pure JSON.
+- Commands (argument ranges in parentheses):
+  - `RST` — reset runtime state: `peak`, `alarm`, the clean-air baseline and the breath state to `IDLE`, and clear `stuckCount`.
+  - `CAL AIR` — once warm-complete and `rs > 0`, set `R0` to the rounded current sensor resistance and save.
+  - `CAL <ohms>` — set `R0` directly (100–500 000) and save.
+  - `RL <ohms>` — set `RL` (100–500 000) and save.
+  - `ALM <adc>` — set the alarm threshold (50–1000) and save.
+  - `BEEP <0 or 1>` — enable or disable the buzzer and save.
+  - `SN <serial>` — set the serial (1–15 chars of `[A-Za-z0-9-]`) and save; invalid input is ignored.
+  - `FACTORY` — restore the defaults and save.
+  - `PING` — no-op health check.
+- Out-of-range or malformed arguments are ignored and cause no EEPROM write.
+
+### 4.12 Watchdog, bandgap VCC, fault detection and breath state
+
+- **Watchdog.** On AVR, `wdt_enable(WDTO_2S)` runs at the end of `setup()` and `wdt_reset()` runs at the top of `loop()` and inside the sampling burst, so a hung sketch reboots within 2 s instead of freezing the stream.
+- **Bandgap VCC.** On `__AVR_ATmega328P__` / `__AVR_ATmega168__`, `readVccMv()` measures the internal 1.1 V reference against AVCC by selecting AVCC as the reference and the bandgap ADC channel, waiting 2 ms, and computing `1125300L / adc`. The result is clamped to the 3 500–6 000 mV plausibility band with a 5 000 mV fallback. Other cores return 5 000 mV. `vout` and `rs` are computed from this value.
+- **Sensor fault.** `fault` is `short` (`raw == 0` or `vout <= 0.05`), else `rail` (`raw >= 1020`), else `vcc` (`vccMv` outside 4 500–5 500), else `stuck` (identical `raw` with zero `spread` for 25 records while warm-complete), else `ok`.
+- **Breath state.** `state` is `WARM` while warming; otherwise `BLOW` when `ema >= baselineEma + 20` and not falling faster than 2 counts, `PEAK` on the record that leaves `BLOW` or while a peak holds within 8 s of the blow peak and stays above `baselineEma + 20`, else `IDLE`.
 
 ---
 
@@ -215,7 +255,7 @@ Diagram `03-firmware-state-machine.drawio` shows the two independent regions and
 | Service UUID | `00001101-0000-1000-8000-00805F9B34FB` (`Hc06BluetoothModule.java`) |
 | Module role | Slave. The phone opens the RFCOMM socket. |
 | UART between firmware and HC-06 | 9600 baud, 8 data bits, no parity, 1 stop bit (8N1). This is the HC-06's UART rate, set in the firmware. |
-| Direction | Firmware → phone only |
+| Direction | Firmware → phone for telemetry. The phone never writes. The firmware can also receive config commands (§4.11) but emits no non-telemetry output. |
 | Pairing | Done once in Android Bluetooth settings. Default PINs `1234` or `0000` (`README.md`). |
 
 RFCOMM has no baud-rate setting. The app does not "open the socket at 9600 baud". The mobile README's wording to that effect is wrong (§12).
@@ -223,7 +263,7 @@ RFCOMM has no baud-rate setting. The app does not "open the socket at 9600 baud"
 ### 5.2 Framing and encoding
 
 - Each record is one JSON object on one line, ASCII, terminated by CR LF (`0x0D 0x0A`).
-- Length: 110 bytes plus CRLF (112 bytes) for the README example. Realistic values give 102–112 bytes including CRLF.
+- Length: about 200–230 bytes plus CRLF with the new fields. The line is built in a 256-byte buffer, and a record that would overflow it is dropped (KI-18). Every line ends with an XOR `crc` a receiver can recompute.
 - The app discards any run longer than 4 096 bytes without a newline and asks the officer to reconnect (§6.3).
 
 ### 5.3 Field dictionary
@@ -233,24 +273,33 @@ RFCOMM has no baud-rate setting. The app does not "open the socket at 9600 baud"
 | `raw` | integer | ADC counts, 0–1023 | Mean of 25 reads in this record | RAW ADC tile, conversion, SIGNAL VOLTAGE tile. Missing or non-numeric `raw` rejects the line. |
 | `avg` | integer | ADC counts, EMA of `raw` | `(3·ema + raw) / 4` | Smoothed average. Live BAC. Session peak. Clean-air baseline. Missing `avg` falls back to `raw`. |
 | `peak` | integer | ADC counts | Device peak (§4.5) | DEVICE PEAK tile only. Missing `peak` falls back to `raw`. |
-| `sn` | string | Letters, digits and hyphens | Constant `"MQ3-0001"` in this revision | Serial shown in the header and stored in the record. Trimmed. Null if absent. |
-| `vout` | number | Volts, three decimals | `raw × 5 / 1023` | Parsed but not used for calculation. The app recomputes from `raw`. |
-| `rs` | integer | Ω, or −1 | `1000 × (5 − vout) / vout`, or −1 if `vout ≤ 0.05` | Parsed but not used for calculation. The app recomputes from `raw`. |
-| `over` | boolean | — | `ema > 350` | THRESHOLD chip. Clean-air baseline is refused when true. |
+| `sn` | string | Letters, digits and hyphens | `config.serial` (default `MQ3-0001`, settable with `SN`) | Serial shown in the header and stored in the record. Trimmed. Null if absent. |
+| `vout` | number | Volts, three decimals | `raw × vccVolts / 1023` (measured rail, ≈5 V) | Parsed but not used for calculation. The app recomputes from `raw`. |
+| `rs` | integer | Ω, or −1 | `config.rlOhms × (vccVolts − vout) / vout`, or −1 if `vout ≤ 0.05` or `vout ≥ vccVolts − 0.01` | Parsed but not used for calculation. The app recomputes from `raw`. |
+| `over` | boolean | — | `ema > config.alarmThreshold` (default 350) | THRESHOLD chip. Clean-air baseline is refused when true. |
 | `alarm` | boolean | — | Latch state (§4.8) | ALARM chip. Clean-air baseline is refused when true. |
-| `warm` | boolean | — | `millis() − bootMs < 60 000` | WARMING chip. Gates the session peak and capture. Missing `warm` is read as `false` (KI-07). |
+| `warm` | boolean | — | `uptime < 60 000`, or `uptime < 90 000` while `ema` is still moving (§4.7) | WARMING chip. Gates the session peak and capture. Missing `warm` is read as `false` (KI-07). |
+| `seq` | integer | counter since boot | `seq`, incremented each record | Detects dropped or duplicated records. |
+| `up` | integer | ms since boot | `millis() − bootMs` | Diagnostics. |
+| `vcc` | integer | mV | `readVccMv()` (§4.12) | RAIL diagnostics; also feeds `vout` and `rs`. |
+| `spread` | integer | ADC counts | `maxRaw − minRaw` of the 25-sample burst | Noise / settle indicator. |
+| `r0` | integer | Ω | `config.r0Ohms` | Shows the clean-air reference the device is using. |
+| `fault` | string | ok, short, rail, vcc, stuck | Sensor-fault logic (§4.12) | Readiness diagnostics. The app does not yet read it. |
+| `state` | string | WARM, BLOW, PEAK, IDLE | Breath state machine (§4.12) | On-device breath state. The app does not yet read it. |
+| `crc` | string | 2 uppercase hex | XOR of bytes after `{` up to the end of `state` | Integrity check. The app does not verify it (yet). |
 
 ### 5.4 Worked example
 
 Record from the README:
 
 ```json
-{"raw":120,"avg":118,"peak":120,"sn":"MQ3-0001","vout":0.587,"rs":7525,"over":false,"alarm":false,"warm":true}
+{"raw":120,"avg":118,"peak":120,"sn":"MQ3-0001","vout":0.587,"rs":7525,"over":false,"alarm":false,"warm":false,"seq":42,"up":96500,"vcc":4990,"spread":2,"r0":7532,"fault":"ok","state":"IDLE","crc":"63"}
 ```
 
-- `vout` = 120 × 5 / 1023 = 0.5865 V, shown as 0.587.
-- `rs` = 1000 × (5 − 0.5865) / 0.5865 ≈ 7 525 Ω. The firmware uses the unrounded voltage.
-- `warm: true`, so the app excludes this record from the session peak.
+- `vout` = 120 × 4.990 / 1023 ≈ 0.586 V, shown as 0.587. At exactly 5.000 V it matches the old 0.587 figure; the firmware now uses the measured `vcc` (here 4 990 mV), so the value tracks the real rail.
+- `rs` = 1000 × (4.990 − 0.586) / 0.586 ≈ 7 525 Ω, computed from the unrounded voltage and `config.rlOhms`.
+- `over`, `alarm` and `warm` are all `false`, so this record is eligible for the session peak and for capture.
+- `seq`, `up`, `vcc`, `spread`, `r0`, `fault` and `state` are the new diagnostics. `crc` is the XOR of every byte after the opening `{` up to the end of `"state":"IDLE"`, emitted as two uppercase hex digits.
 
 ### 5.5 What the app accepts
 
@@ -259,11 +308,11 @@ Implemented in `parseBreathalyzerLine` (`apps/mobile/src/services/breathalyzer.t
 - Takes the text between the first `{` and the last `}`. Stray text around the object is tolerated.
 - Requires a finite `raw`.
 - Booleans count as true only when they are exactly `true`.
-- No range check is applied to any field. No checksum is checked. A missing `warm` counts as `false` (KI-07).
+- No range check is applied to any field, and the `crc` is not verified. The `seq`, `up`, `vcc`, `spread`, `r0`, `fault` and `state` fields are ignored by the current parser, so an existing app build keeps working with the extended stream. A missing `warm` counts as `false` (KI-07).
 
 ### 5.6 Compatibility
 
-There is no protocol version field. Any change to field names, units or framing needs a coordinated firmware and app release. Renaming or re-scaling a field will silently break the app's parser.
+This revision keeps the first nine fields in the same names, order and units and only appends new ones, so the additions are backward compatible with the current app. There is still no protocol version field and no checksum enforcement, so renaming or re-scaling any existing field would still silently break the app's parser. Any future change to an existing field name, unit or the framing needs a coordinated firmware and app release.
 
 ---
 
@@ -356,13 +405,13 @@ Two properties follow from the model:
 
 - **Storage.** The active profile is kept in SecureStore (`breathalyzerStorage.ts`). The history (`integriscan.breathalyzer.calibrationHistory`) holds the last 20 changes. Calibration lives on the phone, not on the device.
 - **Clean-air baseline** (Calibrate tab, "Set clean-air baseline"). Sets `R0` to the `Rs` computed from the current `avg`. The version becomes `<base>+clean-air`. It is refused when there is no average, when `over` or `alarm` is true, or when `Rs` is out of range.
-- **Manual profile** (Calibrate tab, "Apply measurement profile"). Edits load resistance, clean-air resistance, mg/L at ratio 1, curve slope and clean-air ratio. Validation: load resistance and clean-air resistance above zero, mg/L above zero, slope non-zero, ratio above zero. The version becomes `<base>+manual-<stamp>`. The change is written to history and audited as `test.device.calibrated`.
-- **Restore defaults** ("Restore default calibration"). Replaces the active profile with `DEFAULT_BREATHALYZER_CALIBRATION`, clears the stored profile, and records a `reset` entry.
+- **Manual profile** (Calibrate tab, "Show advanced settings" then "Apply settings"). Edits load resistance, clean-air resistance, mg/L at ratio 1, curve slope and clean-air ratio. Validation: load resistance and clean-air resistance above zero, mg/L above zero, slope non-zero, ratio above zero. The version becomes `<base>+manual-<stamp>`. The change is written to history and audited as `test.device.calibrated`.
+- **Restore defaults** ("Restore factory defaults"). Replaces the active profile with `DEFAULT_BREATHALYZER_CALIBRATION`, clears the stored profile, and records a `reset` entry.
 - **Locks.** While the dashboard is in its reading step (`lockDeviceMutations`), Set clean-air baseline is disabled, and manual apply and restore are refused with a message.
 
 ### 6.7 Capture readiness and capture gates
 
-**Readiness** (`buildCaptureReadiness`, shown in the Activity tab):
+**Readiness** (`buildCaptureReadiness`, shown in the Live tab as the "Ready for a roadside test" card):
 
 | Check | Passes when |
 | --- | --- |
@@ -392,7 +441,7 @@ On success, `bacReading` is set to the BAC with three decimals, and `test.device
 | General | 0.050 |
 | Professional | 0.020 |
 
-The runtime configuration can override these. The console's Policy limits card shows the values in use.
+The runtime configuration can override these. The console's "BAC limits in force" disclosure (Live tab) shows the values in use.
 
 ### 6.9 Evidence and audit
 
@@ -420,16 +469,17 @@ The runtime configuration can override these. The console's Policy limits card s
 
 ## 7. Console user interface
 
-Wireframes: `wireframes/01-console-tabs.drawio` (four tabs) and `wireframes/02-console-states-and-gates.drawio` (header states and gate messages).
+Wireframes: `wireframes/01-console-tabs.drawio` (the three tabs with hero, stepper and body) and `wireframes/02-console-states-and-gates.drawio` (nine hero states and the exact gate messages). Both are current for the three-tab console below.
+
+The console opens on a status hero (status label, device identity, serial, and a single primary action for the next setup step), then a four-step stepper (Connect, Warm up, Sensor, Baseline), then the tab bar.
 
 | Tab | Purpose | Key controls | Locks and rules |
 | --- | --- | --- | --- |
-| Device | Current device, readiness, next action | Connect a device; Disconnect breathalyzer; Open complete live activity; Share a breathalyser diagnostic report | Disconnect is disabled during the reading step. Confirm dialog when "Confirm before disconnect" is on. |
-| Connect | Pair and select an HC-06 | Scan paired devices; Pair a new HC-06; Check app permissions; Connect simulated MQ-3 device (when enabled); Remember and auto-connect; Confirm before disconnect; Forget saved breathalyzer | Auto-connect runs once when the console loads, and only if the saved device is still paired. |
-| Calibrate | Clean-air baseline and conversion profile | Set clean-air baseline; Apply measurement profile; Restore default calibration; Conversion preview; Clear calibration history | Locked during the reading step. Manual edits have no role check (KI-10). |
-| Activity | Readiness, live telemetry, diagnostics, custody | Run three second stream diagnostic; Reset subject peak; Preview a test capture; Share diagnostic report | Reset subject peak is locked during the reading step. Preview writes nothing. |
+| Connect | Pair and select an HC-06 | Find my breathalysers; Pair a new breathalyser; Check Bluetooth permissions; Connect / Disconnect breathalyser; Reconnect automatically; Ask before disconnecting; Forget saved breathalyser; Start simulated breathalyser (Test mode card, when enabled) | Auto-connect runs once when the console loads, and only if the saved device is still paired. Disconnect is disabled during the reading step. |
+| Calibrate | Clean-air baseline and conversion profile | Set clean-air baseline; Show advanced settings (Load resistor, Clean-air resistance, mg/L at ratio 1, Curve slope, Clean-air ratio); Apply settings; Restore factory defaults; raw-value preview; Baseline history | Locked during the reading step. Manual edits have no role check (KI-10). |
+| Live | Live and peak BAC, signal chart, readiness, diagnostics, custody | Reset peak for next subject; Dry-run capture; Check data stream; Share diagnostic report; Technical readings; Records on this phone; BAC limits in force | Reset peak for next subject is locked during the reading step. Dry-run capture writes nothing. |
 
-Header states (from `statusFromSnapshot`): **Offline**, **Connecting**, **Warming**, **Live**, **Attention**. Live values are cleared on any error or disconnect (`resetLiveState`).
+Status labels (from `statusFromSnapshot`): **Not connected**, **Connecting**, **Connection problem**, **Sensor fault**, **Waiting for data**, **Warming up**, **Settling**, **Ready**. Live values are cleared on any error or disconnect (`resetLiveState`).
 
 ---
 
@@ -447,7 +497,7 @@ Header states (from `statusFromSnapshot`): **Offline**, **Connecting**, **Warmin
 
 Run the mobile breathalyzer tests with `npm --prefix apps/mobile test -- breathalyzer` from the repository root.
 
-No automated test covers the firmware. Nothing in the repository exercises the sketch on hardware.
+The firmware is now compiled in CI for `arduino:avr:uno` and `arduino:avr:nano` with `--warnings all` (`.github/workflows/firmware.yml`). No committed test exercises the sketch on hardware, and no run-time unit test is in the repository.
 
 ### 8.2 Bench acceptance tests
 
@@ -455,19 +505,23 @@ These run on the bench, with no alcohol involved. For the threshold tests, disco
 
 | ID | Purpose | Steps | Expected result |
 | --- | --- | --- | --- |
-| TC-01 | Record format | Open USB serial at 9600 baud for 60 s. | One line per record, each valid JSON with keys `raw, avg, peak, sn, vout, rs, over, alarm, warm`, terminated by CRLF. `sn` is `MQ3-0001`. |
-| TC-02 | Warm-up gate | Set A0 to about 1.8 V (raw ≈ 370) from boot. | For 60 s: `warm: true`, `over` and possibly `alarm` true, and the buzzer silent. After 60 s the buzzer sounds if the latch is set. |
-| TC-03 | Latch thresholds | After warm-up, ramp A0 from 1.0 V to 2.0 V and back. | Latch and buzzer set near 1.71 V (raw ≈ 350). Latch clears near 1.61 V (raw ≈ 330). Allow about 8 records to settle after each step. |
+| TC-01 | Record format | Open USB serial at 9600 baud for 60 s. | One line per record, each valid JSON ending in a `crc` field and terminated by CRLF. Keys are the original `raw, avg, peak, sn, vout, rs, over, alarm, warm` plus `seq, up, vcc, spread, r0, fault, state, crc`. `sn` is `MQ3-0001` unless renumbered with `SN`. |
+| TC-02 | Warm-up gate | Set A0 to about 1.8 V (raw ≈ 370) from boot. | For the first 60 s: `warm: true`, `over` and possibly `alarm` true, and the buzzer silent. On a steady signal `warm` clears at 60 s; on a drifting signal it holds up to 90 s. After `warm` is `false` the buzzer sounds if the latch is set. |
+| TC-03 | Latch thresholds | After warm-up, ramp A0 from 1.0 V to 2.0 V and back. | Latch and buzzer set near 1.71 V (raw ≈ 350). The latch clears near 1.61 V (raw ≈ 330) and then only after the 1500 ms hold. Allow about 8 records to settle after each step. |
 | TC-04 | Level shift | Measure RXD with D4 idle HIGH. | 3.2–3.4 V. Never 5 V. |
-| TC-05 | Pairing and stream | Pair the HC-06 in Android. Connect from the Connect tab. | "Live" pill appears. Samples increase. The header shows the serial `MQ3-0001`. |
-| TC-06 | Stale stream | While connected, power the device off for 5 s. | Hard disconnect: state becomes Attention with the native message. Stalled stream (device on, no data): stale message after 3 s. Capture is refused with "Reading is stale". |
+| TC-05 | Pairing and stream | Pair the HC-06 in Android. Connect from the Connect tab. | The status hero shows a "Ready" pill. Samples increase. The hero shows the serial `MQ3-0001`. |
+| TC-06 | Stale stream | While connected, power the device off for 5 s. | Hard disconnect: the status pill becomes "Connection problem" with the native message. Stalled stream (device on, no data): stale message after 3 s. Capture is refused with "Reading is stale". |
 | TC-07 | Clean-air baseline | After warm-up, in clean air, press Set clean-air baseline. | "Baseline updated" with the new Ω value. A history entry is added. Live BAC settles near 0.005 (KI-08). |
 | TC-08 | Conversion | With A0 at 4.26 V (raw ≈ 872) after warm-up, check PEAK BAC. | 0.075 under the default profile. |
 | TC-09 | Locks | Start a roadside reading. Try Disconnect, Apply profile, Reset subject peak. | Each shows its locked message (§6.7, §7). |
-| TC-10 | Simulator in a store build | Install the production build. Open the Connect tab. | **Currently fails**: the simulator option is shown (KI-01). It must be absent for any enforcement sign-off. |
+| TC-10 | Simulator in a store build | Install the production build. Open the Connect tab's Test mode card. | **Currently fails**: the simulator option is shown (KI-01). It must be absent for any enforcement sign-off. |
 | TC-11 | Parser: missing `warm` | Send `{"raw":300,"avg":300,"peak":300,"over":false,"alarm":false}` during warm-up. | **Currently fails**: the app treats the record as warm complete and admits it into the session peak (KI-07). The target behaviour is to reject or treat it as warming. |
-| TC-12 | Record period | Timestamp 100 records. | Mean period 0.37–0.44 s. A mean above 0.6 s needs investigation. |
-| TC-13 | Alarm tone | With the latch set after warm-up, listen to the buzzer for 30 s. | Steady 2.7 kHz tone, no dropouts. Record any gaps that line up with record transmissions (KI-11). |
+| TC-12 | Record period | Timestamp 100 records. | Mean period 0.5–0.7 s. A mean above 0.8 s needs investigation. |
+| TC-13 | Alarm tone | With the latch set after warm-up, listen to the buzzer for 30 s. | Steady 2.7 kHz tone, no dropouts. The tone is edge-triggered and no longer re-phased each record; record any remaining gaps that line up with record transmissions (KI-11). |
+| TC-14 | Commands and EEPROM | After warm-up send `RL 200000`, `CAL AIR`, `ALM 400`, `BEEP 0`, `SN MQ3-TEST-1`, then power-cycle the board. | After reboot the device reports the new values (`r0`, the alarm behaviour, a silenced buzzer and the new `sn`), proving EEPROM persistence and CRC validation. `FACTORY` restores the defaults. |
+| TC-15 | Sensor-fault flags | Force `raw == 0` (short AO) and `raw >= 1020` (rail); hold a constant A0 for 25+ records past warm-up. | `fault` reads `short`, then `rail`, then `stuck`; a healthy changing signal reads `ok`. |
+| TC-16 | Bandgap VCC | With a stable 5.000 V rail, read `vcc`, `vout` and `rs`. | `vcc` reads about 4 950–5 050 mV and `vout`/`rs` use it. If the rail is ever well outside 4.5–5.5 V, `fault` reads `vcc`. |
+| TC-17 | Telemetry crc | Capture a line, XOR every byte after the opening `{` up to the end of `state`, compare with `crc`. | The recomputed value equals the two hex digits in `crc`. Tampering with one byte makes it differ. |
 
 ### 8.3 Reference testing (not yet performed)
 
@@ -484,11 +538,11 @@ The conversion model cannot be validated on the bench. Acceptance for any use be
 ## 9. Operating procedure (development and trials)
 
 1. **Power and warm-up.** Power the module from the same 5 V source as the Arduino. Allow the heater to run for the datasheet preheat before any measurement that matters (§3.4). The firmware's 60 s warm-up is a UI gate only.
-2. **Connect.** Pair the HC-06 in Android settings. Open the Connect tab and tap the paired device. Confirm the "Live" pill and the serial.
+2. **Connect.** Pair the HC-06 in Android settings. Open the Connect tab and tap the paired device. Confirm the status pill in the hero reads Ready and check the serial shown with it.
 3. **Clean-air baseline.** In fresh air, away from alcohol, wait until the readiness checks show warm-up complete. Tap Set clean-air baseline. Record the new R0 and the time.
 4. **Roadside sequence (as the app shows it).** Scan the licence (scan step), then move to the reading step, which locks the device controls. Confirm the readiness checks pass. Have the subject give a sustained breath. Capture the reading, then save. Capture needs a sample from the last 3 s.
 5. **New subject.** Start a new subject before each test so the session peak is cleared.
-6. **After use.** Disconnect from the Device tab, or close the console. Closing the console does not disconnect.
+6. **After use.** Disconnect from the Connect tab, or close the console. Closing the console does not disconnect.
 
 ---
 
@@ -507,23 +561,23 @@ Severity: **Blocker** = must close before any enforcement or store use. **High**
 | ID | Severity | Area | Finding | Evidence | Action |
 | --- | --- | --- | --- | --- | --- |
 | KI-01 | Blocker | Build | Production and preview EAS profiles set `EXPO_PUBLIC_BREATHALYZER_SIMULATION=1`, which shows the simulator in store builds. The README asks for this to be removed before store submission. | `apps/mobile/eas.json` lines 7, 17; `DeviceSettingsModal.tsx` 78–79; `OfficerDashboardScreen.tsx` 175–176 | Remove the flag from production. Keep the simulator for dev builds only. |
-| KI-02 | Blocker | Scope | The output is an uncalibrated screening estimate. The console says "evidential reading" and "Capture readiness: All checks must pass before an evidential reading is captured." | `DeviceSettingsModal.tsx` 1497; `apps/mobile/README.md` 108–110; `firmware/breathalyzer/README.md` 145–146 | Correct the copy. Keep the "not evidential" statement visible in the console. |
+| KI-02 | Blocker | Scope | The output is an uncalibrated screening estimate. **Copy corrected (2026-10):** the console no longer says "evidential reading". The Live tab now reads "Screening estimate only. This is not an evidential measurement.", and the readiness card is titled "Ready for a roadside test" with the description "Every check must pass before a roadside reading can be captured." | `DeviceSettingsModal.tsx` 1870–1872 (Live tab footnote), 1876–1878 (readiness card); `apps/mobile/README.md` "Not evidential"; `firmware/breathalyzer/README.md` 205–207 | **Done — copy corrected.** Keep the "not evidential" statement visible in the console; the blocker itself remains open until §8.3 reference testing is complete. |
 | KI-03 | Blocker | Model | The conversion constants (R0, 0.45 mg/L at ratio 1, slope −0.70, clean-air ratio 60) are defaults. The README says A and B must be fitted against a reference. Nothing in the repository validates them. | `breathalyzer.ts` 10–17; `apps/mobile/README.md` 108–110 | Complete §8.3 before any use beyond development. |
-| KI-04 | Blocker | Identity | Every unit reports `sn = "MQ3-0001"`. The serial is not authenticated, and the Bluetooth MAC is not an identity (`apps/mobile/README.md`). | `breathalyzer.ino` 42; mobile README 122 | Give each unit a unique, controlled serial. Add device attestation or signed telemetry. |
-| KI-05 | Blocker | Hardware | The firmware and app assume RL = 1 kΩ. The datasheet's standard RL is 200 kΩ (100–470 kΩ). Its Rs at 0.4 mg/L (1–8 MΩ) is quoted at RL = 200 kΩ, so it is not directly comparable with R0 = 7 532 Ω. The default R0 is only valid if the module's load resistor is 1 kΩ. | `breathalyzer.ino` `RL`; `breathalyzer.ts` `loadResistorOhms`; datasheet §A and §C | Measure the actual module. Record RL in the BOM. Take a clean-air baseline on each module before use. |
-| KI-06 | Blocker | Sensor | The 60 s warm-up does not meet the datasheet preheat of over 24 hours. The firmware does not check the heater or the sensor's drift. | `breathalyzer.ino` `WARMUP_MS`; datasheet preheat | Define a measured stabilisation test. Gate on it, not on 60 s. |
+| KI-04 | Blocker | Identity | An unconfigured unit reports `sn = "MQ3-0001"`. The serial is now settable per unit with `SN` (persisted in EEPROM as `config.serial`), but it is still not authenticated and the Bluetooth MAC is not an identity (`apps/mobile/README.md`). | `breathalyzer.ino` `config.serial`, §4.11; mobile README 122 | Renumber each unit with `SN`. Add device attestation or signed telemetry. |
+| KI-05 | Blocker | Hardware | The firmware and app assume RL = 1 kΩ. The datasheet's standard RL is 200 kΩ (100–470 kΩ). Its Rs at 0.4 mg/L (1–8 MΩ) is quoted at RL = 200 kΩ, so it is not directly comparable with R0 = 7 532 Ω. The default R0 is only valid if RL is 1 kΩ. RL and R0 are now settable on the device with `RL` and `CAL`, but the device default and the app profile still assume 1 kΩ. | `breathalyzer.ino` `config.rlOhms`, §4.11; `breathalyzer.ts` `loadResistorOhms`; datasheet §A and §C | Measure the actual module, record RL in the BOM, set it on the device with `RL`, keep the app profile's RL in step, and take a clean-air baseline per module. |
+| KI-06 | Blocker | Sensor | Warm-up is now a measured-stability gate (a 60 s floor up to a 90 s ceiling while `ema` is still moving) instead of a flat 60 s timer, but it still does not meet the datasheet preheat of over 24 hours, and the firmware never checks heater power or absolute drift. | `breathalyzer.ino` `WARMUP_MS`, `WARMUP_STABLE_CEILING_MS`, §4.7; datasheet preheat | Keep the measured-stability gate and add a heater/absolute-stability check. Gate on that, not on wall-clock time. |
 | KI-07 | High | Parsing | A missing `warm` field is read as `false`, so a malformed warm-up record could enter the session peak. The firmware always sends `warm`, so the risk is low but the default is unsafe. | `breathalyzer.ts` 131–133; test TC-11 | Treat a missing `warm` as warming (fail-closed). Reject records without `raw`, `avg` or `warm`. |
 | KI-08 | High | Model | Clean air reads about 0.005 g/100 mL under the default profile. The power law has no zero point. The datasheet's detecting range starts at 0.05 mg/L (≈0.0105 g/100 mL). | §6.5 table; datasheet §C | Document the floor, or change the model with the reference data (§8.3). Do not report readings below 0.0105 as measurements. |
 | KI-09 | High | Platform | No iOS transport exists. The HC-06 is Bluetooth Classic, which iOS apps cannot use. | `breathalyzerBluetooth.ts` 68–70; firmware README 125–127 | Confirm whether iOS is a requirement. If it is, the hardware needs a BLE or MFi design. |
 | KI-10 | High | Access | Manual calibration edits have no role check in `DeviceSettingsModal`. Any signed-in officer using the console can change the conversion profile. Changes are audited. | `DeviceSettingsModal.tsx` 576–620 | Decide whether this is supervisor-only, then enforce it in the app and backend. |
-| KI-11 | Medium | Firmware | `SoftwareSerial` disables interrupts while it transmits each byte. This can distort the `tone()` output on D8 during each record. Not measured. | Arduino SoftwareSerial and tone() behaviour; TC-13 | Check the tone on the bench. If it is distorted, move the alarm tone to a hardware-timer-safe driver or change the telemetry UART. |
+| KI-11 | Medium | Firmware | `SoftwareSerial` disables interrupts while it transmits each byte, which can distort the `tone()` output on D8. The buzzer is now edge-triggered so it is not re-issued every record, which reduces the re-phasing glitches, but the longer record overlaps more of each second. Not measured. | Arduino SoftwareSerial and tone() behaviour; §4.8; TC-13 | Check the tone on the bench. If it is distorted, move the alarm tone to a hardware-timer-safe driver or change the telemetry UART. |
 | KI-12 | Medium | Firmware | The breath-peak filter attenuates and delays short peaks (time constant ≈1.3–1.5 s). The session peak uses the smoothed average. | §4.4; `breathalyzer.ts` `handleLine` | Characterise the sensor's response to a controlled breath profile. Decide whether a raw-peak path is needed. |
-| KI-13 | Medium | Sensor | No plausibility check. The app accepts any finite `raw`, and the firmware cannot detect an open or shorted AO. A floating A0 gives arbitrary readings. | `parseBreathalyzerLine`; `breathalyzer.ino` | Add an Rs plausibility range and a stuck-value check. Flag them in the readiness checks. |
+| KI-13 | Medium | Sensor | The firmware now reports `fault` (`short`, `rail`, `vcc`, `stuck`) in every record, so an open or shorted AO and a stuck reading are detectable on the wire. The app still accepts any finite `raw` and does not surface `fault`, so a floating A0 is not gated in the UI. | `parseBreathalyzerLine`; `breathalyzer.ino` `fault`, §4.12 | Surface `fault` in the readiness checks and refuse captures when `fault` is not `ok`. Add an Rs plausibility range. |
 | KI-14 | Medium | Calibration | The profile is stored on the phone, not the device. Two phones paired with one HC-06 can use different profiles. The record stores the version, so this is traceable but not enforced. | `breathalyzerStorage.ts`; `toDeviceEvidence` | Decide whether the profile belongs with the device serial. Enforce a version match at capture. |
 | KI-15 | Medium | Firmware | `dtostrf`, `tone()` and SoftwareSerial are AVR-specific. Porting needs re-validation. | `breathalyzer.ino` | Note the target in the build instructions. Re-validate on any new board. |
 | KI-16 | Medium | Hardware | Heater power and decoupling are not in the firmware or BOM. The 5 V source and wiring carry the load. | §3.3 | Specify the 5 V source and the decoupling in the BOM. |
 | KI-17 | Low | Documentation | Several documents disagree with the code. See §12. | §12 | Correct or retire them. |
-| KI-18 | Low | Firmware | Records that do not fit the buffer are dropped silently. | `breathalyzer.ino` 132 | Count dropped records and report the count. |
+| KI-18 | Low | Firmware | Records that do not fit the 256-byte buffer are dropped silently. `seq` lets a receiver detect a drop, but the firmware does not count or report drops itself. | `breathalyzer.ino` telemetry buffer, §4.9 | Count dropped records and add a counter channel if the rate matters. |
 
 ---
 
@@ -531,15 +585,15 @@ Severity: **Blocker** = must close before any enforcement or store use. **High**
 
 | Document | Statement | Finding | Recommendation |
 | --- | --- | --- | --- |
-| `Project Plan/diagrams/Breathalyzer_Telemetry_Sequence.drawio` | "one JSON line roughly every 200 ms (about 2 Hz)" | The 200 ms delay is only one part of a 0.37–0.44 s record period. The two figures contradict each other. | Replace with `diagrams/04` and `diagrams/05`, or correct the text. |
-| `Project Plan/diagrams/Breathalyzer_Hardware_Schematic.drawio` | "Heating element: 60 s WARMUP_MS stabilisation window" | The 60 s is a UI gate. It is not a stabilisation time. The datasheet preheat is over 24 hours. | Correct the label (KI-06). |
+| `Project Plan/diagrams/Breathalyzer_Telemetry_Sequence.drawio` | "one JSON line roughly every 200 ms (about 2 Hz)" | The 200 ms wait is only one part of a 0.5–0.7 s record period. The two figures contradict each other. | Replace with `diagrams/04` and `diagrams/05`, or correct the text. |
+| `Project Plan/diagrams/Breathalyzer_Hardware_Schematic.drawio` | "Heating element: 60 s WARMUP_MS stabilisation window" | The 60 s is now a measured-stability gate (60–90 s), not a fixed stabilisation time. The datasheet preheat is still over 24 hours. | Correct the label (KI-06). |
 | `Project Plan/diagrams/Breathalyzer_Hardware_Schematic.drawio` | "Load resistor RL: firmware models RL = 1000 Ω" | Accurate about the firmware, but the datasheet's standard RL is 200 kΩ (KI-05). | Add the verification requirement. |
 | `apps/mobile/README.md` line 120 | "opens the SPP socket at the firmware's 9600 baud stream rate" | RFCOMM has no baud parameter. 9600 is the HC-06 UART rate set in the firmware. | Reword. |
 | `apps/mobile/README.md` lines 102–106 | Conversion chain | Consistent with the code. | None |
 | `apps/mobile/README.md` line 126 | "keep the **Simulate MQ-3 device** fallback" | The code never falls back to the simulator automatically. "Fallback" implies it does. | Call it "Simulate MQ-3 device (manual)". |
 | `firmware/breathalyzer/README.md` lines 134–138 | "not yet committed/deployed" | Both the native module (`1d86a91`) and the breathalyzer services (`f6c4ff7`) are committed and clean. Deployment status is not in the repository. | Reword to state the deployment status only. |
-| `firmware/breathalyzer/README.md` line 22 | "roughly 120-byte record" | 110 bytes plus CRLF for the README example. | Correct the figure. |
-| `firmware/breathalyzer/README.md` line 127 | "roughly 2 Hz sample rate" | Consistent with the 0.37–0.44 s estimate (§4.6), and the item is still open. | Keep. Add the measured period once TC-12 is run. |
+| `firmware/breathalyzer/README.md` telemetry paragraph | roughly 120-byte record | Now about 200–230 bytes plus CRLF with the added fields. | Correct the figure. |
+| `firmware/breathalyzer/README.md` timing | roughly 2 Hz sample rate | Now about 0.5–0.7 s per record because the RFCOMM write of the longer line dominates. Still open (TC-12). | Keep, corrected. Add the measured period once TC-12 is run. |
 | `apps/mobile/src/components/DeviceSettingsModal.tsx` 1497 | "before an evidential reading is captured" | Contradicts the README's "not an evidential or legally certified breathalyzer measurement" (KI-02). | Correct the copy. |
 | `apps/mobile/eas.json` 7, 17 | Simulation flag set in production | Contradicts the mobile README's instruction to remove it before public store submission (KI-01). | Remove the flag from production. |
 
@@ -560,7 +614,15 @@ Severity: **Blocker** = must close before any enforcement or store use. **High**
 | RFCOMM / SPP | The Bluetooth Classic serial emulation used between the phone and the HC-06. |
 | RL | The load resistor in series with the sensor, across which the output voltage is read. |
 | Session peak | The highest non-warm `avg` since the subject was started. |
-| Warm | The firmware's 60 s warm-up flag. It does not mean the sensor is stable. |
+| Warm | The firmware warm-up flag: `true` for at least 60 s and up to 90 s while `ema` is still moving. It does not mean the sensor is at datasheet preheat. |
+| EEPROM | Non-volatile config store on the AVR. Holds `DeviceConfig` (serial, RL, R0, alarm threshold, buzzer enable) behind a CRC. Written only when a config command changes a value. |
+| Config CRC | CRC-16/CCITT-FALSE over the `DeviceConfig` bytes before `crc`, so a corrupt config falls back to defaults. |
+| `crc` (telemetry) | 2-digit uppercase XOR checksum over each record's bytes after `{` up to `state`. The app does not verify it (yet). |
+| Watchdog (WDT) | A 2 s hardware timer that reboots the board unless `wdt_reset()` is called each loop. Enabled at the end of `setup()`. |
+| Bandgap `VCC` | The 1.1 V internal reference measured against AVCC to recover the real supply rail in mV. |
+| `fault` | Per-record sensor health: `ok`, `short`, `rail`, `vcc` or `stuck`. |
+| `state` | On-device breath state machine: `WARM`, `BLOW`, `PEAK` or `IDLE`. |
+| `spread` | `maxRaw − minRaw` across the 25-sample burst. Zero on a steady signal. |
 
 ---
 
@@ -568,7 +630,7 @@ Severity: **Blocker** = must close before any enforcement or store use. **High**
 
 Repository files (revision noted in the header):
 
-- `firmware/breathalyzer/breathalyzer.ino`, `firmware/breathalyzer/README.md`, `firmware/breathalyzer/diagrams/hc06-arduino-wiring.drawio`
+- `firmware/breathalyzer/breathalyzer.ino`, `firmware/breathalyzer/README.md`, `firmware/breathalyzer/diagrams/hc06-arduino-wiring.drawio`, and the firmware CI at `.github/workflows/firmware.yml`
 - `apps/mobile/src/services/breathalyzer.ts`, `breathalyzerBluetooth.ts`, `breathalyzerSimulator.ts`, `breathalyzerDeviceStorage.ts`, `breathalyzerStorage.ts`
 - `apps/mobile/src/lib/deviceSettings.ts`, `driverPolicy.ts`
 - `apps/mobile/src/components/DeviceSettingsModal.tsx`, `apps/mobile/src/screens/OfficerDashboardScreen.tsx`

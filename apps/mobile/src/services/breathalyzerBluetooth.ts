@@ -32,6 +32,8 @@ export interface Hc06NativeModule {
   getBondedDevices(): Promise<PairedBluetoothDevice[]>;
   connect(address: string): Promise<PairedBluetoothDevice>;
   disconnect(): Promise<boolean>;
+  /** Writes a newline-terminated ASCII command to the open RFCOMM socket. */
+  sendCommand?(command: string): Promise<void>;
   openBluetoothSettings(): Promise<boolean>;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
@@ -48,6 +50,8 @@ export interface PairedBluetoothDevice {
   name: string;
   type: "CLASSIC" | "LOW_ENERGY" | "DUAL" | "UNKNOWN";
   bonded: boolean;
+  /** Name heuristic result, populated for broad (non-filtered) listings. */
+  isLikelyHc06?: boolean;
 }
 
 function getNativeRuntime(): Hc06BluetoothRuntime | null {
@@ -87,6 +91,24 @@ function prioritizePairedDevices(devices: PairedBluetoothDevice[]): PairedBlueto
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+/**
+ * Keeps every non-LE bonded device, tagging each one with the HC-06 name
+ * heuristic and floating the likely carriers to the top of the list.
+ */
+function prioritizeAllClassicDevices(
+  devices: PairedBluetoothDevice[],
+): PairedBluetoothDevice[] {
+  return devices
+    .filter((device) => device.type !== "LOW_ENERGY")
+    .map((device) => ({ ...device, isLikelyHc06: isLikelyHc06Name(device.name) }))
+    .sort((left, right) => {
+      if (left.isLikelyHc06 !== right.isLikelyHc06) {
+        return left.isLikelyHc06 ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name);
+    });
+}
+
 export async function ensureAndroidBluetoothReady(
   runtime: Hc06BluetoothRuntime | null = getNativeRuntime(),
 ): Promise<void> {
@@ -117,12 +139,24 @@ export async function ensureAndroidBluetoothReady(
   }
 }
 
+export interface GetPairedHc06DevicesOptions {
+  /**
+   * List every non-LE bonded device (tagged with `isLikelyHc06` and sorted with
+   * the likely HC-06 carriers first) instead of filtering to HC-06 names only.
+   * Useful when a board keeps its factory-shipped carrier name.
+   */
+  includeAllClassic?: boolean;
+}
+
 export async function getPairedHc06Devices(
   runtime: Hc06BluetoothRuntime | null = getNativeRuntime(),
+  options?: GetPairedHc06DevicesOptions,
 ): Promise<PairedBluetoothDevice[]> {
   await ensureAndroidBluetoothReady(runtime);
   const devices = await requireRuntime(runtime).nativeModule.getBondedDevices();
-  return prioritizePairedDevices(devices);
+  return options?.includeAllClassic
+    ? prioritizeAllClassicDevices(devices)
+    : prioritizePairedDevices(devices);
 }
 
 export async function openHc06BluetoothSettings(
@@ -178,6 +212,7 @@ export function createHc06BluetoothTransport(
   let dataSubscription: EventSubscription | null = null;
   let disconnectSubscription: EventSubscription | null = null;
   let errorSubscription: EventSubscription | null = null;
+  let nativeRuntime: Hc06BluetoothRuntime | null = runtime;
 
   const notifyError = (message: string) => {
     for (const listener of errorListeners) listener(message);
@@ -215,19 +250,37 @@ export function createHc06BluetoothTransport(
   };
 
   const removeNativeSubscriptions = () => {
-    dataSubscription?.remove();
-    disconnectSubscription?.remove();
-    errorSubscription?.remove();
-    dataSubscription = null;
-    disconnectSubscription = null;
-    errorSubscription = null;
+    let removed = 0;
+    if (dataSubscription) {
+      dataSubscription.remove();
+      dataSubscription = null;
+      removed += 1;
+    }
+    if (disconnectSubscription) {
+      disconnectSubscription.remove();
+      disconnectSubscription = null;
+      removed += 1;
+    }
+    if (errorSubscription) {
+      errorSubscription.remove();
+      errorSubscription = null;
+      removed += 1;
+    }
+
+    // The native module gates every emit on its listener counter, so release
+    // the same number of registrations the emitter handed out.
+    if (removed > 0) {
+      nativeRuntime?.nativeModule.removeListeners?.(removed);
+    }
   };
 
   return {
     kind: "bluetooth_classic",
     label: `HC-06 Classic • ${device.name}`,
+    address: device.address,
     async connect() {
       const activeRuntime = requireRuntime(runtime);
+      nativeRuntime = activeRuntime;
       lineAssembler.reset();
       removeNativeSubscriptions();
 
@@ -255,7 +308,14 @@ export function createHc06BluetoothTransport(
     async disconnect() {
       removeNativeSubscriptions();
       lineAssembler.reset();
-      await runtime?.nativeModule.disconnect();
+      await (nativeRuntime ?? runtime)?.nativeModule.disconnect();
+    },
+    async sendCommand(command: string) {
+      if (typeof command !== "string" || !command.trim()) {
+        throw new Error("A device command must be a non-empty string.");
+      }
+      const activeRuntime = requireRuntime(nativeRuntime ?? runtime);
+      await activeRuntime.nativeModule.sendCommand?.(command);
     },
     onLine(listener) {
       lineListeners.add(listener);
