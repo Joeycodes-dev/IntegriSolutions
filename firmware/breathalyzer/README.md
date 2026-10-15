@@ -190,7 +190,9 @@ writes per cell.
 
 `vout` and `rs` now use the measured supply rail (internal 1.1 V bandgap) and
 the configured `RL`, so conversions track the real rail instead of a fixed
-5.000 V. The alarm buzzer is edge-triggered: `tone()` and `noTone()` are only
+5.000 V. The alarm buzzer beeps once per alarm for at most 2 s
+(`BUZZER_MAX_ON_MS`) and stays silent until the alarm clears and latches again.
+It is edge-triggered: `tone()` and `noTone()` are only
 called when the buzzer's desired state changes, which keeps the tone phase
 stable across telemetry bursts. A 2 s hardware watchdog is enabled after boot
 and reset each loop, so a hung sketch reboots instead of freezing the stream.

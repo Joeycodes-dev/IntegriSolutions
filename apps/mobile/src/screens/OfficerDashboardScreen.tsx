@@ -58,6 +58,7 @@ import {
   formatBacGdl,
   isBreathalyzerReadingFresh,
   toDeviceEvidence,
+  type BlowCaptureFailureReason,
   type BreathalyzerSnapshot,
   type DeviceEvidencePayload,
 } from "../services/breathalyzer";
@@ -179,8 +180,42 @@ const BREATHALYZER_SIMULATION_ENABLED =
 /** Fade duration for the collapsible scan-guidance card. */
 const SCAN_HELP_ANIMATION_MS = 200;
 
-/** A peak older than this is no longer evidence of a current breath sample. */
-const BREATH_PEAK_MAX_AGE_MS = 60_000;
+/** Officer-facing explanations for a blow capture that did not produce a reading. */
+const BLOW_CAPTURE_FAILURE_MESSAGES: Record<
+  BlowCaptureFailureReason,
+  { title: string; message: string } | null
+> = {
+  not_connected: {
+    title: "No reading",
+    message: "Connect the breathalyzer and wait for live data before capturing.",
+  },
+  warming: {
+    title: "Sensor warming up",
+    message: "The sensor started warming up again. Wait for it to finish, then capture again.",
+  },
+  fault: {
+    title: "Sensor fault",
+    message: "The breathalyzer reported a sensor fault during the sample. Check the hardware and capture again.",
+  },
+  stale: {
+    title: "Reading is stale",
+    message: "The breathalyzer has stopped sending live data. Reconnect it and take a fresh sample.",
+  },
+  busy: null,
+  no_blow: {
+    title: "No blow detected",
+    message: "The subject did not blow into the device. Tap Capture and ask them to blow steadily.",
+  },
+  disconnected: {
+    title: "Device disconnected",
+    message: "The breathalyzer disconnected during the sample. Reconnect it and capture again.",
+  },
+  cancelled: null,
+  unconvertible: {
+    title: "Reading not converted",
+    message: "The current calibration cannot convert this sample. Check the calibration and capture again.",
+  },
+};
 
 /**
  * Firmware telemetry that the upgraded HC-06 stream adds on top of the legacy
@@ -211,22 +246,6 @@ function hasSensorFault(snapshot: BreathalyzerSnapshot): boolean {
   return typeof fault === "string" && fault !== "ok";
 }
 
-/**
- * The peak is only meaningful while the subject is still at the device: a peak
- * recorded more than a minute ago must not be captured as a fresh reading.
- */
-function isPeakStale(
-  snapshot: BreathalyzerSnapshot,
-  now = Date.now(),
-): boolean {
-  const peakReceivedAt = telemetryOf(snapshot).peakReceivedAt;
-  if (!peakReceivedAt) return false;
-  const receivedAt = Date.parse(peakReceivedAt);
-  return (
-    Number.isFinite(receivedAt) && now - receivedAt > BREATH_PEAK_MAX_AGE_MS
-  );
-}
-
 /** Concise roadside guidance derived from the firmware blow state machine. */
 function blowStateHint(
   blowState: string | null | undefined,
@@ -236,11 +255,11 @@ function blowStateHint(
     case "warming":
       return "Sensor warming up";
     case "idle":
-      return "Ready \u2014 ask subject to blow steadily";
+      return "Ready \u2014 tap Capture, then ask the subject to blow steadily";
     case "blowing":
-      return "Blowing detected \u2014 keep blowing until peak settles";
+      return "Blowing detected";
     case "peak_ready":
-      return "Peak stabilised \u2014 ready to capture";
+      return "Blow finished \u2014 signal settling";
     case "fault":
       return `Hardware fault (${fault ?? "unknown"})`;
     default:
@@ -249,16 +268,25 @@ function blowStateHint(
 }
 
 /**
- * Blow/sample status line for the reading card. Prefers the firmware state
- * machine and falls back to a generic hint for legacy one-way firmware.
+ * Blow/sample status line for the reading card. An armed capture takes
+ * priority, then the firmware state machine, then a generic legacy hint.
  */
 function sampleStatusHint(snapshot: BreathalyzerSnapshot): string {
+  const capture = snapshot.blowCapture;
+  if (capture) {
+    if (capture.phase === "blowing") {
+      return `Sampling blow \u2014 ${(capture.blowDurationMs / 1000).toFixed(1)} s, keep blowing`;
+    }
+    return capture.shortBlowCount > 0
+      ? "Blow too short \u2014 ask the subject to blow longer"
+      : "Waiting for blow \u2014 ask the subject to blow steadily";
+  }
   const telemetry = telemetryOf(snapshot);
   const firmwareHint = blowStateHint(telemetry.blowState, telemetry.fault);
   if (firmwareHint) return firmwareHint;
   if (snapshot.readings === 0) return "Waiting for the device to send a sample";
   if (snapshot.warm) return "Sensor warming up";
-  return "Blow steadily until the peak settles";
+  return "Tap Capture, then ask the subject to blow steadily";
 }
 
 /**
@@ -1796,6 +1824,8 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => () => breathalyzerSession.cancelBlowCapture(), []);
+
   const clearReadingForNewSubject = () => {
     setBacReading("");
     setCapturedDeviceEvidence(null);
@@ -1816,12 +1846,13 @@ export function OfficerDashboardScreen({ navigation }: Props) {
     await breathalyzerSession.connect(transport);
   };
 
-  const handleCaptureReading = useCallback(() => {
+  const handleCaptureReading = useCallback(async () => {
     const snapshot = breathalyzerSession.getSnapshot();
+    if (snapshot.blowCapture) return;
     if (snapshot.connection !== "connected" || snapshot.readings === 0) {
       Alert.alert(
         "No reading",
-        "Connect the breathalyzer and take a breath sample before capturing.",
+        "Connect the breathalyzer and wait for live data before capturing.",
       );
       return;
     }
@@ -1846,22 +1877,14 @@ export function OfficerDashboardScreen({ navigation }: Props) {
       );
       return;
     }
-    if (isPeakStale(snapshot)) {
-      Alert.alert(
-        "Peak reading is old",
-        "The peak BAC was recorded over a minute ago. Reset or take a fresh breath sample before capturing.",
-      );
-      return;
-    }
 
-    const captured = breathalyzerSession.capture();
-    if (!captured) {
-      Alert.alert(
-        "No reading",
-        "No breath sample has been recorded yet. Blow into the breathalyzer until the reading stabilises.",
-      );
+    const result = await breathalyzerSession.startBlowCapture();
+    if (!result.ok) {
+      const failure = BLOW_CAPTURE_FAILURE_MESSAGES[result.reason];
+      if (failure) Alert.alert(failure.title, failure.message);
       return;
     }
+    const { captured } = result;
 
     setBacReading(captured.bacGdl.toFixed(3));
     setCapturedDeviceEvidence(toDeviceEvidence(captured));
@@ -1879,6 +1902,12 @@ export function OfficerDashboardScreen({ navigation }: Props) {
         bacGdl: captured.bacGdl,
         sessionPeakRaw: captured.sessionPeakRaw,
         avgRawAtCapture: captured.avgAtCapture,
+        blowAverageRaw: captured.blow?.averageRaw ?? null,
+        blowMaxRaw: captured.blow?.maxRaw ?? null,
+        blowSampleCount: captured.blow?.sampleCount ?? null,
+        blowDurationMs: captured.blow?.durationMs ?? null,
+        blowStartedAt: captured.blow?.startedAt ?? null,
+        blowEndedAt: captured.blow?.endedAt ?? null,
         transport: snapshot.transportKind,
         calibrationVersion: snapshot.calibration.version,
         cleanAirResistanceOhms: snapshot.calibration.cleanAirResistanceOhms,
@@ -1964,11 +1993,23 @@ export function OfficerDashboardScreen({ navigation }: Props) {
 
   useEffect(() => {
     if (!autoCaptureBac || bacReading) return;
-    const peakBac = breathalyzer.peakBacGdl;
-    if (peakBac === null || peakBac < parseFloat(autoCaptureBac)) return;
+    if (
+      breathalyzer.connection !== "connected" ||
+      breathalyzer.warm ||
+      breathalyzer.readings === 0
+    ) {
+      return;
+    }
     setAutoCaptureBac(null);
-    handleCaptureReading();
-  }, [autoCaptureBac, bacReading, breathalyzer.peakBacGdl, handleCaptureReading]);
+    void handleCaptureReading();
+  }, [
+    autoCaptureBac,
+    bacReading,
+    breathalyzer.connection,
+    breathalyzer.warm,
+    breathalyzer.readings,
+    handleCaptureReading,
+  ]);
 
   const persistRecord = async (reading: number) => {
     if (!scannedData || !profile) {
@@ -2615,19 +2656,35 @@ export function OfficerDashboardScreen({ navigation }: Props) {
               <View style={styles.deviceActions}>
                 {breathalyzer.connection === "connected" ? (
                   <>
-                    <Pressable
-                      style={[
-                        styles.devicePrimaryButton,
-                        breathalyzer.readings === 0 && styles.buttonDisabled,
-                      ]}
-                      onPress={handleCaptureReading}
-                      disabled={breathalyzer.readings === 0}
-                    >
-                      <Feather name="wind" size={16} color="#fff" />
-                      <Text style={styles.devicePrimaryButtonText}>
-                        CAPTURE READING
-                      </Text>
-                    </Pressable>
+                    {breathalyzer.blowCapture ? (
+                      <Pressable
+                        style={styles.devicePrimaryButton}
+                        onPress={() => breathalyzerSession.cancelBlowCapture()}
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancel breath sample"
+                      >
+                        <ActivityIndicator size="small" color="#fff" />
+                        <Text style={styles.devicePrimaryButtonText}>
+                          {breathalyzer.blowCapture.phase === "blowing"
+                            ? "SAMPLING\u2026 TAP TO CANCEL"
+                            : "WAITING FOR BLOW\u2026 TAP TO CANCEL"}
+                        </Text>
+                      </Pressable>
+                    ) : (
+                      <Pressable
+                        style={[
+                          styles.devicePrimaryButton,
+                          breathalyzer.readings === 0 && styles.buttonDisabled,
+                        ]}
+                        onPress={() => void handleCaptureReading()}
+                        disabled={breathalyzer.readings === 0}
+                      >
+                        <Feather name="wind" size={16} color="#fff" />
+                        <Text style={styles.devicePrimaryButtonText}>
+                          CAPTURE READING
+                        </Text>
+                      </Pressable>
+                    )}
                     <Pressable
                       style={styles.deviceSecondaryButton}
                       onPress={() => void handleSetCleanAirBaseline()}

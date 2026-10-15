@@ -97,8 +97,14 @@ with diagrams and console wireframes alongside it.
 - The reading panel lives in `src/screens/OfficerDashboardScreen.tsx` (reading step). Capture is locked to the
   device: officers press **Capture reading** and the value cannot be edited manually.
 
-Capture uses the **session peak** (highest smoothed reading since the subject session started), because breath
-alcohol is the peak of the exhale, not the settling value.
+Capture is **blow-triggered**: pressing **Capture reading** arms a sample and the officer no longer has to time the
+tap. The session (`BreathalyzerSession.startBlowCapture`) waits up to 20 s for the subject to blow, using the
+firmware `state` field (`BLOW`) — or, on legacy firmware without it, a deflection of 20+ counts above clean air.
+Every raw frame recorded while the subject blows is averaged, and the capture finalises automatically once the
+blow has stopped for 600 ms (or after 5 s of continuous blowing). Blows shorter than 1.5 s are discarded and
+the capture re-arms. The BAC is derived from that blow average; the window (average/max raw, sample count,
+start/end, duration) is kept on the captured reading and in the `test.device.captured` audit metadata. The
+officer can cancel an armed capture, and it is aborted on a fault, warm-up, disconnect or new subject.
 
 The breathalyser settings console (`src/components/DeviceSettingsModal.tsx`) has three tabs — **Connect**,
 **Calibrate** and **Live**. Connect pairs the HC-06 and holds connection preferences, Calibrate sets the
@@ -199,9 +205,10 @@ The simulator is always available in development builds (`__DEV__`) and is **alw
 there is no automatic fallback to it after an HC-06 failure. A failed hardware connection produces an error the
 officer must resolve by reconnecting or retrying.
 
-> Simulator behaviour (30 s breath cycle, 250 ms sample interval, 3 s warm-up): after connecting, capture
-> within the clean-air window (~3–10 s) for a low/PASS reading, or wait for the rise (~15–20 s in) to capture the
-> ~0.075 g/100ml target. The session peak persists until a new subject is started, so scan a new licence before
+> Simulator behaviour (30 s breath cycle, 250 ms sample interval, 3 s warm-up): the simulated subject is idle for
+> ~10.5 s of each cycle, then blows (`BLOW`) for ~12 s while the signal rises to the ~0.075 g/100ml target and
+> holds, then the signal decays (`PEAK`). Press **Capture reading** at any time; the capture waits for the next
+> simulated blow and averages it (capped at 5 s), so the result sits below the target. Scan a new licence before
 > each test.
 
 ### Not evidential

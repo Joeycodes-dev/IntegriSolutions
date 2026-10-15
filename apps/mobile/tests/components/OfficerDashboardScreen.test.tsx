@@ -1,6 +1,6 @@
 import React from 'react';
 import { TextInput } from 'react-native';
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
 import type { BreathalyzerSnapshot } from '../../src/services/breathalyzer';
 
@@ -170,7 +170,8 @@ const mockBreathalyzerSession = {
   connect: jest.fn().mockResolvedValue(undefined),
   disconnect: jest.fn().mockResolvedValue(undefined),
   startNewSubject: jest.fn(),
-  capture: jest.fn(() => mockCapturedReading),
+  startBlowCapture: jest.fn(async () => ({ ok: true as const, captured: mockCapturedReading })),
+  cancelBlowCapture: jest.fn(),
   expireIfStale: jest.fn(),
 };
 
@@ -181,6 +182,13 @@ jest.mock('../../src/services/breathalyzer', () => ({
   isBreathalyzerReadingFresh: jest.fn(() => true),
   toDeviceEvidence: jest.fn(() => null),
 }));
+
+/** Presses Capture and lets the (mocked) blow capture resolve. */
+async function pressCapture() {
+  await act(async () => {
+    fireEvent.press(screen.getByText('CAPTURE READING'));
+  });
+}
 
 jest.mock('../../src/services/breathalyzerStorage', () => ({
   loadCalibration: jest.fn().mockResolvedValue(mockDefaultBreathalyzerCalibration),
@@ -314,7 +322,10 @@ describe('OfficerDashboardScreen subject-state isolation', () => {
       readings: 0,
       lastReceivedAt: null,
     });
-    mockBreathalyzerSession.capture.mockReturnValue(mockCapturedReading);
+    mockBreathalyzerSession.startBlowCapture.mockImplementation(async () => ({
+      ok: true as const,
+      captured: mockCapturedReading,
+    }));
     Object.assign(mockSyncState, {
       pendingCount: 0,
       failedCount: 0,
@@ -481,14 +492,14 @@ describe('OfficerDashboardScreen subject-state isolation', () => {
     fireEvent.press(screen.getByText('Start Test'));
     const notes = await screen.findByPlaceholderText('Optional notes for court evidence') as TextInput;
     fireEvent.changeText(notes, 'First capture observation');
-    fireEvent.press(screen.getByText('CAPTURE READING'));
+    await pressCapture();
     fireEvent.press(screen.getByText('SAVE RECORD'));
 
     fireEvent.press(await screen.findByText('RETEST DRIVER'));
     const retestNotes = await screen.findByPlaceholderText('Optional notes for court evidence') as TextInput;
     expect(retestNotes.props.value).toBe('');
 
-    fireEvent.press(screen.getByText('CAPTURE READING'));
+    await pressCapture();
     fireEvent.press(screen.getByText('SAVE RECORD'));
     await screen.findByText('RETEST DRIVER');
 
@@ -527,7 +538,7 @@ describe('OfficerDashboardScreen subject-state isolation', () => {
     fireEvent.press(screen.getByText('Start Test'));
     const notes = await screen.findByPlaceholderText('Optional notes for court evidence') as TextInput;
     fireEvent.changeText(notes, 'Queued observation');
-    fireEvent.press(screen.getByText('CAPTURE READING'));
+    await pressCapture();
     fireEvent.press(screen.getByText('SAVE RECORD'));
 
     expect(await screen.findByText('Record Saved')).toBeTruthy();

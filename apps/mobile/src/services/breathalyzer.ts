@@ -30,6 +30,20 @@ export const MAX_BREATHALYZER_READING_AGE_MS = 3_000;
 export const BREATHALYZER_WARMUP_MS = 60_000;
 
 /**
+ * Blow capture: after the officer taps Capture the session waits for the
+ * subject to blow, averages every frame recorded while the device reports a
+ * blow, and finalises automatically once the blow ends.
+ */
+/** How long to wait for a blow to start before giving up. */
+export const BLOW_CAPTURE_WAIT_TIMEOUT_MS = 20_000;
+/** A blow shorter than this is discarded and the capture re-arms. */
+export const BLOW_CAPTURE_MIN_BLOW_MS = 1_500;
+/** A blow is finalised once it has lasted this long, even if still going. */
+export const BLOW_CAPTURE_MAX_BLOW_MS = 5_000;
+/** Non-blow frames tolerated inside a blow before it is treated as ended. */
+export const BLOW_CAPTURE_END_GRACE_MS = 600;
+
+/**
  * Device-reported fault codes from the upgraded firmware. `ok` is a healthy
  * sample; any other value indicates a hardware condition that blocks capture.
  */
@@ -172,6 +186,59 @@ export interface CapturedBreathalyzerReading {
   /** Alarm latch state at capture. */
   overAtCapture: boolean;
   alarmAtCapture: boolean;
+  /**
+   * The blow window the BAC was averaged over. Null/absent for an instant
+   * `capture()` of the session peak.
+   */
+  blow?: BlowCaptureWindow | null;
+}
+
+export interface BlowCaptureWindow {
+  /** Mean of the raw ADC frames recorded while the subject was blowing. */
+  averageRaw: number;
+  /** Highest raw frame inside the blow window. */
+  maxRaw: number;
+  sampleCount: number;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+}
+
+export type BlowCaptureFailureReason =
+  | 'not_connected'
+  | 'warming'
+  | 'fault'
+  | 'stale'
+  | 'busy'
+  | 'no_blow'
+  | 'disconnected'
+  | 'cancelled'
+  | 'unconvertible';
+
+export type BlowCaptureResult =
+  | { ok: true; captured: CapturedBreathalyzerReading }
+  | { ok: false; reason: BlowCaptureFailureReason };
+
+/** Live progress of an armed blow capture, surfaced on the snapshot. */
+export interface BlowCaptureProgress {
+  phase: 'waiting' | 'blowing';
+  startedAt: string;
+  blowStartedAt: string | null;
+  blowDurationMs: number;
+  sampleCount: number;
+  /** Blows discarded for being shorter than `BLOW_CAPTURE_MIN_BLOW_MS`. */
+  shortBlowCount: number;
+  averageRaw: number | null;
+}
+
+interface PendingBlowCapture {
+  startedAtMs: number;
+  waitingSinceMs: number;
+  blowStartedAtMs: number | null;
+  lastBlowFrameAtMs: number | null;
+  samples: number[];
+  shortBlowCount: number;
+  resolve: (result: BlowCaptureResult) => void;
 }
 
 export interface DeviceEvidencePayload {
@@ -227,6 +294,8 @@ export interface BreathalyzerSnapshot {
    * reading (and on legacy firmware that does not report it).
    */
   uptimeMs?: number | null;
+  /** Progress of an armed blow capture; null/absent when none is running. */
+  blowCapture?: BlowCaptureProgress | null;
   captured: CapturedBreathalyzerReading | null;
   calibration: BreathalyzerCalibration;
 }
@@ -436,6 +505,7 @@ export class BreathalyzerSession {
   private sessionPeak: number | null = null;
   private recentAvgWindow: number[] = [];
   private peakReceivedAt: string | null = null;
+  private pendingBlowCapture: PendingBlowCapture | null = null;
 
   constructor(calibration: BreathalyzerCalibration = DEFAULT_BREATHALYZER_CALIBRATION) {
     this.snapshot = {
@@ -466,6 +536,7 @@ export class BreathalyzerSession {
       seq: null,
       droppedFrames: 0,
       uptimeMs: null,
+      blowCapture: null,
       captured: null,
       calibration
     };
@@ -639,6 +710,7 @@ export class BreathalyzerSession {
    * dead socket by `expireIfStale`.
    */
   startNewSubject(): void {
+    this.finishBlowCapture({ ok: false, reason: 'cancelled' });
     this.sessionPeak = null;
     this.peakReceivedAt = null;
     this.update({
@@ -653,20 +725,66 @@ export class BreathalyzerSession {
     void this.sendCommand('RST');
   }
 
+  /** Instant capture of the session peak at the moment of the call. */
   capture(at = Date.now()): CapturedBreathalyzerReading | null {
     if (this.snapshot.connection !== 'connected') return null;
     if (this.sessionPeak === null) return null;
     if (this.snapshot.warm) return null;
     if (this.snapshot.fault !== null && this.snapshot.fault !== 'ok') return null;
     if (!isBreathalyzerReadingFresh(this.snapshot.lastReceivedAt, at)) return null;
-    const bacGdl = rawToBacGdl(this.sessionPeak, this.snapshot.calibration);
-    if (bacGdl === null) return null;
-    const mgPerLAtCapture =
-      rawToMgPerL(this.sessionPeak, this.snapshot.calibration) ?? 0;
+    const captured = this.buildCapturedReading(this.sessionPeak, at, null);
+    if (!captured) return null;
 
-    const captured: CapturedBreathalyzerReading = {
+    this.update({ captured });
+    return captured;
+  }
+
+  /**
+   * Arms a blow capture. Resolves once the subject has blown for at least
+   * `BLOW_CAPTURE_MIN_BLOW_MS` and stopped (or hit `BLOW_CAPTURE_MAX_BLOW_MS`),
+   * with the BAC derived from the mean of every raw frame inside the blow.
+   * A blow already in progress when this is called is picked up immediately.
+   */
+  startBlowCapture(at = Date.now()): Promise<BlowCaptureResult> {
+    const fail = (reason: BlowCaptureFailureReason) =>
+      Promise.resolve<BlowCaptureResult>({ ok: false, reason });
+    if (this.pendingBlowCapture) return fail('busy');
+    if (this.snapshot.connection !== 'connected') return fail('not_connected');
+    if (this.snapshot.warm) return fail('warming');
+    if (this.snapshot.fault !== null && this.snapshot.fault !== 'ok') return fail('fault');
+    if (!isBreathalyzerReadingFresh(this.snapshot.lastReceivedAt, at)) return fail('stale');
+
+    return new Promise<BlowCaptureResult>((resolve) => {
+      this.pendingBlowCapture = {
+        startedAtMs: at,
+        waitingSinceMs: at,
+        blowStartedAtMs: null,
+        lastBlowFrameAtMs: null,
+        samples: [],
+        shortBlowCount: 0,
+        resolve
+      };
+      this.update({ captured: null });
+      this.publishBlowCaptureProgress(at);
+    });
+  }
+
+  cancelBlowCapture(): void {
+    this.finishBlowCapture({ ok: false, reason: 'cancelled' });
+  }
+
+  private buildCapturedReading(
+    bacRaw: number,
+    at: number,
+    blow: BlowCaptureWindow | null
+  ): CapturedBreathalyzerReading | null {
+    const bacGdl = rawToBacGdl(bacRaw, this.snapshot.calibration);
+    if (bacGdl === null) return null;
+    const mgPerLAtCapture = rawToMgPerL(bacRaw, this.snapshot.calibration) ?? 0;
+
+    return {
       bacGdl,
-      sessionPeakRaw: this.sessionPeak,
+      sessionPeakRaw: this.sessionPeak ?? bacRaw,
       rawAtCapture: this.snapshot.raw,
       avgAtCapture: this.snapshot.avg,
       liveBacGdlAtCapture: this.snapshot.liveBacGdl,
@@ -678,14 +796,123 @@ export class BreathalyzerSession {
       deviceAddress: this.snapshot.deviceAddress,
       mgPerLAtCapture,
       overAtCapture: this.snapshot.over,
-      alarmAtCapture: this.snapshot.alarm
+      alarmAtCapture: this.snapshot.alarm,
+      blow
     };
+  }
+
+  /**
+   * A frame counts as "blowing" when the firmware says so. Legacy firmware
+   * without a `state` field falls back to the deflection above clean air.
+   */
+  private isBlowFrame(reading: BreathalyzerReading): boolean {
+    if (reading.deviceState !== null) return reading.deviceState === 'BLOW';
+    return reading.avg > cleanAirRaw(this.snapshot.calibration) + 20;
+  }
+
+  private advanceBlowCapture(reading: BreathalyzerReading): void {
+    const pending = this.pendingBlowCapture;
+    if (!pending) return;
+
+    const parsedAt = Date.parse(reading.receivedAt);
+    const now = Number.isFinite(parsedAt) ? parsedAt : Date.now();
+
+    if (reading.warm) {
+      this.finishBlowCapture({ ok: false, reason: 'warming' });
+      return;
+    }
+    if (reading.fault !== null && reading.fault !== 'ok') {
+      this.finishBlowCapture({ ok: false, reason: 'fault' });
+      return;
+    }
+
+    if (this.isBlowFrame(reading)) {
+      if (pending.blowStartedAtMs === null) {
+        pending.blowStartedAtMs = now;
+        pending.samples = [];
+      }
+      pending.samples.push(reading.raw);
+      pending.lastBlowFrameAtMs = now;
+      if (now - pending.blowStartedAtMs >= BLOW_CAPTURE_MAX_BLOW_MS) {
+        this.completeBlowCapture(now);
+        return;
+      }
+    } else if (pending.blowStartedAtMs !== null && pending.lastBlowFrameAtMs !== null) {
+      if (now - pending.lastBlowFrameAtMs >= BLOW_CAPTURE_END_GRACE_MS) {
+        const duration = pending.lastBlowFrameAtMs - pending.blowStartedAtMs;
+        if (duration >= BLOW_CAPTURE_MIN_BLOW_MS) {
+          this.completeBlowCapture(pending.lastBlowFrameAtMs);
+          return;
+        }
+        // Too short to trust: discard it and wait for a proper blow.
+        pending.shortBlowCount += 1;
+        pending.blowStartedAtMs = null;
+        pending.lastBlowFrameAtMs = null;
+        pending.samples = [];
+        pending.waitingSinceMs = now;
+      }
+    } else if (now - pending.waitingSinceMs >= BLOW_CAPTURE_WAIT_TIMEOUT_MS) {
+      this.finishBlowCapture({ ok: false, reason: 'no_blow' });
+      return;
+    }
+
+    this.publishBlowCaptureProgress(now);
+  }
+
+  private completeBlowCapture(endedAtMs: number): void {
+    const pending = this.pendingBlowCapture;
+    if (!pending || pending.blowStartedAtMs === null || pending.samples.length === 0) return;
+
+    const averageRaw =
+      pending.samples.reduce((sum, value) => sum + value, 0) / pending.samples.length;
+    const blow: BlowCaptureWindow = {
+      averageRaw: Number(averageRaw.toFixed(2)),
+      maxRaw: Math.max(...pending.samples),
+      sampleCount: pending.samples.length,
+      startedAt: new Date(pending.blowStartedAtMs).toISOString(),
+      endedAt: new Date(endedAtMs).toISOString(),
+      durationMs: endedAtMs - pending.blowStartedAtMs
+    };
+    const captured = this.buildCapturedReading(averageRaw, endedAtMs, blow);
+    if (!captured) {
+      this.finishBlowCapture({ ok: false, reason: 'unconvertible' });
+      return;
+    }
 
     this.update({ captured });
-    return captured;
+    this.finishBlowCapture({ ok: true, captured });
+  }
+
+  private publishBlowCaptureProgress(now: number): void {
+    const pending = this.pendingBlowCapture;
+    if (!pending) return;
+    const blowing = pending.blowStartedAtMs !== null;
+    this.update({
+      blowCapture: {
+        phase: blowing ? 'blowing' : 'waiting',
+        startedAt: new Date(pending.startedAtMs).toISOString(),
+        blowStartedAt: blowing ? new Date(pending.blowStartedAtMs as number).toISOString() : null,
+        blowDurationMs: blowing ? Math.max(0, now - (pending.blowStartedAtMs as number)) : 0,
+        sampleCount: pending.samples.length,
+        shortBlowCount: pending.shortBlowCount,
+        averageRaw:
+          pending.samples.length > 0
+            ? pending.samples.reduce((sum, value) => sum + value, 0) / pending.samples.length
+            : null
+      }
+    });
+  }
+
+  private finishBlowCapture(result: BlowCaptureResult): void {
+    const pending = this.pendingBlowCapture;
+    if (!pending) return;
+    this.pendingBlowCapture = null;
+    this.update({ blowCapture: null });
+    pending.resolve(result);
   }
 
   private resetLiveState(patch: Partial<BreathalyzerSnapshot> = {}): void {
+    this.finishBlowCapture({ ok: false, reason: 'disconnected' });
     this.sessionPeak = null;
     this.recentAvgWindow = [];
     this.peakReceivedAt = null;
@@ -711,6 +938,7 @@ export class BreathalyzerSession {
       seq: null,
       droppedFrames: 0,
       uptimeMs: null,
+      blowCapture: null,
       captured: null,
       readings: 0,
       lastReceivedAt: null,
@@ -815,6 +1043,8 @@ export class BreathalyzerSession {
       droppedFrames,
       uptimeMs: reading.uptimeMs
     });
+
+    this.advanceBlowCapture(reading);
   }
 
   private update(patch: Partial<BreathalyzerSnapshot>): void {

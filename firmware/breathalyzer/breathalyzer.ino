@@ -36,7 +36,8 @@
       (short / rail / vcc / stuck) surfaced in the new `fault` field.
     * A clean-air baseline tracker and a WARM/BLOW/PEAK/IDLE breath state
       machine surfaced in the new `state` field.
-    * An edge-triggered buzzer latch with a 1.5 s minimum hold, so tone() /
+    * An edge-triggered buzzer that beeps once per alarm latch for at most
+      2 s (BUZZER_MAX_ON_MS) and re-arms only after the alarm clears; tone() /
       noTone() are only called when the desired buzzer state actually changes.
     * A bidirectional command parser over both the HC-06 and USB ports
       (RST, CAL AIR, CAL, RL, ALM, BEEP, SN, FACTORY, PING).
@@ -81,6 +82,7 @@ const int  SAMPLE_DELAY_MS = 2;
 
 const int  ALARM_HYSTERESIS = 20;
 const unsigned long ALARM_HOLD_MS = 1500;          // Minimum latch hold (anti-chatter).
+const unsigned long BUZZER_MAX_ON_MS = 2000;       // Each alarm beeps once for at most this long.
 const unsigned long WARMUP_MS     = 60000;         // Fixed warm-up floor.
 const unsigned long WARMUP_STABLE_CEILING_MS = 90000; // Hard ceiling for the post-60 s stability wait.
 const unsigned long PEAK_HOLD_MS = 8000;           // Post-blow PEAK hold window.
@@ -157,6 +159,8 @@ int    prevRaw = -1;
 int    stuckCount = 0;
 float  sensorRs = -1.0f;
 bool   buzzerState = false;
+bool   buzzerArmed = true;          // Re-armed only once the alarm clears.
+unsigned long buzzerStartMs = 0;
 unsigned long blowPeakMs = 0;
 
 enum BreathState { ST_IDLE, ST_BLOW, ST_PEAK };
@@ -438,6 +442,30 @@ void handleCommand(char* cmd) {
 // ---------------------------------------------------------------------------
 // Boot.
 // ---------------------------------------------------------------------------
+// Buzzer: each alarm latch beeps once for at most BUZZER_MAX_ON_MS, then stays
+// silent until the alarm clears and latches again. Edge-triggered: tone() /
+// noTone() are only touched when the desired state changes, which avoids
+// rephasing the waveform on every record (KI-11).
+// ---------------------------------------------------------------------------
+void updateBuzzer(unsigned long now) {
+  bool alarmActive = !warming && alarm && (config.buzzerEnabled != 0);
+  bool desired = false;
+  if (!alarmActive) {
+    buzzerArmed = true;
+  } else {
+    if (buzzerArmed) {
+      buzzerArmed = false;
+      buzzerStartMs = now;
+    }
+    desired = (now - buzzerStartMs) < BUZZER_MAX_ON_MS;
+  }
+  if (desired != buzzerState) {
+    buzzerState = desired;
+    if (buzzerState) buzzerOn(); else buzzerOff();
+  }
+}
+
+// ---------------------------------------------------------------------------
 void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   buzzerOff();
@@ -462,6 +490,8 @@ void setup() {
   alarm = false;
   breathState = ST_IDLE;
   buzzerState = false;
+  buzzerArmed = true;
+  buzzerStartMs = bootMs;
 
 #if HAVE_WATCHDOG
   wdt_enable(WDTO_2S);
@@ -560,13 +590,7 @@ void loop() {
   else if (!warming && stuckCount >= 25)  faultStr = "stuck";
   else                                    faultStr = "ok";
 
-  // Edge-triggered buzzer: only touch tone()/noTone() when the desired state
-  // changes, which avoids rephasing the waveform on every record (KI-11).
-  bool buzzerDesired = !warming && alarm && (config.buzzerEnabled != 0);
-  if (buzzerDesired != buzzerState) {
-    buzzerState = buzzerDesired;
-    if (buzzerState) buzzerOn(); else buzzerOff();
-  }
+  updateBuzzer(now);
 
   seq++;
 
@@ -610,6 +634,7 @@ void loop() {
   unsigned long waitUntil = millis() + RECORD_INTERVAL_MS;
   while ((long)(millis() - waitUntil) < 0) {
     pollSerialCommands();
+    updateBuzzer(millis());   // cut the beep off on time, not at the next record
     wdtFeed();
     delay(5);
   }

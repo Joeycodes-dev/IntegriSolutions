@@ -45,6 +45,15 @@ function breathFraction(elapsedMs: number, cycleMs: number): number {
   return 1 - smoothstep((position - idleMs - riseMs - holdMs) / decayMs);
 }
 
+function breathPhase(elapsedMs: number, cycleMs: number): 'idle' | 'blow' | 'decay' {
+  const idleMs = cycleMs * 0.35;
+  const blowMs = cycleMs * 0.4;
+  const position = elapsedMs % cycleMs;
+  if (position < idleMs) return 'idle';
+  if (position < idleMs + blowMs) return 'blow';
+  return 'decay';
+}
+
 /**
  * Appends the firmware's trailing `,"crc":"XX"` field: an 8-bit XOR of every
  * character after the opening `{` up to the separator that precedes `"crc"`.
@@ -105,12 +114,14 @@ export function createSimulatedTransport(options: SimulatedTransportOptions): Br
       alarm = false;
     }
 
-    // Mirror the firmware state machine so the session derives a blow state.
+    // Mirror the firmware state machine: BLOW while the subject is blowing
+    // (rise + hold), PEAK while the signal decays afterwards.
     let state: BreathalyzerDeviceState;
     if (warm) state = 'WARM';
-    else if (fraction >= 1) state = 'PEAK';
-    else if (fraction > 0) state = 'BLOW';
-    else state = 'IDLE';
+    else {
+      const phase = breathPhase(elapsed, cycleMs);
+      state = phase === 'blow' ? 'BLOW' : phase === 'decay' ? 'PEAK' : 'IDLE';
+    }
 
     const vout = adcToVolts(raw);
     const rs = voltsToRs(vout, calibration.loadResistorOhms);

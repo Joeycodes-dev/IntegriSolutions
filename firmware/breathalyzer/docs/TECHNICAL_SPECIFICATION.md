@@ -73,7 +73,7 @@ Diagram: `diagrams/02-hardware-wiring.drawio`. The HC-06-only detail remains in 
 | A0 | Analogue input | MQ-3 AO | 10-bit ADC. Each record is the mean of 25 reads. |
 | D3 | Input (SoftwareSerial RX) | HC-06 TXD | Direct connection. The module's 3.3 V output is read as HIGH. The ATmega328P's minimum HIGH input at VCC = 5 V is 0.6·VCC ≈ 3.0 V, so the margin is about 0.3 V. |
 | D4 | Output (SoftwareSerial TX) | 1 kΩ, then HC-06 RXD. 2 kΩ from RXD to GND. | Never connect D4 straight to RXD. |
-| D8 | Output | Passive buzzer (+) | `tone()` while the alarm is latched and the device is ready. |
+| D8 | Output | Passive buzzer (+) | `tone()` for up to 2 s when the alarm latches and the device is ready. |
 | D0 / D1 | Hardware UART (USB) | Host PC | The same record as the HC-06 stream. Used for flashing and bench logs. |
 | 5 V | Power | HC-06 VCC, MQ-3 VCC | Shared 5 V net |
 | GND | Ground | All module grounds and the buzzer | One common ground net |
@@ -166,7 +166,7 @@ Source: `firmware/breathalyzer/breathalyzer.ino`. Flow: diagram `04-firmware-loo
    10. Alarm latch with a 1500 ms minimum hold (§4.8).
    11. Convert `vout = raw × vccVolts / 1023` and `rs = config.rlOhms × (vccVolts − vout) / vout`, guarded to `0.05 < vout < vccVolts − 0.01`; otherwise `rs = −1`.
    12. Pick the `fault` string: `short`, `rail`, `vcc`, `stuck` or `ok` (§4.12).
-   13. Edge-trigger the buzzer from `!warming && alarm && config.buzzerEnabled` (§4.8).
+   13. Edge-trigger the buzzer from `!warming && alarm && config.buzzerEnabled`, limited to one beep of at most `BUZZER_MAX_ON_MS` (2 s) per alarm latch (§4.8). The inter-record wait also re-evaluates the buzzer so the beep ends on time.
    14. Format the JSON line (§5), append the XOR `crc` and CRLF, then write HC-06 first and USB second.
    15. Pump a non-blocking 200 ms inter-record wait that keeps polling commands and resetting the watchdog.
 
@@ -206,7 +206,7 @@ This is now a **measured-stability gate** rather than a pure fixed 60 s timer, w
 Diagram `03-firmware-state-machine.drawio` shows the two independent regions and the truth table.
 
 - The latch sets when `ema` exceeds the threshold (`config.alarmThreshold`, default 350) and clears below `threshold − ALARM_HYSTERESIS`, **but only after a 1500 ms minimum hold** (`ALARM_HOLD_MS`). The hold stops the latch chattering when `ema` sits on the hysteresis boundary.
-- The buzzer is **edge-triggered**: its desired state is `!warming && alarm && config.buzzerEnabled`. `tone(BUZZER_PIN, 2700)` is called only when that state goes high, and `noTone(BUZZER_PIN)` only when it goes low. Because `tone()` is not re-issued every record, the waveform phase is stable across telemetry bursts, which reduces (but does not eliminate) the SoftwareSerial distortion in KI-11.
+- The buzzer is **edge-triggered**: the alarm condition is `!warming && alarm && config.buzzerEnabled`. When it goes high the buzzer beeps for at most `BUZZER_MAX_ON_MS` (2 000 ms) and then stays silent while the alarm remains latched; it re-arms only after the condition goes low (latch cleared, `RST`, warm-up or `BEEP 0`). `tone(BUZZER_PIN, 2700)` is called only when the desired state goes high, and `noTone(BUZZER_PIN)` only when it goes low. Because `tone()` is not re-issued every record, the waveform phase is stable across telemetry bursts, which reduces (but does not eliminate) the SoftwareSerial distortion in KI-11.
 - The alarm can latch during warm-up, but the buzzer stays off while warming.
 - The buzzer can be turned off at runtime with `BEEP 0` and the threshold changed with `ALM` (both persist to EEPROM). The app still sends no commands (KI-02 is about the app copy, not the link).
 
@@ -517,7 +517,7 @@ These run on the bench, with no alcohol involved. For the threshold tests, disco
 | TC-10 | Simulator in a store build | Install the production build. Open the Connect tab's Test mode card. | **Currently fails**: the simulator option is shown (KI-01). It must be absent for any enforcement sign-off. |
 | TC-11 | Parser: missing `warm` | Send `{"raw":300,"avg":300,"peak":300,"over":false,"alarm":false}` during warm-up. | **Currently fails**: the app treats the record as warm complete and admits it into the session peak (KI-07). The target behaviour is to reject or treat it as warming. |
 | TC-12 | Record period | Timestamp 100 records. | Mean period 0.5–0.7 s. A mean above 0.8 s needs investigation. |
-| TC-13 | Alarm tone | With the latch set after warm-up, listen to the buzzer for 30 s. | Steady 2.7 kHz tone, no dropouts. The tone is edge-triggered and no longer re-phased each record; record any remaining gaps that line up with record transmissions (KI-11). |
+| TC-13 | Alarm tone | With the latch set after warm-up, listen to the buzzer. Then let the latch clear and set it again. | A single steady 2.7 kHz beep of about 2 s per latch, no dropouts, then silence while the latch stays set. Clearing and re-setting the latch beeps again. Record any gaps that line up with record transmissions (KI-11). |
 | TC-14 | Commands and EEPROM | After warm-up send `RL 200000`, `CAL AIR`, `ALM 400`, `BEEP 0`, `SN MQ3-TEST-1`, then power-cycle the board. | After reboot the device reports the new values (`r0`, the alarm behaviour, a silenced buzzer and the new `sn`), proving EEPROM persistence and CRC validation. `FACTORY` restores the defaults. |
 | TC-15 | Sensor-fault flags | Force `raw == 0` (short AO) and `raw >= 1020` (rail); hold a constant A0 for 25+ records past warm-up. | `fault` reads `short`, then `rail`, then `stuck`; a healthy changing signal reads `ok`. |
 | TC-16 | Bandgap VCC | With a stable 5.000 V rail, read `vcc`, `vout` and `rs`. | `vcc` reads about 4 950–5 050 mV and `vout`/`rs` use it. If the rail is ever well outside 4.5–5.5 V, `fault` reads `vcc`. |

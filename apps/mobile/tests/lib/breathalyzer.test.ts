@@ -1,4 +1,7 @@
 import {
+  BLOW_CAPTURE_MAX_BLOW_MS,
+  BLOW_CAPTURE_MIN_BLOW_MS,
+  BLOW_CAPTURE_WAIT_TIMEOUT_MS,
   BreathalyzerSession,
   BREATHALYZER_WARMUP_MS,
   DEFAULT_BREATHALYZER_CALIBRATION,
@@ -1244,6 +1247,234 @@ describe('breathalyzer extended telemetry handling', () => {
       droppedFrames: 0
     });
   });
+});
+
+describe('breathalyzer blow capture', () => {
+  async function connectedSession() {
+    const clock = installClock('2026-10-15T09:00:00.000Z');
+    const session = new BreathalyzerSession();
+    const transport = deferredTransport();
+    await session.connect(transport);
+    const frame = (raw: number, state: string | null, extra: Record<string, unknown> = {}) => {
+      clock.advance(200);
+      const fields: Record<string, unknown> = {
+        raw,
+        avg: raw,
+        peak: raw,
+        warm: false,
+        fault: 'ok',
+        ...extra
+      };
+      if (state !== null) fields.state = state;
+      transport.emit(firmwareLine(fields));
+    };
+    frame(130, 'IDLE');
+    return { clock, session, transport, frame };
+  }
+
+  async function settled<T>(promise: Promise<T>): Promise<{ done: boolean; value?: T }> {
+    let result: { done: boolean; value?: T } = { done: false };
+    void promise.then((value) => {
+      result = { done: true, value };
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    return result;
+  }
+
+  it('averages the frames recorded while blowing and finalises when the blow ends', async () => {
+    const { clock, session, frame } = await connectedSession();
+    try {
+      const pending = session.startBlowCapture();
+      frame(130, 'IDLE');
+      expect(session.getSnapshot().blowCapture).toMatchObject({ phase: 'waiting' });
+
+      const blowRaws = [400, 500, 600, 700, 600, 500, 400, 500, 600, 500];
+      for (const raw of blowRaws) frame(raw, 'BLOW');
+      expect(session.getSnapshot().blowCapture).toMatchObject({
+        phase: 'blowing',
+        sampleCount: 10,
+        blowDurationMs: 1_800
+      });
+
+      frame(450, 'PEAK');
+      frame(400, 'PEAK');
+      expect((await settled(pending)).done).toBe(false);
+      frame(350, 'PEAK');
+
+      const result = await pending;
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.captured.blow).toMatchObject({
+        averageRaw: 530,
+        maxRaw: 700,
+        sampleCount: 10,
+        durationMs: 1_800
+      });
+      expect(result.captured.bacGdl).toBeCloseTo(
+        rawToBacGdl(530, DEFAULT_BREATHALYZER_CALIBRATION) as number,
+        10
+      );
+      expect(result.captured.sessionPeakRaw).toBe(700);
+      expect(session.getSnapshot().captured).toEqual(result.captured);
+      expect(session.getSnapshot().blowCapture).toBeNull();
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('tolerates a brief non-blow flicker inside a sustained blow', async () => {
+    const { clock, session, frame } = await connectedSession();
+    try {
+      const pending = session.startBlowCapture();
+      for (let i = 0; i < 5; i += 1) frame(500, 'BLOW');
+      frame(495, 'PEAK');
+      for (let i = 0; i < 5; i += 1) frame(500, 'BLOW');
+      for (let i = 0; i < 3; i += 1) frame(300, 'PEAK');
+
+      const result = await pending;
+      expect(result.ok && result.captured.blow).toMatchObject({
+        averageRaw: 500,
+        sampleCount: 10,
+        durationMs: 2_000
+      });
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('discards a blow that is too short and waits for a proper one', async () => {
+    const { clock, session, frame } = await connectedSession();
+    try {
+      const pending = session.startBlowCapture();
+      for (let i = 0; i < 3; i += 1) frame(900, 'BLOW');
+      for (let i = 0; i < 3; i += 1) frame(200, 'PEAK');
+
+      expect((await settled(pending)).done).toBe(false);
+      expect(session.getSnapshot().blowCapture).toMatchObject({
+        phase: 'waiting',
+        shortBlowCount: 1,
+        sampleCount: 0
+      });
+
+      for (let i = 0; i < 9; i += 1) frame(400, 'BLOW');
+      for (let i = 0; i < 3; i += 1) frame(200, 'PEAK');
+
+      const result = await pending;
+      expect(result.ok && result.captured.blow).toMatchObject({
+        averageRaw: 400,
+        sampleCount: 9
+      });
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('finalises a blow that runs past the maximum window', async () => {
+    const { clock, session, frame } = await connectedSession();
+    try {
+      const pending = session.startBlowCapture();
+      for (let i = 0; i < 60; i += 1) frame(450, 'BLOW');
+
+      const result = await pending;
+      expect(result.ok && result.captured.blow).toMatchObject({
+        sampleCount: BLOW_CAPTURE_MAX_BLOW_MS / 200 + 1,
+        durationMs: BLOW_CAPTURE_MAX_BLOW_MS
+      });
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('gives up when no blow arrives in time', async () => {
+    const { clock, session, frame } = await connectedSession();
+    try {
+      const pending = session.startBlowCapture();
+      for (let i = 0; i < BLOW_CAPTURE_WAIT_TIMEOUT_MS / 200; i += 1) frame(130, 'IDLE');
+
+      await expect(pending).resolves.toEqual({ ok: false, reason: 'no_blow' });
+      expect(session.getSnapshot().blowCapture).toBeNull();
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('falls back to the clean-air deflection on firmware without a state field', async () => {
+    const { clock, session, frame } = await connectedSession();
+    try {
+      const pending = session.startBlowCapture();
+      for (let i = 0; i < 9; i += 1) frame(600, null);
+      for (let i = 0; i < 3; i += 1) frame(130, null);
+
+      const result = await pending;
+      expect(result.ok && result.captured.blow).toMatchObject({ averageRaw: 600, sampleCount: 9 });
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('refuses to arm when the device is not ready or a capture is running', async () => {
+    const idle = new BreathalyzerSession();
+    await expect(idle.startBlowCapture()).resolves.toEqual({ ok: false, reason: 'not_connected' });
+
+    const { clock, session, frame } = await connectedSession();
+    try {
+      const first = session.startBlowCapture();
+      await expect(session.startBlowCapture()).resolves.toEqual({ ok: false, reason: 'busy' });
+      session.cancelBlowCapture();
+      await expect(first).resolves.toEqual({ ok: false, reason: 'cancelled' });
+
+      frame(130, 'WARM', { warm: true });
+      await expect(session.startBlowCapture()).resolves.toEqual({ ok: false, reason: 'warming' });
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('aborts a running capture on fault, new subject, or disconnect', async () => {
+    const { clock, session, frame } = await connectedSession();
+    try {
+      const faulted = session.startBlowCapture();
+      frame(500, 'BLOW', { fault: 'stuck' });
+      await expect(faulted).resolves.toEqual({ ok: false, reason: 'fault' });
+
+      frame(130, 'IDLE');
+      const reset = session.startBlowCapture();
+      session.startNewSubject();
+      await expect(reset).resolves.toEqual({ ok: false, reason: 'cancelled' });
+
+      frame(130, 'IDLE');
+      const dropped = session.startBlowCapture();
+      await session.disconnect();
+      await expect(dropped).resolves.toEqual({ ok: false, reason: 'disconnected' });
+      expect(session.getSnapshot().blowCapture).toBeNull();
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('captures a full blow from the simulator', async () => {
+    const session = new BreathalyzerSession();
+    await session.connect(
+      createSimulatedTransport({
+        calibration: DEFAULT_BREATHALYZER_CALIBRATION,
+        targetBacGdl: 0.08,
+        sampleIntervalMs: 20,
+        warmupMs: 0,
+        cycleMs: 6_000
+      })
+    );
+    await waitFor(() => session.getSnapshot().readings > 0);
+
+    const result = await session.startBlowCapture();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.captured.blow?.durationMs).toBeGreaterThanOrEqual(BLOW_CAPTURE_MIN_BLOW_MS);
+      expect(result.captured.bacGdl).toBeGreaterThan(0.02);
+      expect(result.captured.bacGdl).toBeLessThanOrEqual(0.081);
+    }
+    await session.disconnect();
+  }, 15_000);
 });
 
 describe('breathalyzer device evidence', () => {
